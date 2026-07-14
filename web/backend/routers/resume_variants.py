@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from functools import lru_cache
 from io import BytesIO
 from typing import Annotated
 
@@ -13,6 +14,7 @@ from core.resume_variants.quota import (
     ResumeVariantQuotaExceeded,
     ResumeVariantQuotaUnavailable,
 )
+from core.resume_variants.llm_generator import build_resume_llm_generator
 from core.resume_variants.renderer import ResumeVariantRenderer, safe_filename
 from core.resume_variants.service import (
     ResumeVariantConflict,
@@ -23,6 +25,7 @@ from core.resume_variants.service import (
     variant_to_response,
 )
 from web.backend.dependencies import TenantContext, get_current_user, get_db, get_tenant_context
+from web.backend.config import get_config
 from web.backend.models.resume_variants import (
     ResumeVariantCreateRequest,
     ResumeVariantEnvelope,
@@ -54,6 +57,13 @@ def _request_tenant_id(request: Request) -> uuid.UUID | None:
 def _service(db: Session) -> ResumeVariantService:
     return ResumeVariantService(db)
 
+@lru_cache(maxsize=1)
+def _configured_llm_generator():
+    return build_resume_llm_generator(get_config().matching.resume_generation)
+
+def _generation_service(db: Session) -> ResumeVariantService:
+    return ResumeVariantService(db, llm_generator=_configured_llm_generator())
+
 
 @router.post(
     "/api/matches/{match_id}/resume-variants",
@@ -77,7 +87,7 @@ def create_resume_variant(
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
 ) -> ResumeVariantEnvelope:
     result = _run_service_call(
-        lambda: _service(db).create_for_match(
+        lambda: _generation_service(db).create_for_match(
             match_id=_uuid_or_400(match_id, "match_id"),
             owner_id=getattr(user, "id", None),
             tenant_id=tenant_context.tenant_id,

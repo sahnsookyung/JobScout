@@ -11,10 +11,10 @@ from core.resume_evidence_selection import (
 )
 
 MAX_CONTENT_JSON_BYTES = 128 * 1024
-GENERATOR_VERSION = "deterministic-v2"
-EVIDENCE_POLICY_VERSION = "evidence-v2"
-TEMPLATE_VERSION = "compact-v1"
-RENDERER_VERSION = "renderer-v1"
+GENERATOR_VERSION = "hybrid-v3"
+EVIDENCE_POLICY_VERSION = "evidence-v3"
+TEMPLATE_VERSION = "compact-v2"
+RENDERER_VERSION = "renderer-v2"
 
 
 @dataclass(frozen=True)
@@ -83,6 +83,43 @@ def _summary_claims(profile: dict[str, Any]) -> list[dict[str, Any]]:
         return []
     return [_claim(text, [_source("structured_resume", "profile.summary.text")])]
 
+def _contact_details(profile: dict[str, Any]) -> dict[str, Any]:
+    contact = profile.get("contact")
+    source = contact if isinstance(contact, dict) else profile
+    links = source.get("links")
+    cleaned_links = []
+    if isinstance(links, list):
+        cleaned_links = [
+            cleaned
+            for value in links[:8]
+            if (cleaned := _clean_text(value, max_length=240))
+        ]
+    for key in ("linkedin_url", "portfolio_url"):
+        value = _clean_text(source.get(key), max_length=240)
+        if value and value not in cleaned_links:
+            cleaned_links.append(value)
+    return {
+        "name": _clean_text(source.get("name"), max_length=160),
+        "email": _clean_text(source.get("email"), max_length=240),
+        "phone": _clean_text(source.get("phone"), max_length=80),
+        "location": _clean_text(source.get("location"), max_length=160),
+        "links": cleaned_links,
+    }
+
+def _date_text(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return _clean_text(value, max_length=80)
+    original = _clean_text(value.get("text"), max_length=80)
+    if original:
+        return original
+    year = value.get("year")
+    month = value.get("month")
+    if isinstance(year, int) and isinstance(month, int) and 1 <= month <= 12:
+        return f"{year:04d}-{month:02d}"
+    if isinstance(year, int):
+        return str(year)
+    return None
+
 
 def _skill_claims(
     profile: dict[str, Any],
@@ -126,7 +163,12 @@ def _skill_claims(
     return claims
 
 
-def _experience_claims(profile: dict[str, Any], *, limit: int = 6) -> list[dict[str, Any]]:
+def _experience_claims(
+    profile: dict[str, Any],
+    *,
+    relevance_terms: set[str] | None = None,
+    limit: int = 12,
+) -> list[dict[str, Any]]:
     experience = profile.get("experience")
     if not isinstance(experience, list):
         return []
@@ -138,41 +180,196 @@ def _experience_claims(profile: dict[str, Any], *, limit: int = 6) -> list[dict[
         role = _clean_text(item.get("title"), max_length=120)
         company = _clean_text(item.get("company"), max_length=120)
         highlights = item.get("highlights")
-        bullets = []
+        bullet_candidates: list[tuple[int, str, dict[str, Any]]] = []
         if isinstance(highlights, list):
-            for bullet_index, highlight in enumerate(highlights[:4]):
+            for bullet_index, highlight in enumerate(highlights[:8]):
                 text = _clean_text(highlight, max_length=260)
                 if text:
-                    bullets.append(
-                        _claim(
+                    bullet_candidates.append(
+                        (
+                            bullet_index,
                             text,
-                            [
-                                _source(
-                                    "structured_resume",
-                                    f"profile.experience[{index}].highlights[{bullet_index}]",
-                                    bullet_index,
-                                )
-                            ],
+                            _claim(
+                                text,
+                                [
+                                    _source(
+                                        "structured_resume",
+                                        f"profile.experience[{index}].highlights[{bullet_index}]",
+                                        bullet_index,
+                                    )
+                                ],
+                            ),
                         )
                     )
         description = _clean_text(item.get("description"), max_length=260)
-        if description and not bullets:
-            bullets.append(
-                _claim(
+        if description and all(description.lower() != candidate[1].lower() for candidate in bullet_candidates):
+            bullet_candidates.append(
+                (
+                    len(highlights) if isinstance(highlights, list) else 0,
                     description,
-                    [_source("structured_resume", f"profile.experience[{index}].description", index)],
+                    _claim(
+                        description,
+                        [_source("structured_resume", f"profile.experience[{index}].description", index)],
+                    ),
                 )
             )
+        if relevance_terms:
+            bullet_candidates.sort(
+                key=lambda candidate: (-_term_overlap(candidate[1], relevance_terms), candidate[0])
+            )
+        bullets = [candidate[2] for candidate in bullet_candidates[:6]]
         if role or company or bullets:
             entries.append(
                 {
+                    "entry_id": f"experience-{index}",
                     "title": role,
                     "company": company,
+                    "start_date": _date_text(item.get("start_date")),
+                    "end_date": "Present" if item.get("is_current") else _date_text(item.get("end_date")),
                     "sources": [_source("structured_resume", f"profile.experience[{index}]", index)],
                     "bullets": bullets,
                 }
             )
     return entries
+
+def _project_entries(
+    profile: dict[str, Any],
+    *,
+    relevance_terms: set[str] | None = None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    projects = profile.get("projects")
+    items = projects.get("items") if isinstance(projects, dict) else None
+    if not isinstance(items, list):
+        return []
+    entries: list[dict[str, Any]] = []
+    for index, item in enumerate(items[:limit]):
+        if not isinstance(item, dict):
+            continue
+        bullet_candidates: list[tuple[int, str, dict[str, Any]]] = []
+        highlights = item.get("highlights")
+        if isinstance(highlights, list):
+            for bullet_index, highlight in enumerate(highlights[:6]):
+                text = _clean_text(highlight, max_length=260)
+                if text:
+                    bullet_candidates.append(
+                        (
+                            bullet_index,
+                            text,
+                            _claim(
+                                text,
+                                [_source("structured_resume", f"profile.projects.items[{index}].highlights[{bullet_index}]", bullet_index)],
+                            ),
+                        )
+                    )
+        description = _clean_text(item.get("description"), max_length=260)
+        if description and all(description.lower() != candidate[1].lower() for candidate in bullet_candidates):
+            bullet_candidates.append(
+                (
+                    len(bullet_candidates),
+                    description,
+                    _claim(
+                        description,
+                        [_source("structured_resume", f"profile.projects.items[{index}].description", index)],
+                    ),
+                )
+            )
+        if relevance_terms:
+            bullet_candidates.sort(
+                key=lambda candidate: (-_term_overlap(candidate[1], relevance_terms), candidate[0])
+            )
+        technologies = item.get("technologies")
+        cleaned_technologies = []
+        if isinstance(technologies, list):
+            cleaned_technologies = [
+                cleaned
+                for value in technologies[:16]
+                if (cleaned := _clean_text(value, max_length=80))
+            ]
+        name = _clean_text(item.get("name"), max_length=160)
+        if name or bullet_candidates:
+            entries.append(
+                {
+                    "entry_id": f"project-{index}",
+                    "name": name,
+                    "date": _date_text(item.get("date")),
+                    "url": _clean_text(item.get("url"), max_length=240),
+                    "technologies": cleaned_technologies,
+                    "sources": [_source("structured_resume", f"profile.projects.items[{index}]", index)],
+                    "bullets": [candidate[2] for candidate in bullet_candidates[:5]],
+                }
+            )
+    return entries
+
+def _education_entries(profile: dict[str, Any], *, limit: int = 8) -> list[dict[str, Any]]:
+    education = profile.get("education")
+    if not isinstance(education, list):
+        return []
+    entries = []
+    for index, item in enumerate(education[:limit]):
+        if not isinstance(item, dict):
+            continue
+        description = _clean_text(item.get("description"), max_length=260)
+        highlights = item.get("highlights")
+        details = []
+        if description:
+            details.append(
+                _claim(description, [_source("structured_resume", f"profile.education[{index}].description", index)])
+            )
+        if isinstance(highlights, list):
+            for highlight_index, highlight in enumerate(highlights[:4]):
+                text = _clean_text(highlight, max_length=220)
+                if text:
+                    details.append(
+                        _claim(
+                            text,
+                            [_source("structured_resume", f"profile.education[{index}].highlights[{highlight_index}]", highlight_index)],
+                        )
+                    )
+        institution = _clean_text(item.get("institution"), max_length=160)
+        degree = _clean_text(item.get("degree"), max_length=160)
+        if institution or degree or details:
+            entries.append(
+                {
+                    "institution": institution,
+                    "degree": degree,
+                    "field_of_study": _clean_text(item.get("field_of_study"), max_length=160),
+                    "graduation_year": item.get("graduation_year") if isinstance(item.get("graduation_year"), int) else None,
+                    "sources": [_source("structured_resume", f"profile.education[{index}]", index)],
+                    "details": details,
+                }
+            )
+    return entries
+
+def _certification_entries(profile: dict[str, Any], *, limit: int = 12) -> list[dict[str, Any]]:
+    certifications = profile.get("certifications")
+    if not isinstance(certifications, list):
+        return []
+    return [
+        {
+            "name": _clean_text(item.get("name"), max_length=160),
+            "issuer": _clean_text(item.get("issuer"), max_length=160),
+            "issued_year": item.get("issued_year") if isinstance(item.get("issued_year"), int) else None,
+            "expires_year": item.get("expires_year") if isinstance(item.get("expires_year"), int) else None,
+            "sources": [_source("structured_resume", f"profile.certifications[{index}]", index)],
+        }
+        for index, item in enumerate(certifications[:limit])
+        if isinstance(item, dict) and _clean_text(item.get("name"), max_length=160)
+    ]
+
+def _language_entries(profile: dict[str, Any], *, limit: int = 12) -> list[dict[str, Any]]:
+    languages = profile.get("languages")
+    if not isinstance(languages, list):
+        return []
+    return [
+        {
+            "language": _clean_text(item.get("language"), max_length=100),
+            "proficiency": _clean_text(item.get("proficiency"), max_length=100),
+            "sources": [_source("structured_resume", f"profile.languages[{index}]", index)],
+        }
+        for index, item in enumerate(languages[:limit])
+        if isinstance(item, dict) and _clean_text(item.get("language"), max_length=100)
+    ]
 
 
 def _evidence_unit_claims(
@@ -309,6 +506,56 @@ def validate_claim_sources(content: dict[str, Any]) -> list[str]:
             warnings.append(f"Generated claim lacks source pointers: {claim.get('text', '')[:80]}")
     return warnings
 
+def resume_body_claims(content: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return claims that are rendered as candidate resume content."""
+    claims: list[dict[str, Any]] = []
+    claims.extend(_claims_for_key(content, "summary"))
+    claims.extend(_claims_for_key(content, "skills"))
+    for section, detail_key in (("experience", "bullets"), ("projects", "bullets"), ("education", "details")):
+        entries = content.get(section)
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if isinstance(entry, dict):
+                claims.extend(_claims_for_key(entry, detail_key))
+    return claims
+
+def _claims_for_key(content: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    value = content.get(key)
+    if not isinstance(value, list):
+        return []
+    return [claim for claim in value if isinstance(claim, dict) and _clean_text(claim.get("text"))]
+
+def validate_resume_content_quality(content: dict[str, Any]) -> list[str]:
+    """Return actionable quality errors for drafts too sparse to be resumes."""
+    claims = resume_body_claims(content)
+    word_count = sum(len(str(claim.get("text", "")).split()) for claim in claims)
+    substantive_sections = sum(
+        bool(content.get(section))
+        for section in ("experience", "projects", "education")
+    )
+    errors = []
+    if substantive_sections == 0:
+        errors.append("No experience, project, or education entries were extracted.")
+    if len(claims) < 4 or word_count < 35:
+        errors.append("The extracted resume does not contain enough detail to create a usable draft.")
+    return errors
+
+def build_evidence_map(content: dict[str, Any]) -> dict[str, Any]:
+    claims = _collect_claims(content)
+    return {
+        "policy_version": EVIDENCE_POLICY_VERSION,
+        "claim_count": len(claims),
+        "source_types": sorted(
+            {
+                source.get("kind")
+                for claim in claims
+                for source in claim.get("sources", [])
+                if isinstance(source, dict) and source.get("kind")
+            }
+        ),
+    }
+
 
 def generate_resume_variant_content(
     *,
@@ -339,6 +586,7 @@ def generate_resume_variant_content(
     content = {
         "template_key": template_key,
         "tone": tone,
+        "contact": _contact_details(profile),
         "job": {
             "title": _clean_text(getattr(job, "title", None), max_length=160),
             "company": _clean_text(getattr(job, "company", None), max_length=160),
@@ -346,7 +594,11 @@ def generate_resume_variant_content(
         "summary": _summary_claims(profile),
         "targeted_evidence": _merge_claims(evidence_unit_claims, requirement_claims),
         "skills": _skill_claims(profile, relevance_terms=relevance_terms),
-        "experience": _experience_claims(profile),
+        "experience": _experience_claims(profile, relevance_terms=relevance_terms),
+        "projects": _project_entries(profile, relevance_terms=relevance_terms),
+        "education": _education_entries(profile),
+        "certifications": _certification_entries(profile),
+        "languages": _language_entries(profile),
         "gaps": gap_claims,
         "source_quality": {
             "job_description_completeness": _clean_text(getattr(job, "description_completeness", None), max_length=60),
@@ -358,16 +610,5 @@ def generate_resume_variant_content(
     }
     warnings.extend(validate_claim_sources(content))
 
-    evidence_map = {
-        "policy_version": EVIDENCE_POLICY_VERSION,
-        "claim_count": len(_collect_claims(content)),
-        "source_types": sorted(
-            {
-                source.get("kind")
-                for claim in _collect_claims(content)
-                for source in claim.get("sources", [])
-                if isinstance(source, dict) and source.get("kind")
-            }
-        ),
-    }
+    evidence_map = build_evidence_map(content)
     return content, evidence_map, warnings

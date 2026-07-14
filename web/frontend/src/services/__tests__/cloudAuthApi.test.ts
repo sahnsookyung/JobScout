@@ -33,10 +33,11 @@ describe('cloudAuthApi', () => {
             },
         });
 
-        await cloudAuthApi.exchangeGoogleCredential('google-credential');
+        await cloudAuthApi.exchangeGoogleCredential('google-credential', 'login-nonce');
 
         expect(mockPost).toHaveBeenCalledWith('/cloud/auth/google/exchange', {
             credential: 'google-credential',
+            nonce: 'login-nonce',
         });
     });
 

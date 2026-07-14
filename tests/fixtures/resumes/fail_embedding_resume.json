@@ -1,5 +1,14 @@
 {
   "profile": {
+    "contact": {
+      "name": "Failure Candidate",
+      "email": "failure.candidate@example.com",
+      "phone": null,
+      "location": "Remote",
+      "linkedin_url": null,
+      "portfolio_url": null,
+      "links": []
+    },
     "summary": {
       "text": "FAIL_EMBEDDING Senior Python backend engineer with FastAPI and AWS experience.",
       "total_experience_years": 5

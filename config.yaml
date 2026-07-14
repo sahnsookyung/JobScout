@@ -225,6 +225,28 @@ matching:
     resume_summary_max_chars: 64000
     public_analysis_max_chars: 1500
 
+  resume_generation:
+    enabled: true
+    fallback_to_deterministic: true
+    prompt_version: "resume_tailoring_v3"
+    job_description_max_chars: 24000
+    requirements_max_count: 120
+    max_source_claims: 160
+    runtime:
+      name: "nvidia-resume"
+      provider: "nvidia"
+      base_url: "https://integrate.api.nvidia.com/v1"
+      api_key_env: "NVIDIA_API_KEY"
+      model: "mistralai/mistral-medium-3.5-128b"
+      temperature: 0.1
+      structured_output_mode: "json_schema"
+      timeout_seconds: 60
+      max_input_tokens: 64000
+      max_output_tokens: 16384
+      requests_per_minute: 40
+      rate_limit_max_wait_seconds: 90
+      fallback_on_rate_limit: false
+
 preferences:
   default_mode: "semantic_rerank"
   allowed_modes:

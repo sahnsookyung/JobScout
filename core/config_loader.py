@@ -20,6 +20,8 @@ NVIDIA_OPENAI_COMPATIBLE_BASE_URL = "https://integrate.api.nvidia.com/v1"
 GROQ_OPENAI_COMPATIBLE_BASE_URL = "https://api.groq.com/openai/v1"
 CEREBRAS_OPENAI_COMPATIBLE_BASE_URL = "https://api.cerebras.ai/v1"
 NVIDIA_DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
+NVIDIA_RESUME_GENERATION_MODEL = "mistralai/mistral-medium-3.5-128b"
+NVIDIA_RESUME_MAX_OUTPUT_TOKENS = 16_384
 NVIDIA_DEFAULT_MAX_INPUT_TOKENS = 262_144
 NVIDIA_DEFAULT_REQUESTS_PER_MINUTE = 40
 NVIDIA_DEFAULT_RATE_LIMIT_MAX_WAIT_SECONDS = 90
@@ -108,6 +110,7 @@ class LlmConfig(BaseModel):
     embedding_api_secret: Optional[str] = None
     embedding_headers: Optional[Dict[str, str]] = None
 
+
 class PreferenceModelConfig(BaseModel):
     enabled: bool = True
     provider: Literal["openai_compatible"] = "openai_compatible"
@@ -153,15 +156,16 @@ class PreferencesConfig(BaseModel):
     llm_judge: PreferenceModelConfig = Field(
         default_factory=lambda: PreferenceModelConfig(enabled=False)
     )
-    cross_encoder: PreferenceCrossEncoderConfig = Field(default_factory=PreferenceCrossEncoderConfig)
+    cross_encoder: PreferenceCrossEncoderConfig = Field(
+        default_factory=PreferenceCrossEncoderConfig
+    )
 
     def allowed_modes_normalized(self) -> List[str]:
         """Return deduplicated allowed modes filtered to valid values, falling back to default_mode."""
         _valid = {"semantic_rerank", "llm_judge"}
         normalized = [
-            m for m in dict.fromkeys(
-                str(x).strip().lower() for x in (self.allowed_modes or [])
-            )
+            m
+            for m in dict.fromkeys(str(x).strip().lower() for x in (self.allowed_modes or []))
             if m in _valid
         ]
         return normalized or [self.default_mode]
@@ -287,6 +291,7 @@ class LlmJudgeProviderRuntimeConfig(BaseModel):
     timeout_seconds: int = 60
     structured_output_mode: Literal["auto", "json_schema", "json_object"] = "auto"
     max_input_tokens: int = CEREBRAS_DEFAULT_MAX_INPUT_TOKENS
+    max_output_tokens: Optional[int] = None
     requests_per_minute: Optional[int] = None
     rate_limit_max_wait_seconds: int = NVIDIA_DEFAULT_RATE_LIMIT_MAX_WAIT_SECONDS
     fallback_on_rate_limit: bool = False
@@ -358,6 +363,12 @@ class LlmJudgeProviderRuntimeConfig(BaseModel):
             raise ValueError(
                 f"matching.llm_judge.runtime.providers[{self.name}].max_input_tokens must be positive"
             )
+        if self.max_output_tokens is not None:
+            self.max_output_tokens = int(self.max_output_tokens)
+            if self.max_output_tokens <= 0:
+                raise ValueError(
+                    f"matching.llm_judge.runtime.providers[{self.name}].max_output_tokens must be positive when set"
+                )
         if self.requests_per_minute is not None:
             self.requests_per_minute = int(self.requests_per_minute)
             if self.requests_per_minute <= 0:
@@ -483,6 +494,52 @@ class MatchLlmJudgeConfig(BaseModel):
             if int(getattr(self, field_name)) > cap:
                 raise ValueError(f"matching.llm_judge.{field_name} must be <= {cap}")
 
+
+def _default_resume_generation_runtime() -> LlmJudgeProviderRuntimeConfig:
+    return LlmJudgeProviderRuntimeConfig(
+        name="nvidia-resume",
+        provider="nvidia",
+        base_url=NVIDIA_OPENAI_COMPATIBLE_BASE_URL,
+        api_key_env="NVIDIA_API_KEY",
+        model=NVIDIA_RESUME_GENERATION_MODEL,
+        temperature=0.1,
+        structured_output_mode="json_schema",
+        timeout_seconds=60,
+        max_input_tokens=64_000,
+        max_output_tokens=NVIDIA_RESUME_MAX_OUTPUT_TOKENS,
+        requests_per_minute=NVIDIA_DEFAULT_REQUESTS_PER_MINUTE,
+        rate_limit_max_wait_seconds=NVIDIA_DEFAULT_RATE_LIMIT_MAX_WAIT_SECONDS,
+    )
+
+
+class ResumeGenerationConfig(BaseModel):
+    """Evidence-constrained job-specific resume generation controls."""
+
+    enabled: bool = True
+    fallback_to_deterministic: bool = True
+    runtime: LlmJudgeProviderRuntimeConfig = Field(
+        default_factory=_default_resume_generation_runtime
+    )
+    prompt_version: str = "resume_tailoring_v3"
+    job_description_max_chars: int = 24_000
+    requirements_max_count: int = 120
+    max_source_claims: int = 160
+
+    def model_post_init(self, __context: Any) -> None:
+        del __context
+        for field_name, cap in (
+            ("job_description_max_chars", 64_000),
+            ("requirements_max_count", 200),
+            ("max_source_claims", 240),
+        ):
+            value = int(getattr(self, field_name))
+            if value <= 0 or value > cap:
+                raise ValueError(
+                    f"matching.resume_generation.{field_name} must be between 1 and {cap}"
+                )
+            setattr(self, field_name, value)
+
+
 class MatcherConfig(BaseModel):
     """Configuration for vector retrieval."""
 
@@ -529,7 +586,9 @@ class SemanticFitSerializationConfig(BaseModel):
         for field_name in positive_fields:
             value = int(getattr(self, field_name))
             if value <= 0:
-                raise ValueError(f"matching.scorer.semantic_fit.serialization.{field_name} must be positive")
+                raise ValueError(
+                    f"matching.scorer.semantic_fit.serialization.{field_name} must be positive"
+                )
 
 
 class SemanticFitCrossEncoderLocalConfig(BaseModel):
@@ -546,11 +605,17 @@ class SemanticFitCrossEncoderLocalConfig(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         del __context
         if int(self.max_batch_size) <= 0:
-            raise ValueError("matching.scorer.semantic_fit.cross_encoder.local.max_batch_size must be positive")
+            raise ValueError(
+                "matching.scorer.semantic_fit.cross_encoder.local.max_batch_size must be positive"
+            )
         if int(self.max_concurrency) <= 0:
-            raise ValueError("matching.scorer.semantic_fit.cross_encoder.local.max_concurrency must be positive")
+            raise ValueError(
+                "matching.scorer.semantic_fit.cross_encoder.local.max_concurrency must be positive"
+            )
         if int(self.timeout_ms) <= 0:
-            raise ValueError("matching.scorer.semantic_fit.cross_encoder.local.timeout_ms must be positive")
+            raise ValueError(
+                "matching.scorer.semantic_fit.cross_encoder.local.timeout_ms must be positive"
+            )
 
 
 class SemanticFitCrossEncoderRemoteConfig(BaseModel):
@@ -564,9 +629,13 @@ class SemanticFitCrossEncoderRemoteConfig(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         del __context
         if int(self.timeout_ms) <= 0:
-            raise ValueError("matching.scorer.semantic_fit.cross_encoder.remote.timeout_ms must be positive")
+            raise ValueError(
+                "matching.scorer.semantic_fit.cross_encoder.remote.timeout_ms must be positive"
+            )
         if int(self.max_batch_size) <= 0:
-            raise ValueError("matching.scorer.semantic_fit.cross_encoder.remote.max_batch_size must be positive")
+            raise ValueError(
+                "matching.scorer.semantic_fit.cross_encoder.remote.max_batch_size must be positive"
+            )
 
 
 class SemanticFitCrossEncoderConfig(BaseModel):
@@ -777,6 +846,7 @@ class MatchingConfig(BaseModel):
     matcher: MatcherConfig = MatcherConfig()
     scorer: ScorerConfig = ScorerConfig()
     llm_judge: MatchLlmJudgeConfig = Field(default_factory=MatchLlmJudgeConfig)
+    resume_generation: ResumeGenerationConfig = Field(default_factory=ResumeGenerationConfig)
     result_policy: ResultPolicy = Field(default_factory=ResultPolicy)
     invalidate_on_job_change: bool = True
     invalidate_on_resume_change: bool = True
@@ -894,13 +964,19 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["DATABASE_URL"], ["database", "url"]),
     (["ORCHESTRATOR_REDIS_URL", "REDIS_URL"], ["orchestrator", "redis_url"]),
     (["ORCHESTRATION_TTL"], ["orchestrator", "orchestration_ttl"]),
-    (["LISTENER_TIMEOUT_SECONDS", "LISTENER_TIMEOUT"], ["orchestrator", "listener_timeout_seconds"]),
+    (
+        ["LISTENER_TIMEOUT_SECONDS", "LISTENER_TIMEOUT"],
+        ["orchestrator", "listener_timeout_seconds"],
+    ),
     (["SCRAPER_INTERVAL_HOURS"], ["orchestrator", "scraper_interval_hours"]),
     (["SCRAPER_LOCK_TTL_SECONDS"], ["orchestrator", "scraper_lock_ttl_seconds"]),
     (["SCRAPER_RETRY_INTERVALS"], ["orchestrator", "scraper_retry_intervals"]),
     (["SCRAPER_EXTRACTION_LIMIT"], ["orchestrator", "scraper_extraction_limit"]),
     (["SCRAPER_EMBEDDING_LIMIT"], ["orchestrator", "scraper_embedding_limit"]),
-    (["PROCESS_IMPORTED_EMBEDDING_MAX_BATCHES"], ["orchestrator", "process_imported_embedding_max_batches"]),
+    (
+        ["PROCESS_IMPORTED_EMBEDDING_MAX_BATCHES"],
+        ["orchestrator", "process_imported_embedding_max_batches"],
+    ),
     (["BATCH_STAGE_TIMEOUT_SECONDS"], ["orchestrator", "batch_stage_timeout_seconds"]),
     (["REPAIR_INTERVAL_SECONDS"], ["orchestrator", "repair_interval_seconds"]),
     (["DESCRIPTION_RECOVERY_LIMIT"], ["orchestrator", "description_recovery_limit"]),
@@ -926,34 +1002,67 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["PREFERENCES_PARSER_API_KEY"], ["preferences", "parser", "api_key"]),
     (["PREFERENCES_PARSER_API_SECRET"], ["preferences", "parser", "api_secret"]),
     (["PREFERENCES_PARSER_MODEL"], ["preferences", "parser", "model"]),
-    (["PREFERENCES_PARSER_STRUCTURED_OUTPUT_MODE"], ["preferences", "parser", "structured_output_mode"]),
+    (
+        ["PREFERENCES_PARSER_STRUCTURED_OUTPUT_MODE"],
+        ["preferences", "parser", "structured_output_mode"],
+    ),
     (["PREFERENCES_SEMANTIC_RERANKER_PROVIDER"], ["preferences", "semantic_reranker", "provider"]),
     (["PREFERENCES_SEMANTIC_RERANKER_BASE_URL"], ["preferences", "semantic_reranker", "base_url"]),
     (["PREFERENCES_SEMANTIC_RERANKER_API_KEY"], ["preferences", "semantic_reranker", "api_key"]),
-    (["PREFERENCES_SEMANTIC_RERANKER_API_SECRET"], ["preferences", "semantic_reranker", "api_secret"]),
+    (
+        ["PREFERENCES_SEMANTIC_RERANKER_API_SECRET"],
+        ["preferences", "semantic_reranker", "api_secret"],
+    ),
     (["PREFERENCES_SEMANTIC_RERANKER_MODEL"], ["preferences", "semantic_reranker", "model"]),
-    (["PREFERENCES_SEMANTIC_RERANKER_STRUCTURED_OUTPUT_MODE"], ["preferences", "semantic_reranker", "structured_output_mode"]),
-    (["PREFERENCES_SEMANTIC_RERANKER_TOP_N_DEFAULT"], ["preferences", "semantic_reranker", "top_n_default"]),
-    (["PREFERENCES_SEMANTIC_RERANKER_TOP_N_MIN"], ["preferences", "semantic_reranker", "top_n_min"]),
-    (["PREFERENCES_SEMANTIC_RERANKER_TOP_N_MAX"], ["preferences", "semantic_reranker", "top_n_max"]),
+    (
+        ["PREFERENCES_SEMANTIC_RERANKER_STRUCTURED_OUTPUT_MODE"],
+        ["preferences", "semantic_reranker", "structured_output_mode"],
+    ),
+    (
+        ["PREFERENCES_SEMANTIC_RERANKER_TOP_N_DEFAULT"],
+        ["preferences", "semantic_reranker", "top_n_default"],
+    ),
+    (
+        ["PREFERENCES_SEMANTIC_RERANKER_TOP_N_MIN"],
+        ["preferences", "semantic_reranker", "top_n_min"],
+    ),
+    (
+        ["PREFERENCES_SEMANTIC_RERANKER_TOP_N_MAX"],
+        ["preferences", "semantic_reranker", "top_n_max"],
+    ),
     (["PREFERENCES_LLM_JUDGE_PROVIDER"], ["preferences", "llm_judge", "provider"]),
     (["PREFERENCES_LLM_JUDGE_BASE_URL"], ["preferences", "llm_judge", "base_url"]),
     (["PREFERENCES_LLM_JUDGE_API_KEY"], ["preferences", "llm_judge", "api_key"]),
     (["PREFERENCES_LLM_JUDGE_API_SECRET"], ["preferences", "llm_judge", "api_secret"]),
     (["PREFERENCES_LLM_JUDGE_MODEL"], ["preferences", "llm_judge", "model"]),
-    (["PREFERENCES_LLM_JUDGE_STRUCTURED_OUTPUT_MODE"], ["preferences", "llm_judge", "structured_output_mode"]),
+    (
+        ["PREFERENCES_LLM_JUDGE_STRUCTURED_OUTPUT_MODE"],
+        ["preferences", "llm_judge", "structured_output_mode"],
+    ),
     (["PREFERENCES_RERANKER"], ["preferences", "reranker"]),
     (["PREFERENCES_CROSS_ENCODER_ENABLED"], ["preferences", "cross_encoder", "enabled"]),
     (["PREFERENCES_CROSS_ENCODER_MODEL_NAME"], ["preferences", "cross_encoder", "model_name"]),
     (["PREFERENCES_CROSS_ENCODER_CACHE_PATH"], ["preferences", "cross_encoder", "cache_path"]),
     (["PREFERENCES_CROSS_ENCODER_RUNTIME"], ["preferences", "cross_encoder", "runtime"]),
-    (["PREFERENCES_CROSS_ENCODER_MAX_BATCH_SIZE"], ["preferences", "cross_encoder", "max_batch_size"]),
-    (["PREFERENCES_CROSS_ENCODER_TRUST_REMOTE_CODE"], ["preferences", "cross_encoder", "trust_remote_code"]),
+    (
+        ["PREFERENCES_CROSS_ENCODER_MAX_BATCH_SIZE"],
+        ["preferences", "cross_encoder", "max_batch_size"],
+    ),
+    (
+        ["PREFERENCES_CROSS_ENCODER_TRUST_REMOTE_CODE"],
+        ["preferences", "cross_encoder", "trust_remote_code"],
+    ),
     (["FIT_SEMANTIC_ENABLED"], ["matching", "scorer", "semantic_fit", "enabled"]),
     (["FIT_SEMANTIC_DEFAULT_MODE"], ["matching", "scorer", "semantic_fit", "default_mode"]),
     (["FIT_SEMANTIC_RECALL_TOP_K"], ["matching", "scorer", "semantic_fit", "recall_top_k"]),
-    (["EVIDENCE_RERANK_ENABLED"], ["matching", "scorer", "semantic_fit", "evidence_rerank_enabled"]),
-    (["EVIDENCE_LLM_ESCALATION"], ["matching", "scorer", "semantic_fit", "evidence_llm_escalation"]),
+    (
+        ["EVIDENCE_RERANK_ENABLED"],
+        ["matching", "scorer", "semantic_fit", "evidence_rerank_enabled"],
+    ),
+    (
+        ["EVIDENCE_LLM_ESCALATION"],
+        ["matching", "scorer", "semantic_fit", "evidence_llm_escalation"],
+    ),
     (["TWO_TIER_SELECTION_ENABLED"], ["matching", "two_tier_selection_enabled"]),
     (["MATCH_LLM_JUDGE_ENABLED"], ["matching", "llm_judge", "enabled"]),
     (["MATCH_LLM_JUDGE_AUTO_ENQUEUE_ENABLED"], ["matching", "llm_judge", "auto_enqueue_enabled"]),
@@ -962,13 +1071,48 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["MATCH_LLM_JUDGE_MAX_PER_RUN"], ["matching", "llm_judge", "max_per_run"]),
     (["MATCH_LLM_JUDGE_MAX_PER_OWNER_PER_DAY"], ["matching", "llm_judge", "max_per_owner_per_day"]),
     (["MATCH_LLM_JUDGE_REUSE_TTL_DAYS"], ["matching", "llm_judge", "reuse_ttl_days"]),
-    (["MATCH_LLM_JUDGE_JOB_DESCRIPTION_MAX_CHARS"], ["matching", "llm_judge", "job_description_max_chars"]),
-    (["MATCH_LLM_JUDGE_REQUIREMENTS_MAX_COUNT"], ["matching", "llm_judge", "requirements_max_count"]),
-    (["MATCH_LLM_JUDGE_REQUIREMENT_TEXT_MAX_CHARS"], ["matching", "llm_judge", "requirement_text_max_chars"]),
-    (["MATCH_LLM_JUDGE_EVIDENCE_UNITS_MAX_COUNT"], ["matching", "llm_judge", "evidence_units_max_count"]),
-    (["MATCH_LLM_JUDGE_EVIDENCE_UNIT_MAX_CHARS"], ["matching", "llm_judge", "evidence_unit_max_chars"]),
-    (["MATCH_LLM_JUDGE_RESUME_SUMMARY_MAX_CHARS"], ["matching", "llm_judge", "resume_summary_max_chars"]),
-    (["MATCH_LLM_JUDGE_PUBLIC_ANALYSIS_MAX_CHARS"], ["matching", "llm_judge", "public_analysis_max_chars"]),
+    (
+        ["MATCH_LLM_JUDGE_JOB_DESCRIPTION_MAX_CHARS"],
+        ["matching", "llm_judge", "job_description_max_chars"],
+    ),
+    (
+        ["MATCH_LLM_JUDGE_REQUIREMENTS_MAX_COUNT"],
+        ["matching", "llm_judge", "requirements_max_count"],
+    ),
+    (
+        ["MATCH_LLM_JUDGE_REQUIREMENT_TEXT_MAX_CHARS"],
+        ["matching", "llm_judge", "requirement_text_max_chars"],
+    ),
+    (
+        ["MATCH_LLM_JUDGE_EVIDENCE_UNITS_MAX_COUNT"],
+        ["matching", "llm_judge", "evidence_units_max_count"],
+    ),
+    (
+        ["MATCH_LLM_JUDGE_EVIDENCE_UNIT_MAX_CHARS"],
+        ["matching", "llm_judge", "evidence_unit_max_chars"],
+    ),
+    (
+        ["MATCH_LLM_JUDGE_RESUME_SUMMARY_MAX_CHARS"],
+        ["matching", "llm_judge", "resume_summary_max_chars"],
+    ),
+    (
+        ["MATCH_LLM_JUDGE_PUBLIC_ANALYSIS_MAX_CHARS"],
+        ["matching", "llm_judge", "public_analysis_max_chars"],
+    ),
+    (["RESUME_GENERATION_ENABLED"], ["matching", "resume_generation", "enabled"]),
+    (["RESUME_GENERATION_MODEL"], ["matching", "resume_generation", "runtime", "model"]),
+    (
+        ["RESUME_GENERATION_TIMEOUT_SECONDS"],
+        ["matching", "resume_generation", "runtime", "timeout_seconds"],
+    ),
+    (
+        ["RESUME_GENERATION_MAX_OUTPUT_TOKENS"],
+        ["matching", "resume_generation", "runtime", "max_output_tokens"],
+    ),
+    (
+        ["RESUME_GENERATION_JOB_DESCRIPTION_MAX_CHARS"],
+        ["matching", "resume_generation", "job_description_max_chars"],
+    ),
     (["LLM_AS_A_JUDGE_PROVIDER"], ["matching", "llm_judge", "runtime", "provider"]),
     (["LLM_AS_A_JUDGE_BASE_URL"], ["matching", "llm_judge", "runtime", "base_url"]),
     (["LLM_AS_A_JUDGE_API_KEY"], ["matching", "llm_judge", "runtime", "api_key"]),
@@ -976,16 +1120,43 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["LLM_AS_A_JUDGE_MODEL"], ["matching", "llm_judge", "runtime", "model"]),
     (["LLM_AS_A_JUDGE_TEMPERATURE"], ["matching", "llm_judge", "runtime", "temperature"]),
     (["LLM_AS_A_JUDGE_TIMEOUT_SECONDS"], ["matching", "llm_judge", "runtime", "timeout_seconds"]),
-    (["LLM_AS_A_JUDGE_STRUCTURED_OUTPUT_MODE"], ["matching", "llm_judge", "runtime", "structured_output_mode"]),
+    (
+        ["LLM_AS_A_JUDGE_STRUCTURED_OUTPUT_MODE"],
+        ["matching", "llm_judge", "runtime", "structured_output_mode"],
+    ),
     (["LLM_AS_A_JUDGE_MAX_INPUT_TOKENS"], ["matching", "llm_judge", "runtime", "max_input_tokens"]),
-    (["FIT_CROSS_ENCODER_ROUTE_POLICY"], ["matching", "scorer", "semantic_fit", "cross_encoder", "route_policy"]),
-    (["FIT_CROSS_ENCODER_LOCAL_RUNTIME"], ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "runtime"]),
-    (["FIT_CROSS_ENCODER_LOCAL_MODEL"], ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "model_name"]),
-    (["FIT_CROSS_ENCODER_LOCAL_MODEL_CACHE_PATH"], ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "model_cache_path"]),
-    (["FIT_CROSS_ENCODER_LOCAL_TIMEOUT_MS"], ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "timeout_ms"]),
-    (["FIT_CROSS_ENCODER_REMOTE_BASE_URL"], ["matching", "scorer", "semantic_fit", "cross_encoder", "remote", "base_url"]),
-    (["FIT_CROSS_ENCODER_REMOTE_API_KEY"], ["matching", "scorer", "semantic_fit", "cross_encoder", "remote", "api_key"]),
-    (["FIT_CROSS_ENCODER_REMOTE_MODEL"], ["matching", "scorer", "semantic_fit", "cross_encoder", "remote", "model"]),
+    (
+        ["FIT_CROSS_ENCODER_ROUTE_POLICY"],
+        ["matching", "scorer", "semantic_fit", "cross_encoder", "route_policy"],
+    ),
+    (
+        ["FIT_CROSS_ENCODER_LOCAL_RUNTIME"],
+        ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "runtime"],
+    ),
+    (
+        ["FIT_CROSS_ENCODER_LOCAL_MODEL"],
+        ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "model_name"],
+    ),
+    (
+        ["FIT_CROSS_ENCODER_LOCAL_MODEL_CACHE_PATH"],
+        ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "model_cache_path"],
+    ),
+    (
+        ["FIT_CROSS_ENCODER_LOCAL_TIMEOUT_MS"],
+        ["matching", "scorer", "semantic_fit", "cross_encoder", "local", "timeout_ms"],
+    ),
+    (
+        ["FIT_CROSS_ENCODER_REMOTE_BASE_URL"],
+        ["matching", "scorer", "semantic_fit", "cross_encoder", "remote", "base_url"],
+    ),
+    (
+        ["FIT_CROSS_ENCODER_REMOTE_API_KEY"],
+        ["matching", "scorer", "semantic_fit", "cross_encoder", "remote", "api_key"],
+    ),
+    (
+        ["FIT_CROSS_ENCODER_REMOTE_MODEL"],
+        ["matching", "scorer", "semantic_fit", "cross_encoder", "remote", "model"],
+    ),
     (["FIT_LLM_PROVIDER"], ["matching", "scorer", "semantic_fit", "llm", "provider"]),
     (["FIT_LLM_BASE_URL"], ["matching", "scorer", "semantic_fit", "llm", "base_url"]),
     (["FIT_LLM_API_KEY"], ["matching", "scorer", "semantic_fit", "llm", "api_key"]),
@@ -1017,7 +1188,10 @@ DEFAULT_HEADER_MAPPINGS: tuple[HeaderMapping, ...] = (
     ("ETL_EXTRACTION_MODEL_HEADER_ENV_VARS", ["etl", "llm", "extraction_headers"]),
     ("ETL_EMBEDDING_MODEL_HEADER_ENV_VARS", ["etl", "llm", "embedding_headers"]),
     ("PREFERENCES_PARSER_HEADER_ENV_VARS", ["preferences", "parser", "headers"]),
-    ("PREFERENCES_SEMANTIC_RERANKER_HEADER_ENV_VARS", ["preferences", "semantic_reranker", "headers"]),
+    (
+        "PREFERENCES_SEMANTIC_RERANKER_HEADER_ENV_VARS",
+        ["preferences", "semantic_reranker", "headers"],
+    ),
     ("PREFERENCES_LLM_JUDGE_HEADER_ENV_VARS", ["preferences", "llm_judge", "headers"]),
     ("LLM_AS_A_JUDGE_HEADER_ENV_VARS", ["matching", "llm_judge", "runtime", "headers"]),
     ("FIT_LLM_HEADER_ENV_VARS", ["matching", "scorer", "semantic_fit", "llm", "headers"]),
@@ -1057,16 +1231,24 @@ def _apply_llm_judge_provider_api_key_override(data: Dict[str, Any]) -> None:
     if os.environ.get("LLM_AS_A_JUDGE_API_KEY"):
         return
 
-    provider = str(
-        os.environ.get("LLM_AS_A_JUDGE_PROVIDER")
-        or _get_nested(data, ["matching", "llm_judge", "runtime", "provider"])
-        or ""
-    ).strip().lower()
-    base_url = str(
-        os.environ.get("LLM_AS_A_JUDGE_BASE_URL")
-        or _get_nested(data, ["matching", "llm_judge", "runtime", "base_url"])
-        or ""
-    ).strip().lower()
+    provider = (
+        str(
+            os.environ.get("LLM_AS_A_JUDGE_PROVIDER")
+            or _get_nested(data, ["matching", "llm_judge", "runtime", "provider"])
+            or ""
+        )
+        .strip()
+        .lower()
+    )
+    base_url = (
+        str(
+            os.environ.get("LLM_AS_A_JUDGE_BASE_URL")
+            or _get_nested(data, ["matching", "llm_judge", "runtime", "base_url"])
+            or ""
+        )
+        .strip()
+        .lower()
+    )
 
     provider_api_key = None
     base_url_host = _base_url_host(base_url)
@@ -1126,7 +1308,9 @@ def apply_env_overrides(
     for env_vars, keys in env_mappings:
         if "JOBSPY_URL" in env_vars:
             continue
-        val = next((os.environ.get(env_var) for env_var in env_vars if os.environ.get(env_var)), None)
+        val = next(
+            (os.environ.get(env_var) for env_var in env_vars if os.environ.get(env_var)), None
+        )
         if val:
             _set_nested(data, list(keys), val)
     _apply_llm_judge_provider_chain_override(data)

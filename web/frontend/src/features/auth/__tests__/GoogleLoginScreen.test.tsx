@@ -17,6 +17,7 @@ vi.mock('../useAuth', () => ({
 
 vi.mock('@/services/cloudAuthApi', () => ({
     cloudAuthApi: {
+        createGoogleLoginNonce: vi.fn(),
         exchangeGoogleCredential: vi.fn(),
     },
 }));
@@ -36,6 +37,9 @@ describe('GoogleLoginScreen', () => {
         vi.useFakeTimers();
         vi.clearAllMocks();
         vi.stubEnv('VITE_GOOGLE_CLIENT_ID', 'test-client-id-abc');
+        vi.mocked(cloudAuthApi.createGoogleLoginNonce).mockResolvedValue({
+            data: { nonce: 'login-nonce-123', expires_at: 1_800_000_000 },
+        } as never);
         document.getElementById('google-gsi')?.remove();
         delete (globalThis as any).google;
     });
@@ -57,7 +61,7 @@ describe('GoogleLoginScreen', () => {
         it('renders the sign-in sub-text', () => {
             render(<GoogleLoginScreen />);
             expect(
-                screen.getByText(/Sign in with Google to keep your resume/i)
+                screen.getByText(/Non-admin accounts and their uploaded data are deleted four hours/i)
             ).toBeInTheDocument();
         });
 
@@ -77,7 +81,7 @@ describe('GoogleLoginScreen', () => {
     });
 
     describe('Google SDK polling', () => {
-        it('calls google.accounts.id.initialize when window.google becomes available', () => {
+        it('calls google.accounts.id.initialize when window.google becomes available', async () => {
             const mockInitialize = vi.fn();
             const mockRenderButton = vi.fn();
             (globalThis as any).google = {
@@ -85,14 +89,20 @@ describe('GoogleLoginScreen', () => {
             };
 
             render(<GoogleLoginScreen />);
-            act(() => { vi.advanceTimersByTime(200); });
+            await act(async () => {
+                vi.advanceTimersByTime(200);
+                await Promise.resolve();
+            });
 
             expect(mockInitialize).toHaveBeenCalledWith(
-                expect.objectContaining({ client_id: 'test-client-id-abc' })
+                expect.objectContaining({
+                    client_id: 'test-client-id-abc',
+                    nonce: 'login-nonce-123',
+                })
             );
         });
 
-        it('calls google.accounts.id.renderButton with the button ref', () => {
+        it('calls google.accounts.id.renderButton with the button ref', async () => {
             const mockInitialize = vi.fn();
             const mockRenderButton = vi.fn();
             (globalThis as any).google = {
@@ -100,7 +110,10 @@ describe('GoogleLoginScreen', () => {
             };
 
             render(<GoogleLoginScreen />);
-            act(() => { vi.advanceTimersByTime(200); });
+            await act(async () => {
+                vi.advanceTimersByTime(200);
+                await Promise.resolve();
+            });
 
             expect(mockRenderButton).toHaveBeenCalledWith(
                 expect.any(HTMLElement),
@@ -115,7 +128,7 @@ describe('GoogleLoginScreen', () => {
             expect(mockInitialize).not.toHaveBeenCalled();
         });
 
-        it('stops polling after google SDK becomes available', () => {
+        it('stops polling after google SDK becomes available', async () => {
             const mockInitialize = vi.fn();
             const mockRenderButton = vi.fn();
             (globalThis as any).google = {
@@ -123,7 +136,10 @@ describe('GoogleLoginScreen', () => {
             };
 
             render(<GoogleLoginScreen />);
-            act(() => { vi.advanceTimersByTime(300); });
+            await act(async () => {
+                vi.advanceTimersByTime(300);
+                await Promise.resolve();
+            });
 
             // initialize should only be called once even after multiple ticks
             expect(mockInitialize).toHaveBeenCalledTimes(1);
@@ -139,7 +155,7 @@ describe('GoogleLoginScreen', () => {
 
     describe('login callback', () => {
         /** Mount the screen with a captured Google callback and a fresh mockLogin. */
-        function setupLoginCallback(
+        async function setupLoginCallback(
             exchangeUserOverrides: Partial<{
                 id: string;
                 email: string;
@@ -184,7 +200,10 @@ describe('GoogleLoginScreen', () => {
                 },
             };
             const { unmount } = render(<GoogleLoginScreen />);
-            act(() => { vi.advanceTimersByTime(200); });
+            await act(async () => {
+                vi.advanceTimersByTime(200);
+                await Promise.resolve();
+            });
             return {
                 mockLogin,
                 unmount,
@@ -195,14 +214,17 @@ describe('GoogleLoginScreen', () => {
         }
 
         it('exchanges the Google credential and stores the app token', async () => {
-            const { mockLogin, fire } = setupLoginCallback();
+            const { mockLogin, fire } = await setupLoginCallback();
             const payload = { email: 'user@test.com', name: 'Test User', picture: 'https://img/p.jpg' };
             const fakeJwt = `eyJhbGciOiJSUzI1NiJ9.${btoa(JSON.stringify(payload))}.sig`;
             await act(async () => {
                 await fire(fakeJwt);
             });
 
-            expect(cloudAuthApi.exchangeGoogleCredential).toHaveBeenCalledWith(fakeJwt);
+            expect(cloudAuthApi.exchangeGoogleCredential).toHaveBeenCalledWith(
+                fakeJwt,
+                'login-nonce-123'
+            );
             expect(mockLogin).toHaveBeenCalledWith(
                 expect.objectContaining({ email: 'user@test.com', name: 'Test User' }),
                 'app-token-123'
@@ -210,7 +232,7 @@ describe('GoogleLoginScreen', () => {
         });
 
         it('includes the returned picture in the stored user', async () => {
-            const { mockLogin, fire } = setupLoginCallback();
+            const { mockLogin, fire } = await setupLoginCallback();
             const payload = { email: 'pic@test.com', name: 'Pic User', picture: 'https://cdn/photo.jpg' };
             const fakeJwt = `header.${btoa(JSON.stringify(payload))}.sig`;
             await act(async () => {
@@ -224,7 +246,7 @@ describe('GoogleLoginScreen', () => {
         });
 
         it('passes through an undefined picture when the backend omits it', async () => {
-            const { mockLogin, fire } = setupLoginCallback({ picture: undefined });
+            const { mockLogin, fire } = await setupLoginCallback({ picture: undefined });
 
             await act(async () => {
                 await fire('header.payload.sig');
@@ -237,7 +259,7 @@ describe('GoogleLoginScreen', () => {
         });
 
         it('uses the backend-returned identity rather than parsing the JWT locally', async () => {
-            const { mockLogin, fire } = setupLoginCallback();
+            const { mockLogin, fire } = await setupLoginCallback();
             const payload = { email: 'noname@test.com' };
             const fakeJwt = `header.${btoa(JSON.stringify(payload))}.sig`;
             await act(async () => {
@@ -251,7 +273,7 @@ describe('GoogleLoginScreen', () => {
         });
 
         it('shows an error when the exchange fails', async () => {
-            const { fire, mockLogin } = setupLoginCallback();
+            const { fire, mockLogin } = await setupLoginCallback();
             vi.mocked(cloudAuthApi.exchangeGoogleCredential).mockRejectedValueOnce(
                 new Error('exchange failed')
             );
@@ -285,7 +307,7 @@ describe('GoogleLoginScreen', () => {
                 exchange.promise as never
             );
 
-            const { fire } = setupLoginCallback();
+            const { fire } = await setupLoginCallback();
 
             await act(async () => {
                 void fire('header.payload.sig');
@@ -345,7 +367,7 @@ describe('GoogleLoginScreen', () => {
                 };
             }>();
 
-            const { fire, mockLogin } = setupLoginCallback();
+            const { fire, mockLogin } = await setupLoginCallback();
             vi.mocked(cloudAuthApi.exchangeGoogleCredential)
                 .mockReturnValueOnce(firstExchange.promise as never)
                 .mockReturnValueOnce(secondExchange.promise as never);
@@ -416,7 +438,7 @@ describe('GoogleLoginScreen', () => {
                     };
                 };
             }>();
-            const { fire, mockLogin, unmount } = setupLoginCallback();
+            const { fire, mockLogin, unmount } = await setupLoginCallback();
             vi.mocked(cloudAuthApi.exchangeGoogleCredential).mockReturnValueOnce(
                 exchange.promise as never
             );
@@ -450,7 +472,7 @@ describe('GoogleLoginScreen', () => {
         });
 
         it('ignores Google callbacks that arrive after unmount', async () => {
-            const { fire, mockLogin, unmount } = setupLoginCallback();
+            const { fire, mockLogin, unmount } = await setupLoginCallback();
 
             unmount();
 

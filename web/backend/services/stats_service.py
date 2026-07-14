@@ -677,7 +677,7 @@ def build_stats_response(
 ) -> StatsResponse:
     """Build tenant-aware canonical summary stats for dashboard and matches summary."""
     policy_service = policy_service_factory()
-    current_policy = policy_service.get_current_policy()
+    current_policy = policy_service.get_current_policy(getattr(user, "id", None))
     effective_min_fit = current_policy.min_fit if min_fit is None else min_fit
     effective_top_k = current_policy.top_k if top_k is None else top_k
 

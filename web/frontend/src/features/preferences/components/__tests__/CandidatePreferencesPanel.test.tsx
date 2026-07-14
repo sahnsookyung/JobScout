@@ -8,6 +8,9 @@ import { useCandidatePreferences } from '@/hooks/useCandidatePreferences';
 
 vi.mock('@/hooks/useCandidatePreferences');
 vi.mock('sonner');
+vi.mock('../PreferenceRankingSettings', () => ({
+    PreferenceRankingSettings: () => <section>Preference ranking settings</section>,
+}));
 
 const mockUseCandidatePreferences = vi.mocked(useCandidatePreferences);
 
@@ -40,6 +43,12 @@ describe('CandidatePreferencesPanel', () => {
         };
         mockUseCandidatePreferences.mockImplementation(() => hookState);
         savePreferences.mockResolvedValue({ data: hookState.preferences });
+    });
+
+    it('places preference ranking settings inside candidate preferences', () => {
+        render(<CandidatePreferencesPanel />);
+
+        expect(screen.getByText('Preference ranking settings')).toBeInTheDocument();
     });
 
     it('preserves unsaved edits across background preference refetches', async () => {

@@ -67,6 +67,7 @@ def test_compose_env_reserves_mailpit_ports() -> None:
     assert env["MAILPIT_SMTP_PORT"].isdigit()
     assert env["MAILPIT_UI_PORT"].isdigit()
     assert env["COMPOSE_PROJECT_NAME"] == "jobscout-e2e"
+    assert env["JOBSPY_API_TOKEN"] == "jobscout-e2e-internal-token"
     assert env["WEB_BACKEND_CONTAINER_NAME"] == "jobscout-e2e-web-backend"
 
 

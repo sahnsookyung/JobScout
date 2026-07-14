@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.config_loader import (
     CEREBRAS_OPENAI_COMPATIBLE_BASE_URL,
@@ -13,6 +13,7 @@ from core.config_loader import (
     SemanticFitLlmConfig,
 )
 from core.llm.interfaces import LLMProvider
+from core.llm.global_budget import BudgetedLLMProvider, global_llm_budget_enabled
 from core.llm.openai_service import OpenAIService
 
 
@@ -26,6 +27,7 @@ class RuntimeLLMConfig(BaseModel):
     temperature: float = 0.0
     timeout_seconds: Optional[int] = None
     structured_output_mode: Optional[Literal["auto", "json_schema", "json_object"]] = None
+    max_output_tokens: Optional[int] = Field(default=None, ge=1)
     embedding_model: Optional[str] = None
     embedding_dimensions: Optional[int] = None
     embedding_base_url: Optional[str] = None
@@ -131,8 +133,7 @@ def build_llm_provider(config: RuntimeLLMConfig) -> LLMProvider:
         )
     if not str(config.model or "").strip():
         raise RuntimeError(
-            "Runtime LLM provider configuration requires a model for "
-            f"provider='{config.provider}'."
+            f"Runtime LLM provider configuration requires a model for provider='{config.provider}'."
         )
 
     model_config = {
@@ -141,16 +142,20 @@ def build_llm_provider(config: RuntimeLLMConfig) -> LLMProvider:
         "embedding_dimensions": config.embedding_dimensions,
         "extraction_temperature": config.temperature,
     }
-    return OpenAIService(
+    service = OpenAIService(
         base_url=_normalize_base_url(config),
         api_key=config.api_key,
         api_secret=config.api_secret,
         model_config=model_config,
         extraction_headers=config.headers,
         timeout_seconds=config.timeout_seconds,
+        max_output_tokens=config.max_output_tokens,
         structured_output_mode=_normalize_structured_output_mode(config),
         embedding_base_url=config.embedding_base_url,
         embedding_api_key=config.embedding_api_key,
         embedding_api_secret=config.embedding_api_secret,
         embedding_headers=config.embedding_headers,
     )
+    if global_llm_budget_enabled():
+        return BudgetedLLMProvider(service)
+    return service

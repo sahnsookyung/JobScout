@@ -1,7 +1,10 @@
+import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+from core.llm.schema_models import ResumeSchema
 from tests.mocks.fake_service import (
     FAIL_EMBEDDING_MARKER,
     FAIL_EXTRACTION_MARKER,
@@ -13,6 +16,8 @@ from tests.mocks.fake_service import (
     _tokenize,
     _unit_normalize,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
 def test_tokenize_and_overlap_ignore_generic_tokens():
@@ -351,6 +356,17 @@ def test_fake_service_extract_resume_data_returns_valid_fixture():
     fixture = {"profile": {"experience": []}, "extraction": {"confidence": 0.9, "warnings": []}}
     result = service.extract_resume_data(__import__("json").dumps(fixture))
     assert result == fixture
+
+
+@pytest.mark.parametrize(
+    "fixture_name",
+    ["valid_resume.json", "fail_embedding_resume.json"],
+)
+def test_e2e_resume_fixture_matches_current_schema(fixture_name: str) -> None:
+    fixture_path = REPO_ROOT / "tests" / "fixtures" / "resumes" / fixture_name
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+    assert ResumeSchema.model_validate(fixture)
 
 
 def test_fake_service_generate_embedding_small_dimensions_breaks_hash_loop():

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { AuthGate } from '@/features/auth/AuthGate';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { TurnstileGate } from '@/features/auth/TurnstileGate';
+import { useAuth } from '@/features/auth/useAuth';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { MatchList } from '@/features/matches/components/MatchList';
 import { MatchDetailsModal } from '@/features/matches/components/MatchDetailsModal';
 import { EmailVerificationPage } from '@/features/notifications/components/EmailVerificationPage';
@@ -11,15 +13,7 @@ import { JobManagementPanel } from '@/features/dashboard/components/JobManagemen
 import { ToastProvider } from '@/components/ui/Toast';
 import { AppErrorBoundary } from '@/components/AppErrorBoundary';
 import { stripAppBasePath } from '@/config/publicPath';
-
-const queryClient = new QueryClient({
-    defaultOptions: {
-        queries: {
-            refetchOnWindowFocus: false,
-            retry: 1,
-        },
-    },
-});
+import { queryClient } from '@/services/queryClient';
 
 type WorkspaceTab = 'jobs' | 'management';
 
@@ -33,6 +27,7 @@ function workspaceTabClass(isActive: boolean): string {
 }
 
 function AppContent() {
+    const { user } = useAuth();
     const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<WorkspaceTab>('jobs');
 
@@ -50,6 +45,7 @@ function AppContent() {
             <DashboardHeader />
 
             <main className="mx-auto max-w-[var(--container-content)] px-5 pb-24 pt-8 sm:px-8 lg:px-10">
+                <TurnstileGate />
                 <div className="enter mb-10">
                     <DashboardControls includeManagementSections={false} />
                 </div>
@@ -64,15 +60,17 @@ function AppContent() {
                     >
                         Jobs
                     </button>
-                    <button
-                        type="button"
-                        role="tab"
-                        aria-selected={activeTab === 'management'}
-                        className={workspaceTabClass(activeTab === 'management')}
-                        onClick={() => setActiveTab('management')}
-                    >
-                        Job Management
-                    </button>
+                    {user?.is_platform_admin && (
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={activeTab === 'management'}
+                            className={workspaceTabClass(activeTab === 'management')}
+                            onClick={() => setActiveTab('management')}
+                        >
+                            Job Management
+                        </button>
+                    )}
                 </div>
 
                 {activeTab === 'jobs' ? (

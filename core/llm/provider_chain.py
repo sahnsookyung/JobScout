@@ -86,9 +86,8 @@ def classify_llm_provider_error(exc: BaseException) -> str:
         return "unsupported_model"
     if status_code in {400, 422}:
         return "invalid_request"
-    if (
-        isinstance(exc, ValueError)
-        and ("schema" in message or "json" in message or "validation" in message)
+    if isinstance(exc, ValueError) and (
+        "schema" in message or "json" in message or "validation" in message
     ):
         return "schema_error"
     return "unknown"
@@ -115,9 +114,7 @@ def configured_provider_entries(
     entries = [
         entry
         for entry in list(getattr(config, "providers", None) or [])
-        if str(entry.base_url or "").strip()
-        and str(entry.model or "").strip()
-        and _has_auth(entry)
+        if str(entry.base_url or "").strip() and str(entry.model or "").strip() and _has_auth(entry)
     ]
     return entries
 
@@ -136,10 +133,12 @@ def runtime_config_from_provider_entry(
         temperature=entry.temperature,
         timeout_seconds=entry.timeout_seconds,
         structured_output_mode=entry.structured_output_mode,
+        max_output_tokens=entry.max_output_tokens,
     )
 
 
 def sanitized_provider_config(entry: LlmJudgeProviderRuntimeConfig) -> dict[str, Any]:
+    max_output_tokens = getattr(entry, "max_output_tokens", None)
     requests_per_minute = getattr(entry, "requests_per_minute", None)
     rate_limit_max_wait_seconds = getattr(entry, "rate_limit_max_wait_seconds", 0)
     fallback_on_rate_limit = getattr(entry, "fallback_on_rate_limit", False)
@@ -151,10 +150,11 @@ def sanitized_provider_config(entry: LlmJudgeProviderRuntimeConfig) -> dict[str,
         "structured_output_mode": str(entry.structured_output_mode),
         "timeout_seconds": int(entry.timeout_seconds),
         "max_input_tokens": int(entry.max_input_tokens),
+        "max_output_tokens": (
+            int(max_output_tokens) if max_output_tokens is not None else None
+        ),
         "requests_per_minute": (
-            int(requests_per_minute)
-            if requests_per_minute is not None
-            else None
+            int(requests_per_minute) if requests_per_minute is not None else None
         ),
         "rate_limit_max_wait_seconds": int(rate_limit_max_wait_seconds),
         "fallback_on_rate_limit": bool(fallback_on_rate_limit),

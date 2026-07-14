@@ -93,6 +93,7 @@ class PipelineRunReadService:
         self,
         db: Session,
         *,
+        owner_id: Any,
         tenant_id: Any,
         status: str,
         run_type: str,
@@ -101,7 +102,7 @@ class PipelineRunReadService:
         cursor: str | None = None,
         page_mode: str = "offset",
     ) -> tuple[list[PipelineRunSummary], int, str | None, bool, str, int]:
-        filters = []
+        filters = [PipelineRun.owner_id == owner_id]
         filters.append(PipelineRun.tenant_id.is_(None) if tenant_id is None else PipelineRun.tenant_id == tenant_id)
         if status != "all":
             filters.append(PipelineRun.status == status)
@@ -149,6 +150,7 @@ class PipelineRunReadService:
         self,
         db: Session,
         *,
+        owner_id: Any,
         tenant_id: Any,
         run_id: str,
     ) -> PipelineRunSummary | None:
@@ -156,7 +158,7 @@ class PipelineRunReadService:
             lookup_id = uuid.UUID(str(run_id))
         except (TypeError, ValueError):
             return None
-        filters = [PipelineRun.id == lookup_id]
+        filters = [PipelineRun.id == lookup_id, PipelineRun.owner_id == owner_id]
         filters.append(PipelineRun.tenant_id.is_(None) if tenant_id is None else PipelineRun.tenant_id == tenant_id)
         run = db.execute(
             select(PipelineRun)

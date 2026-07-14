@@ -11,7 +11,7 @@ import logging
 
 from sqlalchemy import select, delete, func
 
-from database.models import JobMatch, JobMatchRequirement
+from database.models import JobMatch, JobMatchRequirement, SYSTEM_OWNER_ID
 from core.scorer.models import ScoredJobMatch
 from core.matcher.dto import MatchResultDTO
 from core.utils import _to_native_types
@@ -189,8 +189,9 @@ def _apply_match_values(match_record: JobMatch, values) -> None:
     match_record.calculated_at = values['calculated_at']
 
 
-def _find_existing_match(repo, job_id: str, resume_fingerprint: str):
+def _find_existing_match(repo, job_id: str, resume_fingerprint: str, owner_id):
     existing_stmt = select(JobMatch).where(
+        JobMatch.owner_id == owner_id,
         JobMatch.job_post_id == job_id,
         JobMatch.resume_fingerprint == resume_fingerprint,
     )
@@ -198,11 +199,17 @@ def _find_existing_match(repo, job_id: str, resume_fingerprint: str):
     return existing_stmt, existing
 
 
-def _resolve_hidden_state(repo, job_id: str, existing: JobMatch | None) -> bool:
+def _resolve_hidden_state(
+    repo,
+    job_id: str,
+    existing: JobMatch | None,
+    owner_id,
+) -> bool:
     if existing:
         return existing.is_hidden
 
     hidden_stmt = select(JobMatch).where(
+        JobMatch.owner_id == owner_id,
         JobMatch.job_post_id == job_id,
         JobMatch.is_hidden.is_(True),
     ).limit(1)
@@ -210,8 +217,17 @@ def _resolve_hidden_state(repo, job_id: str, existing: JobMatch | None) -> bool:
     return bool(hidden_match)
 
 
-def _create_match_record(scored_match: ScoredMatch, values, is_hidden: bool) -> JobMatch:
+def _create_match_record(
+    scored_match: ScoredMatch,
+    values,
+    is_hidden: bool,
+    *,
+    owner_id,
+    tenant_id,
+) -> JobMatch:
     return JobMatch(
+        owner_id=owner_id,
+        tenant_id=tenant_id,
         job_post_id=values['job_post_id'],
         resume_fingerprint=scored_match.resume_fingerprint,
         job_similarity=values['job_similarity'],
@@ -242,13 +258,22 @@ def _upsert_match_record(
     values,
     is_hidden: bool,
     is_stale_replacement: bool,
+    *,
+    owner_id,
+    tenant_id,
 ) -> JobMatch:
     if existing and not is_stale_replacement:
         existing.status = 'active'
         _apply_match_values(existing, values)
         return existing
 
-    match_record = _create_match_record(scored_match, values, is_hidden)
+    match_record = _create_match_record(
+        scored_match,
+        values,
+        is_hidden,
+        owner_id=owner_id,
+        tenant_id=tenant_id,
+    )
     repo.db.add(match_record)
     return match_record
 
@@ -305,6 +330,9 @@ def save_match_to_db(
     scored_match: ScoredMatch,
     repo,
     is_stale_replacement: bool = False,
+    *,
+    owner_id=SYSTEM_OWNER_ID,
+    tenant_id=None,
 ) -> JobMatch:
     """
     Save scored match to database.
@@ -321,6 +349,8 @@ def save_match_to_db(
     Returns:
         JobMatch record that was created or updated
     """
+    owner_id = owner_id or repo.db.info.get("jobscout.user_id") or SYSTEM_OWNER_ID
+    tenant_id = tenant_id or repo.db.info.get("jobscout.tenant_id")
     job_data = _extract_job_data(scored_match)
     job_id = job_data['id']
     job_content_hash = job_data['content_hash']
@@ -330,10 +360,11 @@ def save_match_to_db(
         repo,
         job_id,
         scored_match.resume_fingerprint,
+        owner_id,
     )
     values = _build_match_values(scores, matched_reqs, missing_reqs, job_content_hash)
     values['job_post_id'] = job_id
-    is_hidden = _resolve_hidden_state(repo, job_id, existing)
+    is_hidden = _resolve_hidden_state(repo, job_id, existing, owner_id)
     match_record = _upsert_match_record(
         repo,
         scored_match,
@@ -341,6 +372,8 @@ def save_match_to_db(
         values,
         is_hidden,
         is_stale_replacement,
+        owner_id=owner_id,
+        tenant_id=tenant_id,
     )
     match_record, reused_existing_record = _flush_match_record(
         repo,

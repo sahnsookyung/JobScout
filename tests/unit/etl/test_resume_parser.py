@@ -140,7 +140,10 @@ class TestParseDocx:
 
         path = write_temp(".docx", "placeholder", mode="w")
         try:
-            with patch("etl.resume.parser.Document", return_value=mock_doc):
+            with patch("etl.resume.parser.validate_resume_content"), patch(
+                "etl.resume.parser.Document",
+                return_value=mock_doc,
+            ):
                 result = parser.parse(path)
 
             assert result.format == "docx"
@@ -158,7 +161,10 @@ class TestParseDocx:
 
         path = write_temp(".docx", "placeholder", mode="w")
         try:
-            with patch("etl.resume.parser.Document", return_value=mock_doc):
+            with patch("etl.resume.parser.validate_resume_content"), patch(
+                "etl.resume.parser.Document",
+                return_value=mock_doc,
+            ):
                 result = parser.parse(path)
             assert result.text == ""
         finally:
@@ -167,7 +173,10 @@ class TestParseDocx:
     def test_docx_parse_error_raises_value_error(self, parser):
         path = write_temp(".docx", "placeholder", mode="w")
         try:
-            with patch("etl.resume.parser.Document", side_effect=Exception("corrupt")):
+            with patch("etl.resume.parser.validate_resume_content"), patch(
+                "etl.resume.parser.Document",
+                side_effect=Exception("corrupt"),
+            ):
                 with pytest.raises(ValueError, match="Failed to parse DOCX"):
                     parser.parse(path)
         finally:
@@ -177,6 +186,7 @@ class TestParseDocx:
 class TestParsePdf:
     def test_valid_pdf(self, parser):
         mock_reader = MagicMock()
+        mock_reader.is_encrypted = False
         page1 = MagicMock()
         page1.extract_text.return_value = "Alice Smith\nSoftware Engineer"
         page2 = MagicMock()
@@ -185,7 +195,10 @@ class TestParsePdf:
 
         path = write_temp(".pdf", "placeholder", mode="w")
         try:
-            with patch("etl.resume.parser.PdfReader", return_value=mock_reader):
+            with patch("etl.resume.parser.validate_resume_content"), patch(
+                "etl.resume.parser.PdfReader",
+                return_value=mock_reader,
+            ):
                 result = parser.parse(path)
 
             assert result.format == "pdf"
@@ -196,13 +209,17 @@ class TestParsePdf:
 
     def test_empty_pdf_logs_warning(self, parser):
         mock_reader = MagicMock()
+        mock_reader.is_encrypted = False
         page = MagicMock()
         page.extract_text.return_value = "  "
         mock_reader.pages = [page]
 
         path = write_temp(".pdf", "placeholder", mode="w")
         try:
-            with patch("etl.resume.parser.PdfReader", return_value=mock_reader):
+            with patch("etl.resume.parser.validate_resume_content"), patch(
+                "etl.resume.parser.PdfReader",
+                return_value=mock_reader,
+            ):
                 result = parser.parse(path)
             assert result.text == ""
         finally:
@@ -210,11 +227,15 @@ class TestParsePdf:
 
     def test_no_pages_raises_value_error(self, parser):
         mock_reader = MagicMock()
+        mock_reader.is_encrypted = False
         mock_reader.pages = []
 
         path = write_temp(".pdf", "placeholder", mode="w")
         try:
-            with patch("etl.resume.parser.PdfReader", return_value=mock_reader):
+            with patch("etl.resume.parser.validate_resume_content"), patch(
+                "etl.resume.parser.PdfReader",
+                return_value=mock_reader,
+            ):
                 with pytest.raises(ValueError, match="no pages"):
                     parser.parse(path)
         finally:
@@ -223,6 +244,7 @@ class TestParsePdf:
     def test_page_extraction_error_skipped(self, parser):
         """If one page fails, extraction continues with remaining pages."""
         mock_reader = MagicMock()
+        mock_reader.is_encrypted = False
         page1 = MagicMock()
         page1.extract_text.side_effect = Exception("PDF error")
         page2 = MagicMock()
@@ -231,7 +253,10 @@ class TestParsePdf:
 
         path = write_temp(".pdf", "placeholder", mode="w")
         try:
-            with patch("etl.resume.parser.PdfReader", return_value=mock_reader):
+            with patch("etl.resume.parser.validate_resume_content"), patch(
+                "etl.resume.parser.PdfReader",
+                return_value=mock_reader,
+            ):
                 result = parser.parse(path)
             assert "Good content" in result.text
         finally:
@@ -240,7 +265,10 @@ class TestParsePdf:
     def test_pdf_exception_raises_value_error(self, parser):
         path = write_temp(".pdf", "placeholder", mode="w")
         try:
-            with patch("etl.resume.parser.PdfReader", side_effect=Exception("corrupt")):
+            with patch("etl.resume.parser.validate_resume_content"), patch(
+                "etl.resume.parser.PdfReader",
+                side_effect=Exception("corrupt"),
+            ):
                 with pytest.raises(ValueError, match="Failed to parse PDF"):
                     parser.parse(path)
         finally:

@@ -669,8 +669,12 @@ describe('useAuth', () => {
 
         it('bootstraps a hosted cookie session when auth is required', async () => {
             vi.stubEnv('VITE_AUTH_REQUIRED', 'true');
+            const sessionExpiresAt = Math.floor(Date.now() / 1000) + 3_600;
             vi.mocked(cloudAuthApi.getCurrentUser).mockResolvedValue(
-                axiosResponse(buildCloudUser({ email: 'cookie@example.com', name: 'Cookie User' }))
+                axiosResponse({
+                    ...buildCloudUser({ email: 'cookie@example.com', name: 'Cookie User' }),
+                    session_expires_at: sessionExpiresAt,
+                })
             );
             vi.mocked(cloudAuthApi.listTenants).mockResolvedValue(
                 axiosResponse<CloudTenant[]>([
@@ -686,6 +690,7 @@ describe('useAuth', () => {
             expect(cloudAuthApi.listTenants).toHaveBeenCalled();
             expect(result.current.token).toBeNull();
             expect(result.current.selectedTenantId).toBe('tenant-cookie');
+            expect(result.current.expiresAt).toBe(sessionExpiresAt * 1000);
             expect(result.current.isReady).toBe(true);
         });
 

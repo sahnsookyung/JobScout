@@ -1,12 +1,29 @@
 # Compose overrides for deterministic E2E tests.
 
+x-e2e-runtime-image: &e2e-runtime-image jobscout-e2e-runtime:latest
+
+x-e2e-runtime: &e2e-runtime
+  image: *e2e-runtime-image
+  pull_policy: never
+
 services:
-  mock-llm:
-    profiles: ["web"]
-    container_name: ${MOCK_LLM_CONTAINER_NAME:-jobscout-mock-llm}
+  # Build one complete runtime for the E2E stack. The production Compose files
+  # continue to build service-specific images; sharing here keeps Docker
+  # Desktop's temporary export usage bounded while exercising the same code.
+  db-migrate:
+    image: *e2e-runtime-image
     build:
       context: .
-      dockerfile: tests/services/mock_llm/Dockerfile
+      dockerfile: Dockerfile
+
+  mock-llm:
+    <<: *e2e-runtime
+    build: !reset null
+    profiles: ["web"]
+    container_name: ${MOCK_LLM_CONTAINER_NAME:-jobscout-mock-llm}
+    command: ["uvicorn", "tests.services.mock_llm.main:app", "--host", "0.0.0.0", "--port", "8090"]
+    volumes:
+      - ./tests:/app/tests:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=5)"]
       interval: 30s
@@ -15,6 +32,9 @@ services:
       start_period: 10s
 
   web-backend:
+    <<: *e2e-runtime
+    build: !reset null
+    command: ["sh", "-c", "umask 0002 && exec uvicorn web.backend.app:app --host 0.0.0.0 --port 8080"]
     depends_on:
       mock-llm:
         condition: service_healthy
@@ -43,6 +63,9 @@ services:
       - PREFERENCES_LLM_JUDGE_API_KEY=mock-key
 
   extraction:
+    <<: *e2e-runtime
+    build: !reset null
+    command: ["sh", "-c", "umask 0002 && exec uvicorn services.extraction.main:app --host 0.0.0.0 --port 8081"]
     depends_on:
       mock-llm:
         condition: service_healthy
@@ -55,6 +78,9 @@ services:
       - ETL_LLM_API_KEY=mock-key
 
   embeddings:
+    <<: *e2e-runtime
+    build: !reset null
+    command: ["uvicorn", "services.embeddings.main:app", "--host", "0.0.0.0", "--port", "8082"]
     depends_on:
       mock-llm:
         condition: service_healthy
@@ -69,6 +95,9 @@ services:
       - ETL_EMBEDDING_API_KEY=mock-key
 
   scorer-matcher:
+    <<: *e2e-runtime
+    build: !reset null
+    command: ["uvicorn", "services.scorer_matcher.main:app", "--host", "0.0.0.0", "--port", "8083"]
     depends_on:
       mock-llm:
         condition: service_healthy
@@ -103,6 +132,8 @@ services:
       - PREFERENCES_CROSS_ENCODER_RUNTIME=heuristic
 
   scorer-model-bootstrap:
+    <<: *e2e-runtime
+    build: !reset null
     command:
       - python
       - -c
@@ -114,6 +145,9 @@ services:
         print("[bootstrap] skipped model download for E2E heuristic reranker", flush=True)
 
   notification-worker:
+    <<: *e2e-runtime
+    build: !reset null
+    command: ["python", "-m", "notification.worker"]
     environment:
       - JOBSCOUT_ENV=test
       - AUTH_MODE=dev-bypass
@@ -122,6 +156,9 @@ services:
       - DEV_BYPASS_NAME=JobScout Dev User
 
   orchestrator:
+    <<: *e2e-runtime
+    build: !reset null
+    command: ["sh", "-c", "umask 0002 && exec uvicorn services.orchestrator.main:app --host 0.0.0.0 --port 8084"]
     depends_on:
       mock-llm:
         condition: service_healthy

@@ -155,6 +155,15 @@ class TestFullPipelineIntegration(unittest.TestCase):
         # Test resume data - new schema format
         cls.resume_data = {
             "profile": {
+                "contact": {
+                    "name": "Test Candidate",
+                    "email": "candidate@example.com",
+                    "phone": None,
+                    "location": "Tokyo, Japan",
+                    "linkedin_url": None,
+                    "portfolio_url": None,
+                    "links": [],
+                },
                 "summary": {
                     "text": "Senior Python Developer with 8+ years experience building scalable web applications and microservices. Expert in Python, Django, FastAPI, and cloud technologies.",
                     "total_experience_years": 8.0

@@ -49,7 +49,8 @@ function initialsFor(name: string, email: string) {
 }
 
 export function DashboardHeader() {
-    const { user, logout, tenants = [], selectedTenantId = null } = useAuth();
+    const { user, logout, tenants = [], selectedTenantId = null, expiresAt = null } = useAuth();
+    const [now, setNow] = useState(Date.now());
     const [isNotificationModalOpen, setIsNotificationModalOpen] = useState(false);
     const [isOperationsModalOpen, setIsOperationsModalOpen] = useState(false);
     const [isPreferencesModalOpen, setIsPreferencesModalOpen] = useState(false);
@@ -58,6 +59,12 @@ export function DashboardHeader() {
 
     useDismissOnOutsideClick(profilePanelRef, isProfileOpen, () => setIsProfileOpen(false));
     useEscapeDismiss(isProfileOpen, () => setIsProfileOpen(false));
+
+    useEffect(() => {
+        if (!expiresAt) return undefined;
+        const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+        return () => window.clearInterval(timer);
+    }, [expiresAt]);
 
     const identity = useMemo(() => {
         if (user) {
@@ -78,6 +85,10 @@ export function DashboardHeader() {
 
     const avatarInitials = initialsFor(identity.name, identity.email);
     const selectedTenant = tenants.find((tenant) => tenant.id === selectedTenantId);
+    const remainingMinutes = expiresAt ? Math.max(Math.ceil((expiresAt - now) / 60_000), 0) : null;
+    const expiryUrgency = remainingMinutes !== null && remainingMinutes <= 5
+        ? 'text-warn'
+        : 'text-ink-muted';
 
     const openNotifications = () => {
         setIsProfileOpen(false);
@@ -129,15 +140,17 @@ export function DashboardHeader() {
                             <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
                             <span className="hidden sm:inline">Preferences</span>
                         </button>
-                        <button
-                            type="button"
-                            onClick={openNotifications}
-                            className="inline-flex h-9 items-center gap-2 rounded-md border border-rule bg-surface px-3 text-[13px] text-ink-soft transition-colors hover:border-rule-strong hover:text-ink"
-                            aria-label="Open notification settings"
-                        >
-                            <Bell className="h-4 w-4" aria-hidden="true" />
-                            <span className="hidden sm:inline">Notifications</span>
-                        </button>
+                        {user?.is_platform_admin && (
+                            <button
+                                type="button"
+                                onClick={openNotifications}
+                                className="inline-flex h-9 items-center gap-2 rounded-md border border-rule bg-surface px-3 text-[13px] text-ink-soft transition-colors hover:border-rule-strong hover:text-ink"
+                                aria-label="Open notification settings"
+                            >
+                                <Bell className="h-4 w-4" aria-hidden="true" />
+                                <span className="hidden sm:inline">Notifications</span>
+                            </button>
+                        )}
 
                         <div className="relative" ref={profilePanelRef}>
                             <button
@@ -201,6 +214,11 @@ export function DashboardHeader() {
                                             <p className="caption">Session</p>
                                             <p className="text-[13px] text-ink-soft">{identity.subtitle}</p>
                                         </div>
+                                        {remainingMinutes !== null && (
+                                            <div className={`rounded-sm border border-rule px-3 py-2 text-[13px] ${expiryUrgency}`}>
+                                                Temporary account expires in {remainingMinutes} minute{remainingMinutes === 1 ? '' : 's'}.
+                                            </div>
+                                        )}
                                         {selectedTenant && (
                                             <div className="rounded-sm border border-rule bg-surface px-3 py-2 text-[13px] text-ink-soft">
                                                 <div className="text-ink">{selectedTenant.name}</div>
@@ -209,16 +227,18 @@ export function DashboardHeader() {
                                         )}
                                         {user ? (
                                             <>
-                                                <Button
-                                                    type="button"
-                                                    variant="secondary"
-                                                    size="sm"
-                                                    className="w-full justify-center"
-                                                    onClick={openOperations}
-                                                >
-                                                    <Activity className="h-3.5 w-3.5" aria-hidden="true" />
-                                                    Diagnostics
-                                                </Button>
+                                                {user.is_platform_admin && (
+                                                    <Button
+                                                        type="button"
+                                                        variant="secondary"
+                                                        size="sm"
+                                                        className="w-full justify-center"
+                                                        onClick={openOperations}
+                                                    >
+                                                        <Activity className="h-3.5 w-3.5" aria-hidden="true" />
+                                                        Diagnostics
+                                                    </Button>
+                                                )}
                                                 <Button
                                                     type="button"
                                                     variant="secondary"
@@ -279,7 +299,7 @@ export function DashboardHeader() {
                 titleId="candidate-preferences-title"
                 eyebrow="Inputs"
                 title="Candidate preferences"
-                description="Your hard constraints and what matters in your next role."
+                description="Your constraints, preference signals, and ranking strategy."
                 closeLabel="Close candidate preferences"
                 maxWidth="max-w-5xl"
             >

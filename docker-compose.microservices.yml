@@ -21,9 +21,16 @@ x-service-common: &service-common
     - SMTP_PORT=1025
     - SMTP_USE_TLS=false
     - FROM_EMAIL=noreply@jobscout.local
+    - ETL_LLM_EXTRACTION_BASE_URL=${ETL_LLM_EXTRACTION_BASE_URL:-http://host.docker.internal:11434/v1}
+    - ETL_EMBEDDING_BASE_URL=${ETL_EMBEDDING_BASE_URL:-http://host.docker.internal:11434/v1}
+    - PREFERENCES_PARSER_BASE_URL=${PREFERENCES_PARSER_BASE_URL:-http://host.docker.internal:11434/v1}
+    - PREFERENCES_SEMANTIC_RERANKER_BASE_URL=${PREFERENCES_SEMANTIC_RERANKER_BASE_URL:-http://host.docker.internal:11434/v1}
+    - PREFERENCES_LLM_JUDGE_BASE_URL=${PREFERENCES_LLM_JUDGE_BASE_URL:-http://host.docker.internal:11434/v1}
     - PYTHONUNBUFFERED=1
   env_file:
     - .env
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   restart: unless-stopped
   logging:
     driver: json-file
@@ -163,6 +170,7 @@ services:
       - LLM_EVALUATION_METRICS_PORT=9474
       - LLM_EVALUATION_RETRY_MAX=${LLM_EVALUATION_RETRY_MAX:-3}
       - LLM_EVALUATION_RETRY_INTERVALS_SECONDS=${LLM_EVALUATION_RETRY_INTERVALS_SECONDS:-60,300,900}
+      - PREFERENCES_LLM_JUDGE_BASE_URL=${PREFERENCES_LLM_JUDGE_BASE_URL:-http://host.docker.internal:11434/v1}
     ports:
       - "${LLM_EVALUATION_WORKER_METRICS_PORT:-9474}:9474"
     healthcheck:
@@ -202,6 +210,8 @@ services:
       - JOBSPY_API_TOKEN=${JOBSPY_API_TOKEN:?set JOBSPY_API_TOKEN}
       - EXTRACTION_URL=http://extraction:8081
       - EMBEDDINGS_URL=http://embeddings:8082
+      - ETL_LLM_EXTRACTION_BASE_URL=${ETL_LLM_EXTRACTION_BASE_URL:-http://host.docker.internal:11434/v1}
+      - ETL_EMBEDDING_BASE_URL=${ETL_EMBEDDING_BASE_URL:-http://host.docker.internal:11434/v1}
       - SCRAPER_INTERVAL_HOURS=${SCRAPER_INTERVAL_HOURS:-6}
     volumes:
       - resume_uploads:/data/resume_uploads

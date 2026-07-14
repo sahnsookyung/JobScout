@@ -57,6 +57,7 @@ class ResumeEtlOrchestrator:
         resume_fingerprint: Optional[str],
         mode: str,
         pipeline_runs: Optional[PipelineRunService],
+        tenant_id: Optional[str] = None,
     ) -> asyncio.Task:
         initial_step = "embedding" if mode == "embed_only" else "extracting"
         initial_state: dict[str, Any] = {"status": "running", "step": initial_step}
@@ -80,6 +81,7 @@ class ResumeEtlOrchestrator:
                 task_id=task_id,
                 run_type="resume_upload",
                 owner_id=owner_id,
+                tenant_id=tenant_id,
                 resume_fingerprint=resume_fingerprint,
                 current_stage=initial_step,
                 metadata=run_metadata,
@@ -93,6 +95,7 @@ class ResumeEtlOrchestrator:
                 file_path,
                 upload_id=upload_id,
                 owner_id=owner_id,
+                tenant_id=tenant_id,
                 resume_fingerprint=resume_fingerprint,
                 mode=mode,
                 pipeline_runs=pipeline_runs,
@@ -210,6 +213,7 @@ class ResumeEtlPipelineService:
         phase: str,
         upload_id: Optional[str],
         owner_id: str,
+        tenant_id: Optional[str] = None,
         resume_fingerprint: Optional[str] = None,
         step: Optional[str] = None,
         error: Optional[str] = None,
@@ -258,6 +262,7 @@ class ResumeEtlPipelineService:
         *,
         upload_id: Optional[str] = None,
         owner_id: str,
+        tenant_id: Optional[str] = None,
         resume_fingerprint: Optional[str] = None,
         mode: str = "extract_and_embed",
         pipeline_runs: Optional[PipelineRunService] = None,
@@ -295,6 +300,7 @@ class ResumeEtlPipelineService:
                         "known_fingerprint": resume_fingerprint,
                         "resume_upload_id": upload_id,
                         "owner_id": owner_id,
+                        "tenant_id": tenant_id,
                         **extraction_correlation,
                     },
                 )
@@ -409,6 +415,7 @@ class ResumeEtlPipelineService:
                     "resume_fingerprint": fingerprint,
                     "resume_upload_id": upload_id,
                     "owner_id": owner_id,
+                    "tenant_id": tenant_id,
                     **embedding_correlation,
                 },
             )

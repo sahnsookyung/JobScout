@@ -91,6 +91,38 @@ def test_resume_variant_repository_create_adds_and_flushes() -> None:
     assert db.flushed == 1
 
 
+def test_resume_variant_repository_replaces_current_generated_payload() -> None:
+    variant = SimpleNamespace(
+        job_post_id=uuid4(),
+        resume_fingerprint="old-resume-fp",
+        content_json={"summary": "old"},
+        evidence_map={"claim_count": 1},
+        warnings=["old"],
+    )
+    db = _Db(results=[_Result(scalar=variant)])
+    repo = ResumeVariantRepository(db)
+    new_job_post_id = uuid4()
+
+    replaced = repo.replace_current(
+        {"owner_id": uuid4(), "tenant_id": None, "match_id": uuid4()},
+        {
+            "job_post_id": new_job_post_id,
+            "resume_fingerprint": "new-resume-fp",
+            "content_json": {"summary": "new"},
+            "evidence_map": {"claim_count": 2},
+            "warnings": [],
+        },
+    )
+
+    assert replaced is variant
+    assert variant.job_post_id == new_job_post_id
+    assert variant.resume_fingerprint == "new-resume-fp"
+    assert variant.content_json == {"summary": "new"}
+    assert variant.evidence_map == {"claim_count": 2}
+    assert variant.warnings == []
+    assert db.flushed == 1
+
+
 def test_resume_variant_repository_prunes_old_variants() -> None:
     keep_id = uuid4()
     stale_id = uuid4()

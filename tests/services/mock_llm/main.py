@@ -92,7 +92,7 @@ def _build_schema_response(payload: ChatCompletionsRequest) -> Dict[str, Any]:
     user_message = _last_user_message(payload.messages)
     schema_name = _schema_name(payload)
 
-    if schema_name == "resume_schema_v1.0":
+    if schema_name == "resume_schema_v2.0":
         return fake_llm.extract_resume_data(_extract_resume_text(user_message))
     if schema_name == "job_extraction_schema":
         return fake_llm.extract_requirements_data(_extract_job_description(user_message))

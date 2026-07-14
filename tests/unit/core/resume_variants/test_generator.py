@@ -5,7 +5,11 @@ from uuid import uuid4
 
 import pytest
 
-from core.resume_variants.generator import generate_resume_variant_content, validate_claim_sources
+from core.resume_variants.generator import (
+    generate_resume_variant_content,
+    validate_claim_sources,
+    validate_resume_content_quality,
+)
 
 
 def _resume_data() -> dict:
@@ -149,4 +153,82 @@ def test_generator_does_not_follow_prompt_injection_from_job_text() -> None:
 
     assert "PhD" not in str(content["summary"])
     assert validate_claim_sources(content) == []
+    assert warnings == []
+
+def test_generator_builds_a_complete_resume_from_all_structured_sections() -> None:
+    resume_data = _resume_data()
+    profile = resume_data["profile"]
+    profile["contact"] = {
+        "name": "Ada Engineer",
+        "email": "ada@example.com",
+        "phone": "+81-00-0000-0000",
+        "location": "Tokyo",
+        "linkedin_url": "https://linkedin.example/ada",
+        "portfolio_url": None,
+        "links": [],
+    }
+    profile["summary"]["text"] = (
+        "Backend engineer delivering reliable APIs, distributed data systems, production automation, "
+        "and operational improvements for global engineering teams."
+    )
+    profile["experience"][0].update(
+        {
+            "start_date": {"text": "Jan 2022", "year": 2022, "month": 1, "precision": "month"},
+            "end_date": None,
+            "is_current": True,
+            "highlights": [
+                "Built and operated distributed API services with Redis-backed queues for production workloads.",
+                "Reduced incident response time by 30% through automated diagnostics and actionable monitoring.",
+            ],
+        }
+    )
+    profile["projects"] = {
+        "items": [
+            {
+                "name": "Queue Monitor",
+                "description": "Built production queue monitoring dashboards for on-call engineers.",
+                "technologies": ["Python", "Redis"],
+                "url": "https://example.com/queue-monitor",
+                "date": {"text": "2024", "year": 2024, "month": None, "precision": "year"},
+                "highlights": ["Improved visibility into stalled background jobs and worker saturation."],
+            }
+        ]
+    }
+    profile["education"] = [
+        {
+            "degree": "BSc",
+            "field_of_study": "Computer Science",
+            "institution": "Example University",
+            "graduation_year": 2020,
+            "description": "Graduated with honors.",
+            "highlights": [],
+        }
+    ]
+    profile["certifications"] = [
+        {"name": "Cloud Architect", "issuer": "Example", "issued_year": 2024, "expires_year": None}
+    ]
+    profile["languages"] = [{"language": "Japanese", "proficiency": "Professional"}]
+
+    content, evidence_map, warnings = generate_resume_variant_content(
+        resume_data=resume_data,
+        job=SimpleNamespace(
+            title="Platform Engineer",
+            company="Acme",
+            description="Build reliable Python and Redis platforms.",
+        ),
+        match=SimpleNamespace(is_hidden=False),
+        requirement_matches=[],
+        template_key="compact",
+        tone="concise",
+    )
+
+    assert content["contact"]["name"] == "Ada Engineer"
+    assert content["experience"][0]["start_date"] == "Jan 2022"
+    assert content["experience"][0]["end_date"] == "Present"
+    assert content["projects"][0]["name"] == "Queue Monitor"
+    assert content["education"][0]["institution"] == "Example University"
+    assert content["certifications"][0]["name"] == "Cloud Architect"
+    assert content["languages"][0]["language"] == "Japanese"
+    assert validate_resume_content_quality(content) == []
+    assert evidence_map["claim_count"] >= 9
     assert warnings == []

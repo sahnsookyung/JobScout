@@ -61,6 +61,23 @@ class ResumeVariantRepository:
         self.db.flush()
         return variant
 
+    def replace_current(
+        self,
+        identity: dict[str, Any],
+        values: dict[str, Any],
+    ) -> ResumeVariant | None:
+        """Replace generated payload fields for the current identity in place."""
+        variant = self.find_current(identity)
+        if variant is None:
+            return None
+        variant.job_post_id = values["job_post_id"]
+        variant.resume_fingerprint = values["resume_fingerprint"]
+        variant.content_json = values["content_json"]
+        variant.evidence_map = values["evidence_map"]
+        variant.warnings = values["warnings"]
+        self.db.flush()
+        return variant
+
     def prune_scope(
         self,
         *,

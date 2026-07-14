@@ -14,7 +14,7 @@ from services.scorer_matcher.candidate_preferences import (
     apply_preference_semantic_reranking,
 )
 from core.config_loader import RankingConfig
-from database.models import SYSTEM_OWNER_ID
+from database.models import RESUME_FINGERPRINT_VERSION, SYSTEM_OWNER_ID
 from services.scorer_matcher.pipeline import (
     _prepare_selection_result,
     _convert_matches_to_dtos,
@@ -232,6 +232,17 @@ class TestLoadResumeFromDb:
 
         assert _load_resume_from_db("fp-123") == {"profile": {"summary": "Engineer"}}
 
+    @patch("services.scorer_matcher.pipeline.job_uow")
+    def test_outdated_resume_returns_none(self, mock_uow):
+        repo = MagicMock()
+        repo.resume.get_structured_resume_by_fingerprint.return_value = SimpleNamespace(
+            fingerprint_version=RESUME_FINGERPRINT_VERSION - 1,
+            extracted_data={"profile": {"summary": "Engineer"}},
+        )
+        mock_uow.return_value = _uow(repo)
+
+        assert _load_resume_from_db("fp-v1") is None
+
 
 class TestPipelineResults:
     @patch("services.scorer_matcher.pipeline.get_ranking_policy_store")
@@ -292,7 +303,7 @@ class TestRunScorerService:
 
         with patch(
             "services.scorer_matcher.pipeline.get_result_policy_store",
-            return_value=SimpleNamespace(get_current_policy=lambda: policy),
+            return_value=SimpleNamespace(get_current_policy=lambda owner_id=None: policy),
         ):
             result = _run_scorer_service(scorer, ["prelim"], config, stop_event)
 
@@ -316,7 +327,7 @@ class TestPrepareSelectionResult:
     @patch(
         "services.scorer_matcher.pipeline.get_result_policy_store",
         return_value=SimpleNamespace(
-            get_current_policy=lambda: SimpleNamespace(
+            get_current_policy=lambda owner_id=None: SimpleNamespace(
                 min_fit=50.0,
                 min_jd_required_coverage=None,
                 top_k=1,
@@ -355,7 +366,7 @@ class TestPrepareSelectionResult:
     @patch(
         "services.scorer_matcher.pipeline.get_result_policy_store",
         return_value=SimpleNamespace(
-            get_current_policy=lambda: SimpleNamespace(
+            get_current_policy=lambda owner_id=None: SimpleNamespace(
                 min_fit=40.0,
                 min_jd_required_coverage=None,
                 top_k=5,
@@ -500,7 +511,7 @@ class TestTwoTierFlagInPrepareSelection:
     @patch(
         "services.scorer_matcher.pipeline.get_result_policy_store",
         return_value=SimpleNamespace(
-            get_current_policy=lambda: SimpleNamespace(
+            get_current_policy=lambda owner_id=None: SimpleNamespace(
                 min_fit=40.0,
                 min_jd_required_coverage=None,
                 top_k=5,
@@ -1253,7 +1264,13 @@ class TestRunMatchingPipeline:
         assert result.matches_count == 0
         assert result.saved_count == 0
         mock_refresh.assert_called_once_with("fp-123", active_job_ids=frozenset())
-        mock_save.assert_called_once_with([], "fp-123", ctx.config.matching)
+        mock_save.assert_called_once_with(
+            [],
+            "fp-123",
+            ctx.config.matching,
+            owner_id="user-1",
+            tenant_id=None,
+        )
 
     @patch("services.scorer_matcher.pipeline._refresh_resume_match_set")
     @patch(
@@ -1416,6 +1433,7 @@ class TestPipelineNotificationAndPublicationHelpers:
         mock_llm_judge.assert_called_once_with(
             selection_run_id="run-1",
             owner_id="user-1",
+            tenant_id=None,
         )
 
     @patch("services.scorer_matcher.pipeline._publish_match_selection_run", return_value="run-1")
@@ -1449,6 +1467,7 @@ class TestPipelineNotificationAndPublicationHelpers:
         mock_llm_judge.assert_called_once_with(
             selection_run_id="run-1",
             owner_id="resume-owner-1",
+            tenant_id=None,
         )
 
     @patch("services.scorer_matcher.pipeline._publish_match_selection_run", return_value="run-1")

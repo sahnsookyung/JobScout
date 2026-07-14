@@ -144,9 +144,9 @@ def _policy_response(
     )
 
 
-def _get_ranking_config(policy_service) -> RankingConfig:
+def _get_ranking_config(policy_service, owner_id: object | None = None) -> RankingConfig:
     try:
-        ranking_config = policy_service.get_ranking_config()
+        ranking_config = policy_service.get_ranking_config(owner_id)
     except Exception:
         logger.warning("Could not load ranking configuration; using defaults", exc_info=True)
         return RankingConfig()
@@ -183,9 +183,10 @@ def get_policy(user: Annotated[object, Depends(get_current_user)]):
     Returns the in-memory policy settings for filtering and truncating results.
     """
     policy_service = get_policy_service()
-    policy = policy_service.get_current_policy()
-    llm_policy = policy_service.get_llm_judge_policy(getattr(user, "id", None))
-    ranking_config = _get_ranking_config(policy_service)
+    owner_id = getattr(user, "id", None)
+    policy = policy_service.get_current_policy(owner_id)
+    llm_policy = policy_service.get_llm_judge_policy(owner_id)
+    ranking_config = _get_ranking_config(policy_service, owner_id)
 
     return _policy_response(policy, llm_policy, ranking_config=ranking_config)
 
@@ -207,9 +208,10 @@ def update_policy(
     - min_jd_required_coverage: Minimum job description coverage (0-1), or null to disable
     """
     policy_service = get_policy_service()
-    current_policy = policy_service.get_current_policy()
-    current_ranking_config = _get_ranking_config(policy_service)
-    previous_llm_policy = policy_service.get_llm_judge_policy(getattr(user, "id", None))
+    owner_id = getattr(user, "id", None)
+    current_policy = policy_service.get_current_policy(owner_id)
+    current_ranking_config = _get_ranking_config(policy_service, owner_id)
+    previous_llm_policy = policy_service.get_llm_judge_policy(owner_id)
     fields_set = policy_update.model_fields_set
 
     policy = policy_service.update_policy(
@@ -230,9 +232,10 @@ def update_policy(
             if "min_jd_required_coverage" in fields_set
             else current_policy.min_jd_required_coverage
         ),
+        owner_id=owner_id,
     )
     llm_policy = policy_service.update_llm_judge_policy(
-        owner_id=getattr(user, "id", None),
+        owner_id=owner_id,
         enabled=policy_update.llm_judge_enabled,
         auto_enqueue_enabled=policy_update.llm_judge_auto_enqueue_enabled,
         top_n=policy_update.llm_judge_top_n,
@@ -243,11 +246,14 @@ def update_policy(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if fields_set & ranking_fields:
-        ranking_config = policy_service.update_ranking_config(ranking_config)
+        ranking_config = policy_service.update_ranking_config(
+            ranking_config,
+            owner_id=owner_id,
+        )
     enqueue_stats, degraded_reasons, enqueue_state, enqueue_job_id = (
         _enqueue_llm_top_n_after_policy_update(
             db,
-            owner_id=getattr(user, "id", None),
+            owner_id=owner_id,
             tenant_id=tenant_context.tenant_id,
             previous_policy=previous_llm_policy,
             next_policy=llm_policy,
@@ -294,9 +300,10 @@ def apply_preset(
         )
 
     policy_service = get_policy_service()
-    policy = policy_service.apply_preset(normalized_preset)
-    llm_policy = policy_service.get_llm_judge_policy(getattr(user, "id", None))
-    ranking_config = _get_ranking_config(policy_service)
+    owner_id = getattr(user, "id", None)
+    policy = policy_service.apply_preset(normalized_preset, owner_id=owner_id)
+    llm_policy = policy_service.get_llm_judge_policy(owner_id)
+    ranking_config = _get_ranking_config(policy_service, owner_id)
 
     return _policy_response(policy, llm_policy, ranking_config=ranking_config)
 

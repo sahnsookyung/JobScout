@@ -31,8 +31,13 @@ services:
       - INTERNAL_EMBEDDINGS_URL=http://embeddings:8082
       - INTERNAL_SCORER_MATCHER_URL=http://scorer-matcher:8083
       - INTERNAL_ORCHESTRATOR_URL=http://orchestrator:8084
+      - PREFERENCES_PARSER_BASE_URL=${PREFERENCES_PARSER_BASE_URL:-http://host.docker.internal:11434/v1}
+      - PREFERENCES_SEMANTIC_RERANKER_BASE_URL=${PREFERENCES_SEMANTIC_RERANKER_BASE_URL:-http://host.docker.internal:11434/v1}
+      - PREFERENCES_LLM_JUDGE_BASE_URL=${PREFERENCES_LLM_JUDGE_BASE_URL:-http://host.docker.internal:11434/v1}
     env_file:
       - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - resume_uploads:/data/resume_uploads

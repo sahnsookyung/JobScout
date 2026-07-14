@@ -15,6 +15,15 @@ import copy
 
 VALID_RESUME = {
     "profile": {
+        "contact": {
+            "name": "Ada Engineer",
+            "email": "ada@example.com",
+            "phone": "+1-555-0100",
+            "location": "Seoul, South Korea",
+            "linkedin_url": "https://www.linkedin.com/in/ada-engineer",
+            "portfolio_url": "https://ada.example.com",
+            "links": ["https://github.com/ada-engineer"],
+        },
         "summary": {
             "text": "Experienced software engineer with 8 years in backend development and distributed systems. Passionate about building scalable solutions.",
             "total_experience_years": 8.0
@@ -144,6 +153,15 @@ VALID_RESUME = {
 # Valid resume with null values allowed
 VALID_RESUME_WITH_NULLS = {
     "profile": {
+        "contact": {
+            "name": "Recent Graduate",
+            "email": None,
+            "phone": None,
+            "location": None,
+            "linkedin_url": None,
+            "portfolio_url": None,
+            "links": [],
+        },
         "summary": {
             "text": "Recent graduate seeking entry-level position.",
             "total_experience_years": None
@@ -189,6 +207,15 @@ VALID_RESUME_WITH_NULLS = {
 # Valid resume with only required fields
 VALID_MINIMAL_RESUME = {
     "profile": {
+        "contact": {
+            "name": "Software Engineer",
+            "email": None,
+            "phone": None,
+            "location": None,
+            "linkedin_url": None,
+            "portfolio_url": None,
+            "links": [],
+        },
         "summary": {
             "text": "Software engineer.",
             "total_experience_years": None

@@ -1,5 +1,14 @@
 {
   "profile": {
+    "contact": {
+      "name": "Alex Morgan",
+      "email": "alex.morgan@example.com",
+      "phone": null,
+      "location": "Remote",
+      "linkedin_url": "https://www.linkedin.com/in/alex-morgan",
+      "portfolio_url": "https://example.com/alex-morgan",
+      "links": []
+    },
     "summary": {
       "text": "Senior Python backend engineer with FastAPI, AWS, Docker, Redis, PostgreSQL, and microservices experience.",
       "total_experience_years": 7

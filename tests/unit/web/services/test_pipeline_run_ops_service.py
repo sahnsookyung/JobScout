@@ -88,7 +88,7 @@ def test_cancel_run_sets_runtime_cancellation_flag_before_durable_cancel():
     ), patch(
         "web.backend.services.pipeline_run_ops_service.set_task_cancellation_requested",
     ) as set_cancel:
-        summary = service.cancel_run(db, tenant_id=None, run_id=str(run.id))
+        summary = service.cancel_run(db, owner_id=None, tenant_id=None, run_id=str(run.id))
 
     set_cancel.assert_called_once_with("match-1234", ttl=3600)
     repo.cancel_run.assert_called_once()
@@ -117,7 +117,7 @@ def test_cancel_run_records_degraded_metadata_when_runtime_cancel_fails():
         "web.backend.services.pipeline_run_ops_service.set_task_cancellation_requested",
         side_effect=RuntimeError("redis down"),
     ):
-        summary = service.cancel_run(db, tenant_id=None, run_id=str(run.id))
+        summary = service.cancel_run(db, owner_id=None, tenant_id=None, run_id=str(run.id))
 
     metadata = summary.metadata
     assert metadata["runtime_cancel_requested"] is False
@@ -150,7 +150,12 @@ def test_requeue_run_enqueues_matching_with_durable_correlation():
     ), patch(
         "web.backend.services.pipeline_run_ops_service.enqueue_job",
     ) as enqueue_job:
-        summary, task_id = service.requeue_run(db, tenant_id=None, run_id=str(source.id))
+        summary, task_id = service.requeue_run(
+            db,
+            owner_id=None,
+            tenant_id=None,
+            run_id=str(source.id),
+        )
 
     assert task_id.startswith("match-1234-requeue-")
     enqueue_job.assert_called_once()
@@ -178,7 +183,12 @@ def test_requeue_run_validates_matching_resume_before_creating_retry_run():
         "web.backend.services.pipeline_run_ops_service.enqueue_job",
     ) as enqueue_job:
         with pytest.raises(ValueError, match="Matching requeue requires a resume fingerprint"):
-            service.requeue_run(db, tenant_id=None, run_id=str(source.id))
+            service.requeue_run(
+                db,
+                owner_id=None,
+                tenant_id=None,
+                run_id=str(source.id),
+            )
 
     repo_cls.assert_not_called()
     enqueue_job.assert_not_called()
@@ -210,7 +220,12 @@ def test_get_run_model_returns_none_for_invalid_id_without_querying_db():
     service = PipelineRunOpsService()
     db = Mock()
 
-    assert service.get_run_model(db, tenant_id=None, run_id="not-a-uuid") is None
+    assert service.get_run_model(
+        db,
+        owner_id=None,
+        tenant_id=None,
+        run_id="not-a-uuid",
+    ) is None
     db.execute.assert_not_called()
 
 
@@ -220,12 +235,17 @@ def test_cancel_run_rejects_missing_or_non_cancelable_run():
 
     with patch.object(service, "get_run_model", return_value=None):
         with pytest.raises(LookupError, match="not found"):
-            service.cancel_run(db, tenant_id=None, run_id="missing")
+            service.cancel_run(db, owner_id=None, tenant_id=None, run_id="missing")
 
     completed = _run(status="completed", retry_eligible=False)
     with patch.object(service, "get_run_model", return_value=completed):
         with pytest.raises(ValueError, match="cannot be cancelled"):
-            service.cancel_run(db, tenant_id=None, run_id=str(completed.id))
+            service.cancel_run(
+                db,
+                owner_id=None,
+                tenant_id=None,
+                run_id=str(completed.id),
+            )
 
 
 def test_requeue_run_rejects_missing_disallowed_and_non_requeueable_runs():
@@ -234,12 +254,17 @@ def test_requeue_run_rejects_missing_disallowed_and_non_requeueable_runs():
 
     with patch.object(service, "get_run_model", return_value=None):
         with pytest.raises(LookupError, match="not found"):
-            service.requeue_run(db, tenant_id=None, run_id="missing")
+            service.requeue_run(db, owner_id=None, tenant_id=None, run_id="missing")
 
     running = _run(status=PIPELINE_RUN_RUNNING, retry_eligible=False)
     with patch.object(service, "get_run_model", return_value=running):
         with pytest.raises(ValueError, match="cannot be requeued"):
-            service.requeue_run(db, tenant_id=None, run_id=str(running.id))
+            service.requeue_run(
+                db,
+                owner_id=None,
+                tenant_id=None,
+                run_id=str(running.id),
+            )
 
     failed = _run(status=PIPELINE_RUN_FAILED, retry_eligible=True, stage="extraction")
     with patch.object(service, "get_run_model", return_value=failed), patch.dict(
@@ -248,7 +273,12 @@ def test_requeue_run_rejects_missing_disallowed_and_non_requeueable_runs():
         clear=True,
     ):
         with pytest.raises(ValueError, match="does not have a requeueable"):
-            service.requeue_run(db, tenant_id=None, run_id=str(failed.id))
+            service.requeue_run(
+                db,
+                owner_id=None,
+                tenant_id=None,
+                run_id=str(failed.id),
+            )
 
 
 def test_requeue_run_enqueues_extraction_with_stage_limit():
@@ -266,7 +296,12 @@ def test_requeue_run_enqueues_extraction_with_stage_limit():
         "web.backend.services.pipeline_run_ops_service.PipelineRunRepository",
         return_value=repo,
     ), patch("web.backend.services.pipeline_run_ops_service.enqueue_job") as enqueue_job:
-        summary, task_id = service.requeue_run(db, tenant_id=None, run_id=str(source.id))
+        summary, task_id = service.requeue_run(
+            db,
+            owner_id=None,
+            tenant_id=None,
+            run_id=str(source.id),
+        )
 
     stream, payload = enqueue_job.call_args.args
     assert stream == "extraction:batch"
@@ -285,13 +320,14 @@ def test_retry_run_delegates_to_requeue_action():
         "requeue_run",
         return_value=("summary", "task-retry"),
     ) as requeue:
-        assert service.retry_run(db, tenant_id=None, run_id="run-1") == (
+        assert service.retry_run(db, owner_id=None, tenant_id=None, run_id="run-1") == (
             "summary",
             "task-retry",
         )
 
     requeue.assert_called_once_with(
         db,
+        owner_id=None,
         tenant_id=None,
         run_id="run-1",
         action="retry",

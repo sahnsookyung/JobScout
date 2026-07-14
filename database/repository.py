@@ -1,7 +1,12 @@
 from typing import List, Optional, Any, Tuple, Dict
 from sqlalchemy.orm import Session
 
-from database.models import JobPost, JobMatch, SYSTEM_OWNER_ID
+from database.models import (
+    JobMatch,
+    JobPost,
+    RESUME_FINGERPRINT_VERSION,
+    SYSTEM_OWNER_ID,
+)
 
 from database.repositories.job_post import JobPostRepository
 from database.repositories.resume import ResumeRepository
@@ -387,7 +392,7 @@ class JobRepository:
         error: Optional[str] = None,
         extraction_completed_at: Optional[Any] = None,
         embedding_completed_at: Optional[Any] = None,
-        fingerprint_version: int = 1,
+        fingerprint_version: int = RESUME_FINGERPRINT_VERSION,
         failure_stage: Optional[str] = None,
         failure_class: Optional[str] = None,
         retryable: Optional[bool] = None,
@@ -426,7 +431,7 @@ class JobRepository:
         total_experience_years: Optional[float] = None,
         extraction_confidence: Optional[float] = None,
         extraction_warnings: Optional[list] = None,
-        fingerprint_version: int = 1,
+        fingerprint_version: int = RESUME_FINGERPRINT_VERSION,
     ) -> Any:
         owner_id = owner_id or SYSTEM_OWNER_ID
         return self.resume.save_structured_resume(
@@ -445,7 +450,7 @@ class JobRepository:
         sections: List[dict],
         *,
         owner_id: Any = None,
-        fingerprint_version: int = 1,
+        fingerprint_version: int = RESUME_FINGERPRINT_VERSION,
     ) -> list:
         owner_id = owner_id or SYSTEM_OWNER_ID
         return self.resume.save_resume_section_embeddings(
@@ -497,9 +502,15 @@ class JobRepository:
         self,
         job_post_id: Any,
         resume_fingerprint: str,
-        load_job_post: bool = False
+        load_job_post: bool = False,
+        owner_id: Any = SYSTEM_OWNER_ID,
     ) -> Optional[JobMatch]:
-        return self.match.get_existing_match(job_post_id, resume_fingerprint, load_job_post)
+        return self.match.get_existing_match(
+            job_post_id,
+            resume_fingerprint,
+            load_job_post,
+            owner_id,
+        )
 
     def get_matches_for_resume(
         self,
@@ -589,7 +600,7 @@ class JobRepository:
         evidence_units: List[dict],
         *,
         owner_id: Any = None,
-        fingerprint_version: int = 1,
+        fingerprint_version: int = RESUME_FINGERPRINT_VERSION,
     ) -> list:
         owner_id = owner_id or SYSTEM_OWNER_ID
         return self.resume.save_evidence_unit_embeddings(

@@ -8,9 +8,11 @@ import { useAuth } from '@/features/auth/useAuth';
 vi.mock('@/features/auth/useAuth', () => ({
     useAuth: vi.fn(() => ({
         user: {
+            id: 'admin-user-1',
             name: 'Ada Lovelace',
             email: 'ada@example.com',
             picture: 'https://example.com/ada.png',
+            is_platform_admin: true,
         },
         logout: vi.fn(),
     })),
@@ -33,9 +35,11 @@ const mockUseAuth = vi.mocked(useAuth);
 function makeAuthState(overrides: Partial<ReturnType<typeof useAuth>> = {}) {
     return {
         user: {
+            id: 'admin-user-1',
             name: 'Ada Lovelace',
             email: 'ada@example.com',
             picture: 'https://example.com/ada.png',
+            is_platform_admin: true,
         },
         token: 'token-123',
         isReady: true,
@@ -132,6 +136,25 @@ describe('DashboardHeader', () => {
 
         await userEvent.click(screen.getAllByRole('button', { name: /close diagnostics/i })[0]);
         expect(screen.queryByRole('dialog', { name: /tenant diagnostics/i })).not.toBeInTheDocument();
+    });
+
+    it('hides privileged controls from a non-admin member', async () => {
+        mockUseAuth.mockReturnValue(makeAuthState({
+            user: {
+                id: 'member-user-1',
+                name: 'Grace Hopper',
+                email: 'grace@example.com',
+                is_platform_admin: false,
+            },
+        }));
+
+        render(<DashboardHeader />);
+
+        expect(
+            screen.queryByRole('button', { name: /open notification settings/i }),
+        ).not.toBeInTheDocument();
+        await userEvent.click(screen.getByRole('button', { name: /open profile menu/i }));
+        expect(screen.queryByRole('button', { name: /diagnostics/i })).not.toBeInTheDocument();
     });
 
     it('signs out from the profile panel', async () => {

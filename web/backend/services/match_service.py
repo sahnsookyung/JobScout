@@ -137,7 +137,7 @@ class MatchService:
         Returns:
             List of match summaries with ranking explanation fields.
         """
-        ranking_config = get_ranking_policy_store().get_current_config()
+        ranking_config = get_ranking_policy_store().get_current_config(owner_id)
         self.last_degraded_reasons = []
         page_mode = "cursor" if page_mode == "cursor" else "offset"
         view = "compact" if view == "compact" else "summary"

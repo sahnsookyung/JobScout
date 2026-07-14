@@ -4,6 +4,7 @@ Tests for Policy Router
 Covers: web/backend/routers/policy.py
 """
 
+import uuid
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -15,6 +16,8 @@ from core.config_loader import RankingConfig
 from web.backend.dependencies import get_db
 from web.backend.routers import policy as policy_router
 from web.backend.routers.policy import router
+
+DEV_OWNER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 def _llm_policy(
     *,
@@ -133,7 +136,8 @@ class TestPolicyRouter:
         mock_policy_service.update_policy.assert_called_once_with(
             min_fit=70.0,
             top_k=25,
-            min_jd_required_coverage=0.8
+            min_jd_required_coverage=0.8,
+            owner_id=DEV_OWNER_ID,
         )
         mock_policy_service.update_llm_judge_policy.assert_called_once()
         assert mock_policy_service.update_llm_judge_policy.call_args.kwargs["enabled"] is None
@@ -309,7 +313,8 @@ class TestPolicyRouter:
         mock_policy_service.update_policy.assert_called_once_with(
             min_fit=60.0,
             top_k=100,
-            min_jd_required_coverage=None
+            min_jd_required_coverage=None,
+            owner_id=DEV_OWNER_ID,
         )
 
     def test_update_policy_updates_ranking_configuration(self, client, mock_policy_service):
@@ -368,6 +373,7 @@ class TestPolicyRouter:
             min_fit=50.0,
             top_k=100,
             min_jd_required_coverage=None,
+            owner_id=DEV_OWNER_ID,
         )
 
     def test_apply_preset_strict(self, client, mock_policy_service):
@@ -387,7 +393,9 @@ class TestPolicyRouter:
         assert data['top_k'] == 25
         assert data['min_jd_required_coverage'] == 0.80
 
-        mock_policy_service.apply_preset.assert_called_once_with('strict')
+        mock_policy_service.apply_preset.assert_called_once_with(
+            'strict', owner_id=DEV_OWNER_ID
+        )
 
     def test_apply_preset_balanced(self, client, mock_policy_service):
         """Test applying balanced preset."""
@@ -406,7 +414,9 @@ class TestPolicyRouter:
         assert data['top_k'] == 50
         assert data['min_jd_required_coverage'] == 0.60
 
-        mock_policy_service.apply_preset.assert_called_once_with('balanced')
+        mock_policy_service.apply_preset.assert_called_once_with(
+            'balanced', owner_id=DEV_OWNER_ID
+        )
 
     def test_apply_preset_discovery(self, client, mock_policy_service):
         """Test applying discovery preset."""
@@ -425,7 +435,9 @@ class TestPolicyRouter:
         assert data['top_k'] == 100
         assert data['min_jd_required_coverage'] is None
 
-        mock_policy_service.apply_preset.assert_called_once_with('discovery')
+        mock_policy_service.apply_preset.assert_called_once_with(
+            'discovery', owner_id=DEV_OWNER_ID
+        )
 
     def test_apply_preset_case_insensitive(self, client, mock_policy_service):
         """Test preset name is case insensitive."""
@@ -439,7 +451,9 @@ class TestPolicyRouter:
         response = client.post('/api/v1/policy/preset/STRICT')
 
         assert response.status_code == 200
-        mock_policy_service.apply_preset.assert_called_once_with('strict')
+        mock_policy_service.apply_preset.assert_called_once_with(
+            'strict', owner_id=DEV_OWNER_ID
+        )
 
     def test_apply_preset_unknown(self, client):
         """Test applying unknown preset returns 400."""
@@ -566,7 +580,9 @@ class TestPolicyRouterIntegration:
                 'discovery': Mock(min_fit=40.0, top_k=100, min_jd_required_coverage=None)
             }
 
-            mock_policy_service.apply_preset.side_effect = lambda name: preset_policies[name]
+            mock_policy_service.apply_preset.side_effect = (
+                lambda name, owner_id=None: preset_policies[name]
+            )
             MockPolicyService.return_value = mock_policy_service
 
             # Apply each preset and verify

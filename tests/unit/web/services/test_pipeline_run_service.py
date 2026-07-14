@@ -141,6 +141,7 @@ def test_list_runs_offset_mode_returns_summaries_and_total():
 
     runs, total, next_cursor, has_more, page_mode, offset = service.list_runs(
         db,
+        owner_id=run.owner_id,
         tenant_id=None,
         status="completed",
         run_type="pipeline",
@@ -171,6 +172,7 @@ def test_list_runs_cursor_mode_applies_cursor_and_returns_next_cursor():
 
     runs, total, next_cursor, has_more, page_mode, offset = service.list_runs(
         db,
+        owner_id=first.owner_id,
         tenant_id=uuid.uuid4(),
         status="all",
         run_type="all",
@@ -200,6 +202,7 @@ def test_list_runs_rejects_invalid_cursor_payload():
     with pytest.raises(ValueError, match="Invalid pipeline run cursor"):
         service.list_runs(
             db,
+            owner_id=uuid.uuid4(),
             tenant_id=None,
             status="all",
             run_type="all",
@@ -214,10 +217,20 @@ def test_get_run_rejects_invalid_id_and_returns_summary_for_visible_run():
     db = Mock()
     run = _run(stages=[])
 
-    assert service.get_run(db, tenant_id=None, run_id="not-a-uuid") is None
+    assert service.get_run(
+        db,
+        owner_id=run.owner_id,
+        tenant_id=None,
+        run_id="not-a-uuid",
+    ) is None
 
     db.execute.return_value = _one_or_none_result(run)
-    summary = service.get_run(db, tenant_id=None, run_id=str(run.id))
+    summary = service.get_run(
+        db,
+        owner_id=run.owner_id,
+        tenant_id=None,
+        run_id=str(run.id),
+    )
 
     assert summary.id == str(run.id)
 
@@ -227,4 +240,9 @@ def test_get_run_returns_none_when_missing():
     db = Mock()
     db.execute.return_value = _one_or_none_result(None)
 
-    assert service.get_run(db, tenant_id=uuid.uuid4(), run_id=str(uuid.uuid4())) is None
+    assert service.get_run(
+        db,
+        owner_id=uuid.uuid4(),
+        tenant_id=uuid.uuid4(),
+        run_id=str(uuid.uuid4()),
+    ) is None

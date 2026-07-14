@@ -32,6 +32,16 @@ class JobMatch(Base):
     __tablename__ = 'job_match'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+    )
+    tenant_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey('tenant.id', ondelete='CASCADE'),
+        nullable=True,
+    )
     job_post_id = Column(UUID(as_uuid=True), ForeignKey('job_post.id', ondelete='CASCADE'), nullable=False)
 
     resume_fingerprint = Column(Text, nullable=False)
@@ -71,7 +81,14 @@ class JobMatch(Base):
     requirement_matches = relationship("JobMatchRequirement", back_populates="job_match", cascade=CASCADE_DELETE_ORPHAN)
 
     __table_args__ = (
-        UniqueConstraint('job_post_id', 'resume_fingerprint', name='uq_job_match_job_resume'),
+        UniqueConstraint(
+            'owner_id',
+            'job_post_id',
+            'resume_fingerprint',
+            name='uq_job_match_owner_job_resume',
+        ),
+        Index('idx_job_match_owner_job', 'owner_id', 'job_post_id'),
+        Index('idx_job_match_tenant_owner', 'tenant_id', 'owner_id'),
         Index('idx_job_match_resume', 'resume_fingerprint'),
         Index('idx_job_match_pref', 'preference_score'),
         Index('idx_job_match_fit', 'fit_score'),

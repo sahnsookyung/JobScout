@@ -10,7 +10,8 @@ from pgvector.sqlalchemy import Vector
 from .base import Base
 
 UTC_NOW_SQL = "timezone('UTC', now())"
-RESUME_FINGERPRINT_VERSION = 1
+# Version 2 invalidates extractions created before candidate contact fields were required.
+RESUME_FINGERPRINT_VERSION = 2
 SYSTEM_OWNER_ID = "00000000-0000-0000-0000-000000000001"
 USERS_ID_FK = "users.id"
 

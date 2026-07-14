@@ -52,6 +52,8 @@ CHANNEL_EMBEDDINGS_BATCH_DONE = "embeddings:batch:completed"
 CHANNEL_MATCHING_DONE = "matching:completed"
 
 STREAM_MAX_LEN = 10_000
+USER_TASK_INDEX_PREFIX = "jobscout-cloud:user-tasks"
+TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
 
 
 def validate_job_payload(payload: dict, required_fields: list[str]) -> tuple[bool, str]:
@@ -66,17 +68,46 @@ def enqueue_job(stream: str, payload: dict) -> str:
     if not valid:
         raise ValueError(f"Invalid job payload: {error}")
 
-    client = get_redis_client()
     try:
         serialized = {k: json.dumps(v) for k, v in payload.items()}
     except TypeError as e:
         raise ValueError(f"Payload contains non-JSON-serializable value: {e}")
 
+    client = get_redis_client()
+    concurrency_state = "disabled"
+    owner_id = payload.get("owner_id")
+    if owner_id is not None:
+        from core.public_concurrency import acquire_public_task_slot
+
+        concurrency_state = acquire_public_task_slot(
+            client,
+            task_id=payload["task_id"],
+            owner_id=owner_id,
+        )
+
     try:
         msg_id = client.xadd(stream, serialized, maxlen=STREAM_MAX_LEN, approximate=True)
+        if owner_id is not None:
+            index_key = f"{USER_TASK_INDEX_PREFIX}:{owner_id}"
+            try:
+                client.sadd(index_key, str(payload["task_id"]))
+            except Exception:
+                client.xdel(stream, msg_id)
+                raise
         logger.info(f"📤 Enqueued job to {stream}: msg_id={msg_id}, task_id={payload.get('task_id')}")
-    except (redis.ConnectionError, redis.TimeoutError):
-        logger.exception("❌ Redis error enqueuing job to %s", stream)
+    except Exception as exc:
+        if concurrency_state in {"acquired", "transferred"}:
+            from core.public_concurrency import release_public_task_slot
+
+            try:
+                release_public_task_slot(client, payload["task_id"])
+            except Exception:
+                logger.exception(
+                    "Could not release public task slot after enqueue failure for %s",
+                    payload["task_id"],
+                )
+        if isinstance(exc, (redis.ConnectionError, redis.TimeoutError)):
+            logger.exception("❌ Redis error enqueuing job to %s", stream)
         raise
 
     return msg_id
@@ -448,6 +479,13 @@ def set_task_state(task_id: str, state: dict, ttl: int = 3600) -> None:
     except TypeError as e:
         raise ValueError(f"State contains non-JSON-serializable value: {e}")
     client.setex(key, ttl, serialized)
+    if str(state.get("status") or "").lower() in TERMINAL_TASK_STATUSES:
+        from core.public_concurrency import release_public_task_slot
+
+        try:
+            release_public_task_slot(client, task_id)
+        except Exception:
+            logger.exception("Could not release public task slot for terminal task %s", task_id)
 
 
 def delete_task_state(task_id: str) -> None:

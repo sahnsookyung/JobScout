@@ -24,15 +24,20 @@ class PolicyService:
         self._store = store or get_result_policy_store()
         self._ranking_store = ranking_store or get_ranking_policy_store()
 
-    def get_current_policy(self) -> ResultPolicy:
-        return self._store.get_current_policy()
+    def get_current_policy(self, owner_id: object | None = None) -> ResultPolicy:
+        return self._store.get_current_policy(owner_id)
 
-    def get_ranking_config(self) -> RankingConfig:
-        return self._ranking_store.get_current_config()
+    def get_ranking_config(self, owner_id: object | None = None) -> RankingConfig:
+        return self._ranking_store.get_current_config(owner_id)
 
-    def update_ranking_config(self, config: RankingConfig) -> RankingConfig:
+    def update_ranking_config(
+        self,
+        config: RankingConfig,
+        *,
+        owner_id: object | None = None,
+    ) -> RankingConfig:
         try:
-            return self._ranking_store.update_config(config)
+            return self._ranking_store.update_config(config, owner_id=owner_id)
         except ValueError as exc:
             raise InvalidPolicyException(str(exc)) from exc
 
@@ -44,12 +49,15 @@ class PolicyService:
         min_fit: float,
         top_k: int,
         min_jd_required_coverage: Optional[float],
+        *,
+        owner_id: object | None = None,
     ) -> ResultPolicy:
         try:
             return self._store.update_policy(
                 min_fit=min_fit,
                 top_k=top_k,
                 min_jd_required_coverage=min_jd_required_coverage,
+                owner_id=owner_id,
             )
         except ValueError as exc:
             raise InvalidPolicyException(str(exc)) from exc
@@ -72,9 +80,14 @@ class PolicyService:
         except ValueError as exc:
             raise InvalidPolicyException(str(exc)) from exc
 
-    def apply_preset(self, preset_name: str) -> ResultPolicy:
+    def apply_preset(
+        self,
+        preset_name: str,
+        *,
+        owner_id: object | None = None,
+    ) -> ResultPolicy:
         try:
-            return self._store.apply_preset(preset_name)
+            return self._store.apply_preset(preset_name, owner_id=owner_id)
         except ValueError as exc:
             raise InvalidPolicyException(str(exc)) from exc
 

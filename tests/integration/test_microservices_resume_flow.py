@@ -113,6 +113,7 @@ def _compose_env() -> dict[str, str]:
     env.update(
         {
             "COMPOSE_PROJECT_NAME": E2E_COMPOSE_PROJECT_NAME,
+            "JOBSPY_API_TOKEN": "jobscout-e2e-internal-token",
             "POSTGRES_PORT": reserve_port(),
             "REDIS_PORT": reserve_port(),
             "JOBSPY_PORT": reserve_port(),
@@ -1349,8 +1350,9 @@ def test_preference_cross_encoder_reranking_emits_detail_codes(microservices_sta
         )
         assert preference_components.get("preference_mode_used") == "semantic_rerank", preference_components
         assert "tech_stack_match" in preference_reason_codes, preference_reason_codes
-        assert all("|" not in code for code in preference_reason_codes), (
-            f"LLM-only preference reranking should not emit CE segment detail codes: {preference_reason_codes}"
+        assert any("|" in code for code in preference_reason_codes), (
+            "Cross-encoder preference reranking should emit at least one "
+            f"segment detail code: {preference_reason_codes}"
         )
     finally:
         session.close()

@@ -31,6 +31,11 @@ from core.resume_selection import (
     resolve_owner_id,
     serialize_owner_id,
 )
+from core.ephemeral_quota import (
+    EphemeralQuotaExceeded,
+    EphemeralQuotaUnavailable,
+    consume_ephemeral_quota,
+)
 from core.scraper.jobspy_client import JobSpyClient
 from core.redis_streams import (
     _sanitize_log,
@@ -65,7 +70,7 @@ from web.backend.api_error_codes import (
     PIPELINE_TASK_INVALID_ID,
     PIPELINE_TASK_NOT_FOUND,
 )
-from ..dependencies import get_current_user
+from ..dependencies import get_current_user, require_platform_admin
 from ..config import get_config
 from ..models.responses import (
     ApiError,
@@ -98,6 +103,7 @@ from etl.external_seed_fetcher import (
     get_external_seed_fetcher_status,
 )
 from etl.resume import ResumeParser
+from etl.resume.file_safety import ResumeFileSafetyError, validate_resume_content
 from web.backend.services.clients import (
     INTERNAL_ORCHESTRATOR_URL_ENV,
     ORCHESTRATOR_URL_ENV,
@@ -306,6 +312,15 @@ def _pipeline_error_response(exc: PipelineApiError) -> JSONResponse:
         status_code=exc.status_code,
         content=exc.payload.model_dump(exclude_none=True),
     )
+
+
+def _bind_public_operation_lease(request: Request, task_id: Optional[str]) -> None:
+    """Let the cloud dependency transfer its request lease to durable work."""
+    if not task_id:
+        return
+    binder = getattr(request.state, "bind_public_operation_lease", None)
+    if callable(binder):
+        binder(task_id)
 
 
 def _raise_pipeline_error(
@@ -622,7 +637,7 @@ def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
 @router.get("/sources", response_model=FetchSourcesResponse)
 def get_fetch_sources(
     request: Request,
-    _user: Annotated[None, Depends(get_current_user)] = None,
+    _user: Annotated[None, Depends(require_platform_admin)] = None,
     search: Annotated[
         Optional[str],
         Query(max_length=120, description="Optional whitespace-delimited source search"),
@@ -703,7 +718,7 @@ def _require_source_fetch_admin(request: Request) -> None:
 def fetch_seed_source_endpoint(
     request: Request,
     body: SourceFetchRequest,
-    _user: Annotated[None, Depends(get_current_user)] = None,
+    _user: Annotated[None, Depends(require_platform_admin)] = None,
 ):
     """Fetch one configured seed website through the external Worker-backed path."""
     try:
@@ -738,7 +753,9 @@ def fetch_seed_source_endpoint(
         500: {"model": ApiError, "description": "Internal server error"},
     },
 )
-def process_imported_jobs_endpoint(user: Annotated[None, Depends(get_current_user)] = None):
+def process_imported_jobs_endpoint(
+    user: Annotated[None, Depends(require_platform_admin)] = None,
+):
     """Trigger extraction and embedding for already imported jobs."""
     try:
         return _start_imported_job_processing(user)
@@ -755,7 +772,10 @@ def process_imported_jobs_endpoint(user: Annotated[None, Depends(get_current_use
         500: {"model": ApiError, "description": "Internal server error"},
     }
 )
-def run_matching_pipeline_endpoint(user: Annotated[None, Depends(get_current_user)] = None):
+def run_matching_pipeline_endpoint(
+    request: Request,
+    user: Annotated[None, Depends(get_current_user)] = None,
+):
     """
     Trigger the full matching pipeline in the background.
 
@@ -773,7 +793,9 @@ def run_matching_pipeline_endpoint(user: Annotated[None, Depends(get_current_use
         500: Internal error starting the pipeline.
     """
     try:
-        return _start_matching(user)
+        response = _start_matching(user, tenant_id=getattr(request.state, "tenant_id", None))
+        _bind_public_operation_lease(request, response.task_id)
+        return response
     except PipelineApiError as exc:
         return _pipeline_error_response(exc)
 
@@ -1429,42 +1451,50 @@ def _write_resume_ready_state(
     resume_hash: str,
     resume_fingerprint: str,
     trigger: str,
+    tenant_id=None,
 ) -> Optional[str]:
     """Write final resume-ready state and attach or report the matching enqueue."""
     owner_key = serialize_owner_id(owner_id)
-    matching_task_id = _enqueue_matching_for_ready_resume(
-        owner_id=owner_id,
-        upload_id=upload_id,
-        resume_fingerprint=resume_fingerprint,
-        trigger=trigger,
-    )
-    warnings = [] if matching_task_id else [{"code": "matching_enqueue_failed"}]
     now = _utc_now_iso()
     try:
         previous_state = get_task_state(task_id) or {}
     except Exception:
         previous_state = {}
+    completed_state = {
+        "status": "completed",
+        "task_type": "resume_upload",
+        "upload_status": RESUME_UPLOAD_READY,
+        "resume_hash": resume_hash,
+        "resume_fingerprint": resume_fingerprint,
+        "upload_id": upload_id,
+        "owner_id": owner_key,
+        "matching_task_id": None,
+        "trigger": trigger,
+        "started_at": previous_state.get("started_at") or now,
+        "updated_at": now,
+        "warnings": [],
+    }
     try:
-        set_task_state(
-            task_id,
-            {
-                "status": "completed",
-                "task_type": "resume_upload",
-                "upload_status": RESUME_UPLOAD_READY,
-                "resume_hash": resume_hash,
-                "resume_fingerprint": resume_fingerprint,
-                "upload_id": upload_id,
-                "owner_id": owner_key,
-                "matching_task_id": matching_task_id,
-                "trigger": trigger,
-                "started_at": previous_state.get("started_at") or now,
-                "updated_at": now,
-                "warnings": warnings,
-            },
-            ttl=3600,
-        )
+        set_task_state(task_id, completed_state, ttl=3600)
     except Exception:
         logger.warning("Failed to write Redis completed state for task %s", task_id)
+
+    matching_task_id = _enqueue_matching_for_ready_resume(
+        owner_id=owner_id,
+        upload_id=upload_id,
+        resume_fingerprint=resume_fingerprint,
+        trigger=trigger,
+        tenant_id=tenant_id,
+    )
+    completed_state["matching_task_id"] = matching_task_id
+    completed_state["warnings"] = (
+        [] if matching_task_id else [{"code": "matching_enqueue_failed"}]
+    )
+    completed_state["updated_at"] = _utc_now_iso()
+    try:
+        set_task_state(task_id, completed_state, ttl=3600)
+    except Exception:
+        logger.warning("Failed to attach matching state for task %s", task_id)
     return matching_task_id
 
 
@@ -1694,6 +1724,7 @@ def _enqueue_matching_job_or_500(
     redis=None,
     *,
     trigger: str = "manual",
+    tenant_id=None,
 ) -> None:
     """Enqueue matching work or raise 500 if enqueue fails."""
     try:
@@ -1702,6 +1733,7 @@ def _enqueue_matching_job_or_500(
             "resume_fingerprint": fingerprint,
             "resume_upload_id": upload_id,
             "owner_id": owner_id,
+            "tenant_id": str(tenant_id) if tenant_id is not None else None,
             "correlation_id": task_id,
             "trigger": trigger,
             "warn_on_no_completion_subscribers": False,
@@ -1770,6 +1802,7 @@ def _enqueue_matching_for_ready_resume(
     resume_fingerprint: str,
     trigger: str,
     raise_on_failure: bool = False,
+    tenant_id=None,
 ) -> Optional[str]:
     """Start or reuse a matching task for a ready resume upload."""
     import uuid as _uuid
@@ -1789,6 +1822,27 @@ def _enqueue_matching_for_ready_resume(
         )
         if latest_task_id:
             return latest_task_id
+
+    try:
+        consume_ephemeral_quota(owner_id, "matching_runs", default_limit=2, client=redis)
+    except EphemeralQuotaExceeded as exc:
+        if raise_on_failure:
+            _raise_pipeline_error(
+                status_code=429,
+                code="public_testing.matching_quota_exceeded",
+                message=str(exc),
+            )
+        logger.info("Automatic matching quota exhausted for owner %s", owner_key)
+        return None
+    except EphemeralQuotaUnavailable as exc:
+        if raise_on_failure:
+            _raise_pipeline_error(
+                status_code=503,
+                code="public_testing.quota_unavailable",
+                message=str(exc),
+            )
+        logger.warning("Automatic matching quota backend unavailable for owner %s", owner_key)
+        return None
 
     task_id = str(_uuid.uuid4())
     _set_initial_matching_task_state(
@@ -1817,6 +1871,7 @@ def _enqueue_matching_for_ready_resume(
             owner_key,
             redis,
             trigger=trigger,
+            tenant_id=tenant_id,
         )
     except PipelineApiError:
         _clear_latest_matching_task_marker(redis, owner_key, task_id)
@@ -1833,7 +1888,7 @@ def _enqueue_matching_for_ready_resume(
     return task_id
 
 
-def _start_matching(user) -> PipelineTaskResponse:
+def _start_matching(user, *, tenant_id=None) -> PipelineTaskResponse:
     """Enqueue a matching job to the Redis stream for the scorer-matcher consumer."""
     owner_id = resolve_owner_id(user)
     owner_key = serialize_owner_id(owner_id)
@@ -1847,6 +1902,7 @@ def _start_matching(user) -> PipelineTaskResponse:
         resume_fingerprint=eligibility.resume_fingerprint,
         trigger="manual",
         raise_on_failure=True,
+        tenant_id=tenant_id,
     )
     if task_id is None:
         _raise_pipeline_error(
@@ -2117,6 +2173,7 @@ def resume_preflight(
 )
 def select_ready_resume(
     body: ResumeSelectRequest,
+    request: Request,
     user: Annotated[None, Depends(get_current_user)] = None,
 ):
     """Commit a new latest-upload intent for an already-ready resume hash."""
@@ -2152,6 +2209,7 @@ def select_ready_resume(
             upload_id=upload_id,
             resume_fingerprint=resume_fingerprint,
             trigger="resume_selected",
+            tenant_id=getattr(request.state, "tenant_id", None),
         )
         phase = _resume_phase_from_step("completed", None)
 
@@ -2188,6 +2246,7 @@ def select_ready_resume(
 )
 async def retry_resume(
     body: ResumeRetryRequest,
+    request: Request,
     user: Annotated[None, Depends(get_current_user)] = None,
 ):
     """Retry a failed upload attempt by explicit upload_id."""
@@ -2250,6 +2309,7 @@ async def retry_resume(
     except PipelineApiError as exc:
         return _pipeline_error_response(exc)
 
+    _bind_public_operation_lease(request, task_id)
     try:
         redis = get_redis_client()
         redis.set(_latest_upload_task_key(owner_key), task_id, ex=3600)
@@ -2281,6 +2341,7 @@ async def retry_resume(
             owner_id,
             source_resume_fingerprint,
             source_resume_hash,
+            getattr(request.state, "tenant_id", None),
         )
     )
     _upload_tasks.add(orchestrator_task)
@@ -2585,6 +2646,7 @@ async def upload_resume_endpoint(
 
         resume_hash = _compute_and_verify_hash(content, resume_hash)
         owner_id = resolve_owner_id(user)
+        tenant_id = getattr(request.state, "tenant_id", None)
         owner_key = serialize_owner_id(owner_id)
         resume_fingerprint = build_resume_fingerprint(owner_id, resume_hash)
 
@@ -2611,7 +2673,9 @@ async def upload_resume_endpoint(
                     upload_id=str(upload.id),
                     resume_fingerprint=resume_fingerprint,
                     trigger="resume_already_ready",
+                    tenant_id=tenant_id,
                 )
+                _bind_public_operation_lease(request, matching_task_id)
                 phase = _resume_phase_from_step("completed", None)
                 return ResumeUploadResponse(
                     success=True,
@@ -2641,6 +2705,7 @@ async def upload_resume_endpoint(
                 task_id = getattr(latest_same_upload, "processing_task_id", None)
                 if not isinstance(task_id, str):
                     task_id = None
+                _bind_public_operation_lease(request, task_id)
                 return ResumeUploadResponse(
                     success=True,
                     resume_hash=resume_hash,
@@ -2654,6 +2719,21 @@ async def upload_resume_endpoint(
                         status="processing",
                         phases=RESUME_PHASES,
                     ),
+                )
+
+            try:
+                consume_ephemeral_quota(owner_id, "resume_uploads", default_limit=3)
+            except EphemeralQuotaExceeded as exc:
+                _raise_pipeline_error(
+                    status_code=429,
+                    code="public_testing.resume_upload_quota_exceeded",
+                    message=str(exc),
+                )
+            except EphemeralQuotaUnavailable as exc:
+                _raise_pipeline_error(
+                    status_code=503,
+                    code="public_testing.quota_unavailable",
+                    message=str(exc),
                 )
 
             import uuid as _uuid
@@ -2681,6 +2761,7 @@ async def upload_resume_endpoint(
             )
             upload_id = str(upload.id)
 
+        _bind_public_operation_lease(request, task_id)
         try:
             redis = get_redis_client()
             redis.set(_latest_upload_task_key(owner_key), task_id, ex=3600)
@@ -2714,6 +2795,7 @@ async def upload_resume_endpoint(
                 owner_id,
                 resume_hash,
                 resume_fingerprint,
+                tenant_id,
             )
         )
         _upload_tasks.add(background_task)
@@ -2762,7 +2844,15 @@ async def _validate_resume_file(file: UploadFile) -> bytes:
             message=f"Unsupported file format. Supported formats: {supported}",
         )
 
-    content = await file.read()
+    chunks: list[bytes] = []
+    total_bytes = 0
+    while total_bytes <= RESUME_MAX_SIZE:
+        chunk = await file.read(min(64 * 1024, RESUME_MAX_SIZE + 1 - total_bytes))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total_bytes += len(chunk)
+    content = b"".join(chunks)
 
     if len(content) == 0:
         _raise_pipeline_error(
@@ -2772,13 +2862,26 @@ async def _validate_resume_file(file: UploadFile) -> bytes:
         )
 
     # File too large — 413 Payload Too Large
-    if len(content) > RESUME_MAX_SIZE:
+    if total_bytes > RESUME_MAX_SIZE:
         limit_mb = RESUME_MAX_SIZE / (1024 * 1024)
         limit_str = f"{limit_mb:.1f}MB" if limit_mb >= 1 else f"{RESUME_MAX_SIZE // 1024}KB"
         _raise_pipeline_error(
             status_code=413,
             code=PIPELINE_RESUME_FILE_TOO_LARGE,
             message=f"File size exceeds {limit_str} limit.",
+        )
+
+    try:
+        validate_resume_content(file.filename, content)
+    except ResumeFileSafetyError as exc:
+        _raise_pipeline_error(
+            status_code=exc.status_code,
+            code=(
+                PIPELINE_RESUME_FILE_TOO_LARGE
+                if exc.status_code == 413
+                else PIPELINE_RESUME_FILE_UNSUPPORTED
+            ),
+            message=str(exc),
         )
 
     return content
@@ -2845,6 +2948,7 @@ def _process_resume_background(
     owner_id,
     resume_hash: str,
     resume_fingerprint: str,
+    tenant_id=None,
 ) -> None:
     """Run ETL processing in background thread with status updates.
 
@@ -2890,6 +2994,7 @@ def _process_resume_background(
             task_id,
             upload_id=upload_id,
             owner_id=str(owner_id),
+            tenant_id=str(tenant_id) if tenant_id is not None else None,
             resume_fingerprint=resume_fingerprint,
             mode="extract_and_embed",
         )
@@ -2912,6 +3017,7 @@ def _process_resume_background(
             resume_hash=resume_hash,
             resume_fingerprint=resume_fingerprint,
             trigger="resume_ready",
+            tenant_id=tenant_id,
         )
     except Exception as exc:
         logger.exception("Background resume processing failed")
@@ -2934,6 +3040,7 @@ def _retry_resume_background(
     owner_id,
     resume_fingerprint: str,
     resume_hash: str,
+    tenant_id=None,
 ) -> None:
     import time as _time
     from web.backend.services.clients import orchestrator_client
@@ -2965,6 +3072,7 @@ def _retry_resume_background(
             task_id,
             upload_id=upload_id,
             owner_id=str(owner_id),
+            tenant_id=str(tenant_id) if tenant_id is not None else None,
             resume_fingerprint=resume_fingerprint,
             mode="embed_only",
         )
@@ -2987,6 +3095,7 @@ def _retry_resume_background(
             resume_hash=resume_hash,
             resume_fingerprint=resume_fingerprint,
             trigger="resume_retry_ready",
+            tenant_id=tenant_id,
         )
     except Exception as exc:
         logger.exception("Background resume retry failed")

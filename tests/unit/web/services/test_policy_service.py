@@ -23,7 +23,7 @@ class TestPolicyService:
 
         assert policy.min_fit == 61.0
         assert policy.top_k == 20
-        store.get_current_policy.assert_called_once_with()
+        store.get_current_policy.assert_called_once_with(None)
 
     def test_update_policy_delegates_to_store(self):
         store = Mock()
@@ -37,6 +37,7 @@ class TestPolicyService:
             min_fit=70.0,
             top_k=25,
             min_jd_required_coverage=0.8,
+            owner_id=None,
         )
 
     def test_ranking_config_delegates_to_ranking_store(self):
@@ -53,8 +54,8 @@ class TestPolicyService:
 
         assert service.get_ranking_config() is config
         assert service.update_ranking_config(config) is config
-        ranking_store.get_current_config.assert_called_once_with()
-        ranking_store.update_config.assert_called_once_with(config)
+        ranking_store.get_current_config.assert_called_once_with(None)
+        ranking_store.update_config.assert_called_once_with(config, owner_id=None)
 
     def test_update_llm_judge_policy_delegates_to_store(self):
         store = Mock()
@@ -92,7 +93,7 @@ class TestPolicyService:
         policy = service.apply_preset("strict")
 
         assert policy.min_fit == 70.0
-        store.apply_preset.assert_called_once_with("strict")
+        store.apply_preset.assert_called_once_with("strict", owner_id=None)
 
     def test_apply_preset_translates_unknown_preset(self):
         store = Mock()

@@ -19,6 +19,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from core.config_loader import load_config
+from core.ephemeral_quota import (
+    EphemeralQuotaExceeded,
+    EphemeralQuotaUnavailable,
+    consume_ephemeral_quota,
+    public_testing_quotas_enabled,
+)
 from core.llm.interfaces import LLMProvider
 from core.llm.provider_chain import (
     build_match_judge_provider,
@@ -663,6 +669,8 @@ class MatchLlmEvaluationService:
                         provider_payload=getattr(result, "provider_payload", None) or {},
                         truncation=getattr(result, "truncation", None) or {},
                         enqueue_reason="auto_top_n",
+                        owner_id=owner_id,
+                        tenant_id=tenant_id,
                     )
                     stats["enqueued"] += 1
             except LlmJudgeQuotaExceededError:
@@ -1803,6 +1811,17 @@ class MatchLlmEvaluationService:
         return evaluation.completed_at >= cutoff
 
     def _check_daily_quota(self, owner_id: Any) -> None:
+        if public_testing_quotas_enabled():
+            try:
+                consume_ephemeral_quota(owner_id, "llm_evaluations", default_limit=3)
+            except EphemeralQuotaExceeded as exc:
+                raise LlmJudgeQuotaExceededError(str(exc)) from exc
+            except EphemeralQuotaUnavailable as exc:
+                raise LlmJudgeUnavailableError(
+                    str(exc),
+                    reason="quota_backend_unavailable",
+                ) from exc
+            return
         since = self._utcnow() - timedelta(days=1)
         count = self.db.scalar(
             select(func.count(LlmMatchEvaluation.id)).where(

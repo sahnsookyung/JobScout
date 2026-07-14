@@ -1430,6 +1430,8 @@ def test_evaluate_selection_run_counts_reuse_create_enqueue_failure_and_quota_st
         provider_payload={"job": "payload"},
         truncation={"truncated": False},
         enqueue_reason="auto_top_n",
+        owner_id="owner-1",
+        tenant_id="tenant-1",
     )
 
 

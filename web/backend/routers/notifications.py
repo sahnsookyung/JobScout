@@ -9,7 +9,12 @@ from fastapi import APIRouter, Depends, Query
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from ..dependencies import get_current_user, get_db
+from ..dependencies import (
+    get_current_user,
+    get_db,
+    require_notifications_enabled,
+    require_platform_admin,
+)
 from ..services.notification_service import NotificationServiceWrapper
 from ..models.requests import (
     NotificationRequest,
@@ -30,7 +35,10 @@ from notification import NotificationPriority
 from notification.exceptions import NotificationConfigurationError
 from ..services.notification_service import NotificationRateLimitError
 
-router = APIRouter(tags=["notifications"])
+router = APIRouter(
+    tags=["notifications"],
+    dependencies=[Depends(require_notifications_enabled)],
+)
 
 
 def get_notification_service(db: Annotated[Session, Depends(get_db)]) -> NotificationServiceWrapper:
@@ -46,7 +54,7 @@ def get_notification_service(db: Annotated[Session, Depends(get_db)]) -> Notific
 def send_notification(
     request: NotificationRequest,
     notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)],
-    user: Annotated[object, Depends(get_current_user)],
+    user: Annotated[object, Depends(require_platform_admin)],
 ):
     """
     Send a notification via the message queue.
@@ -251,7 +259,7 @@ def delete_email_override(
 @router.get("/api/notifications/queue-status", response_model=QueueStatusResponse)
 def get_queue_status(
     notification_service: Annotated[NotificationServiceWrapper, Depends(get_notification_service)],
-    _user: Annotated[object, Depends(get_current_user)],
+    _user: Annotated[object, Depends(require_platform_admin)],
 ):
     """
     Get the status of the notification queue.

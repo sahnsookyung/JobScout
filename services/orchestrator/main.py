@@ -60,6 +60,7 @@ from core.redis_streams import (
     CHANNEL_MATCHING_DONE,
 )
 from core.resume_selection import evaluate_resume_eligibility, resolve_owner_id
+from database.database import worker_database_context
 import redis  # used in /health
 from database.init_db import init_db
 from services.orchestrator.control import OrchestratorControlService
@@ -386,6 +387,7 @@ class ResumeEtlRequest(BaseModel):
     task_id: str
     upload_id: Optional[str] = None
     owner_id: str
+    tenant_id: Optional[str] = None
     resume_fingerprint: Optional[str] = None
     mode: str = "extract_and_embed"
 
@@ -1474,15 +1476,17 @@ async def orchestrate_resume_etl(payload: ResumeEtlRequest, request: Request):
         logger=logger,
         create_task=asyncio.create_task,
     )
-    await resume_orchestrator.start(
-        task_id=task_id,
-        file_path=file_path,
-        upload_id=payload.upload_id,
-        owner_id=payload.owner_id,
-        resume_fingerprint=payload.resume_fingerprint,
-        mode=payload.mode,
-        pipeline_runs=pipeline_runs,
-    )
+    with worker_database_context(user_id=payload.owner_id, tenant_id=payload.tenant_id):
+        await resume_orchestrator.start(
+            task_id=task_id,
+            file_path=file_path,
+            upload_id=payload.upload_id,
+            owner_id=payload.owner_id,
+            tenant_id=payload.tenant_id,
+            resume_fingerprint=payload.resume_fingerprint,
+            mode=payload.mode,
+            pipeline_runs=pipeline_runs,
+        )
 
     from fastapi.responses import JSONResponse as _JSONResponse
     return _JSONResponse(status_code=202, content={"task_id": task_id, "success": True})
@@ -1494,6 +1498,7 @@ async def _run_resume_etl(
     *,
     upload_id: Optional[str] = None,
     owner_id: str,
+    tenant_id: Optional[str] = None,
     resume_fingerprint: Optional[str] = None,
     mode: str = "extract_and_embed",
     pipeline_runs: Optional[PipelineRunService] = None,
@@ -1519,6 +1524,7 @@ async def _run_resume_etl(
         file_path,
         upload_id=upload_id,
         owner_id=owner_id,
+        tenant_id=tenant_id,
         resume_fingerprint=resume_fingerprint,
         mode=mode,
         pipeline_runs=pipeline_runs,
@@ -1671,7 +1677,7 @@ async def trigger_scrape(request: Request):
         await redis_client.aclose()
 
 
-from services.orchestrator.route_handlers import route_handlers as _route_handlers
+from services.orchestrator.route_handlers import route_handlers as _route_handlers  # noqa: E402
 
 register_orchestrator_routes(app, _route_handlers(sys.modules[__name__]))
 

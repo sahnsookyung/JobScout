@@ -7,6 +7,7 @@ import type {
     CandidatePreferences,
     CandidatePreferencesUpdateRequest,
 } from '@/types/api';
+import { PreferenceRankingSettings } from './PreferenceRankingSettings';
 
 type DraftPreferences = CandidatePreferencesUpdateRequest;
 
@@ -99,6 +100,8 @@ export function CandidatePreferencesPanel() {
 
     return (
         <div className="space-y-6">
+            <PreferenceRankingSettings />
+
             <section className="grid gap-4 lg:grid-cols-2">
                 <div className="border border-rule bg-surface">
                     <div className="border-b border-rule px-5 py-4">

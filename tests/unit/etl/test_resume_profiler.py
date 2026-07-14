@@ -9,6 +9,7 @@ from etl.resume.models import ResumeEvidenceUnit
 from core.llm.schema_models import (
     ResumeSchema,
     Profile,
+    ResumeContact,
     ExperienceItem,
     EducationItem,
     SkillsBlock,
@@ -23,6 +24,7 @@ from core.llm.schema_models import (
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
 # ---------------------------------------------------------------------------
+
 
 def make_profile(
     experience=None,
@@ -42,6 +44,7 @@ def make_profile(
         skills_all = []
 
     return Profile(
+        contact=ResumeContact(name="Test Candidate"),
         summary=Summary(text=summary_text, total_experience_years=total_years),
         experience=experience,
         projects=Projects(items=projects_items),
@@ -98,6 +101,7 @@ def make_profiler(ai_service=None, store=None):
 # extract_structured_resume
 # ---------------------------------------------------------------------------
 
+
 class TestExtractStructuredResume:
     def test_success_with_raw_text(self):
         profiler = make_profiler()
@@ -151,6 +155,7 @@ class TestExtractStructuredResume:
 # _extract_experience_evidence
 # ---------------------------------------------------------------------------
 
+
 class TestExtractExperienceEvidence:
     def test_description_unit(self):
         profiler = make_profiler()
@@ -158,7 +163,11 @@ class TestExtractExperienceEvidence:
         profile = make_profile(experience=[exp])
 
         units = profiler.extract_resume_evidence(profile)
-        desc_units = [u for u in units if u.tags.get("type") == "description" and u.source_section == "Experience"]
+        desc_units = [
+            u
+            for u in units
+            if u.tags.get("type") == "description" and u.source_section == "Experience"
+        ]
         assert len(desc_units) == 1
         assert desc_units[0].text == "Built systems"
         assert desc_units[0].tags["company"] == "ACME Corp"
@@ -168,7 +177,9 @@ class TestExtractExperienceEvidence:
 
     def test_highlight_units(self):
         profiler = make_profiler()
-        exp = make_experience(description=None, highlights=["Achieved X", "Improved Y"], tech_keywords=[])
+        exp = make_experience(
+            description=None, highlights=["Achieved X", "Improved Y"], tech_keywords=[]
+        )
         profile = make_profile(experience=[exp])
 
         units = profiler.extract_resume_evidence(profile)
@@ -180,7 +191,9 @@ class TestExtractExperienceEvidence:
 
     def test_tech_keyword_units(self):
         profiler = make_profiler()
-        exp = make_experience(description="Used Python", highlights=[], tech_keywords=["Python", "Docker"])
+        exp = make_experience(
+            description="Used Python", highlights=[], tech_keywords=["Python", "Docker"]
+        )
         profile = make_profile(experience=[exp])
 
         units = profiler.extract_resume_evidence(profile)
@@ -249,6 +262,7 @@ class TestExtractExperienceEvidence:
 # _extract_project_evidence
 # ---------------------------------------------------------------------------
 
+
 class TestExtractProjectEvidence:
     def test_project_description_and_highlights(self):
         profiler = make_profiler()
@@ -300,6 +314,7 @@ class TestExtractProjectEvidence:
 # _extract_education_evidence
 # ---------------------------------------------------------------------------
 
+
 class TestExtractEducationEvidence:
     def test_education_description_and_highlights(self):
         profiler = make_profiler()
@@ -349,10 +364,13 @@ class TestExtractEducationEvidence:
 # _extract_skill_evidence
 # ---------------------------------------------------------------------------
 
+
 class TestExtractSkillEvidence:
     def test_skill_with_proficiency_and_years(self):
         profiler = make_profiler()
-        skill = SkillItem(name="Python", kind="language", proficiency="expert", years_experience=5.0)
+        skill = SkillItem(
+            name="Python", kind="language", proficiency="expert", years_experience=5.0
+        )
         profile = make_profile(skills_all=[skill])
 
         units = profiler.extract_resume_evidence(profile)
@@ -393,6 +411,7 @@ class TestExtractSkillEvidence:
 # embed_evidence_units
 # ---------------------------------------------------------------------------
 
+
 class TestEmbedEvidenceUnits:
     def test_generates_embeddings_for_units_without_embedding(self):
         profiler = make_profiler()
@@ -432,6 +451,7 @@ class TestEmbedEvidenceUnits:
 # save_evidence_unit_embeddings
 # ---------------------------------------------------------------------------
 
+
 class TestSaveEvidenceUnitEmbeddings:
     def test_saves_when_store_and_units_present(self):
         mock_store = MagicMock()
@@ -467,7 +487,9 @@ class TestSaveEvidenceUnitEmbeddings:
 
     def test_does_nothing_without_store(self):
         profiler = ResumeProfiler(ai_service=MagicMock(), store=None)
-        unit = ResumeEvidenceUnit(id="reu_0", text="Python", source_section="Skills", embedding=[0.1])
+        unit = ResumeEvidenceUnit(
+            id="reu_0", text="Python", source_section="Skills", embedding=[0.1]
+        )
 
         # Should not raise
         profiler.save_evidence_unit_embeddings("fp-1", [unit])
@@ -484,6 +506,7 @@ class TestSaveEvidenceUnitEmbeddings:
 # ---------------------------------------------------------------------------
 # embed_only
 # ---------------------------------------------------------------------------
+
 
 class TestEmbedOnly:
     def test_raises_on_empty_fingerprint(self):
@@ -528,6 +551,7 @@ class TestEmbedOnly:
 # ---------------------------------------------------------------------------
 # profile_resume
 # ---------------------------------------------------------------------------
+
 
 class TestProfileResume:
     def test_full_pipeline(self):

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Generator
 
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
@@ -22,6 +22,7 @@ from core.auth import (
     _ensure_dev_bypass_allowed,
     _ensure_dev_user,
 )
+from database.database import ContextSession
 from .config import get_config
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ class DatabaseManager:
             autocommit=False,
             autoflush=False,
             bind=self.engine,
+            class_=ContextSession,
         )
 
     def get_session(self) -> Generator[Session, None, None]:
@@ -143,3 +145,20 @@ def get_current_user():
             session.close()
 
     raise HTTPException(status_code=401, detail="Authentication required")
+
+
+def require_platform_admin(user=Depends(get_current_user)):
+    """Require global operational authority without inferring it from tenant role."""
+    if _auth_mode() == "dev-bypass" or getattr(user, "is_platform_admin", False):
+        return user
+    raise HTTPException(status_code=403, detail="Platform administrator access is required")
+
+
+def require_notifications_enabled(user=Depends(get_current_user)):
+    """Disable outbound notification capabilities for temporary tester accounts."""
+    if _auth_mode() == "dev-bypass" or getattr(user, "is_platform_admin", False):
+        return user
+    raise HTTPException(
+        status_code=403,
+        detail="feature_disabled:notifications_public_testing",
+    )

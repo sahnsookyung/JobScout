@@ -8,6 +8,7 @@ const AUTH_STORAGE_KEY = 'jobscout_auth';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CSRF_COOKIE_NAME = '__Host-jobscout_csrf';
 const MUTATION_METHODS = new Set(['post', 'put', 'patch', 'delete']);
+const TURNSTILE_TOKEN_KEY = 'jobscout_turnstile_token';
 
 let verifiedTenantId: string | null = null;
 
@@ -143,6 +144,21 @@ apiClient.interceptors.request.use(
             if (csrfToken) {
                 config.headers = config.headers ?? {};
                 config.headers['X-CSRF-Token'] = csrfToken;
+            }
+        }
+        const path = String(config.url ?? '').split('?')[0].replace(/\/$/, '');
+        const expensiveOperation =
+            method === 'post'
+            && (
+                path === '/pipeline/upload-resume'
+                || path === '/pipeline/run-matching'
+                || /^\/matches\/[^/]+\/(resume-variants|llm-evaluations)$/.test(path)
+            );
+        if (expensiveOperation && typeof sessionStorage !== 'undefined') {
+            const turnstileToken = sessionStorage.getItem(TURNSTILE_TOKEN_KEY);
+            if (turnstileToken) {
+                config.headers = config.headers ?? {};
+                config.headers['X-Turnstile-Token'] = turnstileToken;
             }
         }
         if (!isProductionLike()) {

@@ -263,6 +263,7 @@ def _maybe_enqueue_next_matching_page(
     current_page: int,
     resume_fingerprint: Optional[str],
     owner_id: Optional[str],
+    tenant_id: Optional[str],
     result: Optional[object],
     stats: dict,
 ) -> list[dict[str, str]]:
@@ -304,6 +305,8 @@ def _maybe_enqueue_next_matching_page(
         }
         if owner_id is not None:
             payload["owner_id"] = owner_id
+        if tenant_id is not None:
+            payload["tenant_id"] = tenant_id
         enqueue_job(STREAM_MATCHING, payload)
         return [{
             "code": "matching_backlog_page_enqueued",
@@ -448,6 +451,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
         resume_fingerprint = msg.get("resume_fingerprint")
         upload_id = msg.get("resume_upload_id")
         owner_id = msg.get("owner_id")
+        tenant_id = msg.get("tenant_id")
         parent_task_id = msg.get("parent_task_id") or task_id
         state_task_id = parent_task_id or task_id
         try:
@@ -516,6 +520,8 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                 run_kwargs["owner_id"] = owner_id
                 if task_id is not None:
                     run_kwargs["task_id"] = task_id
+            if tenant_id is not None:
+                run_kwargs["tenant_id"] = tenant_id
 
             result = await asyncio.to_thread(
                 _run_matching_pipeline_sync,
@@ -549,6 +555,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                 current_page=matching_page,
                 resume_fingerprint=resume_fingerprint,
                 owner_id=owner_id,
+                tenant_id=tenant_id,
                 result=result,
                 stats=final_stats,
             )
@@ -833,6 +840,7 @@ def _run_matching_pipeline_sync(
     resume_fingerprint: Optional[str] = None,
     status_callback: Optional[Callable[[str], None]] = None,
     owner_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
     task_id: Optional[str] = None,
 ):
     """Run the matching pipeline synchronously — safe to call via asyncio.to_thread."""
@@ -842,6 +850,8 @@ def _run_matching_pipeline_sync(
     }
     if owner_id is not None:
         run_kwargs["owner_id"] = owner_id
+    if tenant_id is not None:
+        run_kwargs["tenant_id"] = tenant_id
     if task_id is not None:
         run_kwargs["task_id"] = task_id
 

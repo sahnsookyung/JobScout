@@ -134,8 +134,8 @@ class ResultPolicyStore:
     def __init__(self):
         self._default_policy = _default_policy_from_config()
 
-    def get_current_policy(self) -> ResultPolicy:
-        return self._load_from_db()
+    def get_current_policy(self, owner_id: object | None = None) -> ResultPolicy:
+        return self._load_from_db(owner_id)
 
     def get_llm_judge_policy(self, owner_id: object | None = None) -> LlmJudgePolicy:
         default_policy = _default_llm_judge_policy()
@@ -246,6 +246,8 @@ class ResultPolicyStore:
         min_fit: float,
         top_k: int,
         min_jd_required_coverage: Optional[float],
+        *,
+        owner_id: object | None = None,
     ) -> ResultPolicy:
         self._validate(
             min_fit=min_fit,
@@ -257,69 +259,87 @@ class ResultPolicyStore:
             top_k=top_k,
             min_jd_required_coverage=min_jd_required_coverage,
         )
-        self._save_to_db(new_policy)
+        self._save_to_db(new_policy, owner_id=owner_id)
         return new_policy
 
-    def apply_preset(self, preset_name: str) -> ResultPolicy:
+    def apply_preset(
+        self,
+        preset_name: str,
+        *,
+        owner_id: object | None = None,
+    ) -> ResultPolicy:
         normalized = preset_name.lower()
         if normalized not in POLICY_PRESETS:
             raise ValueError(
                 f"Invalid preset '{preset_name}'. Valid options: {', '.join(POLICY_PRESETS.keys())}"
             )
         policy = POLICY_PRESETS[normalized]
-        self._save_to_db(policy)
+        self._save_to_db(policy, owner_id=owner_id)
         return policy
 
     def get_presets(self) -> Dict[str, ResultPolicy]:
         return POLICY_PRESETS.copy()
 
-    def _load_from_db(self) -> ResultPolicy:
+    def _load_from_db(self, owner_id: object | None = None) -> ResultPolicy:
         try:
-            from database.models import AppSettings
+            from database.models import AppSettings, CandidatePreferences
 
             with db_session_scope() as session:
+                if owner_id is not None:
+                    preferences = session.query(CandidatePreferences).filter(
+                        CandidatePreferences.owner_id == owner_id
+                    ).first()
+                    if preferences and isinstance(preferences.result_policy, dict):
+                        return self._policy_from_mapping(preferences.result_policy)
+
                 setting = session.query(AppSettings).filter(
                     AppSettings.key == "result_policy"
                 ).first()
 
                 if setting and setting.value:
-                    data = self._parse_value(setting.value)
-                    return ResultPolicy(
-                        min_fit=data.get("min_fit", self._default_policy.min_fit),
-                        top_k=data.get("top_k", self._default_policy.top_k),
-                        min_jd_required_coverage=data.get(
-                            "min_jd_required_coverage",
-                            self._default_policy.min_jd_required_coverage,
-                        ),
-                    )
+                    return self._policy_from_mapping(self._parse_value(setting.value))
         except Exception as exc:
             logger.warning("Could not load policy from database: %s", exc)
 
         return self._default_policy
 
-    def _save_to_db(self, policy: ResultPolicy) -> None:
-        from database.models import AppSettings
+    def _save_to_db(
+        self,
+        policy: ResultPolicy,
+        *,
+        owner_id: object | None,
+    ) -> None:
+        if owner_id is None:
+            raise ValueError("owner_id is required to update result policy")
+
+        from database.models import CandidatePreferences
 
         with db_session_scope() as session:
-            setting = session.query(AppSettings).filter(
-                AppSettings.key == "result_policy"
+            preferences = session.query(CandidatePreferences).filter(
+                CandidatePreferences.owner_id == owner_id
             ).first()
+            if preferences is None:
+                preferences = CandidatePreferences(owner_id=owner_id)
+                session.add(preferences)
 
-            value = json.dumps(
-                {
-                    "min_fit": policy.min_fit,
-                    "top_k": policy.top_k,
-                    "min_jd_required_coverage": policy.min_jd_required_coverage,
-                }
-            )
-
-            if setting:
-                setting.value = value
-            else:
-                setting = AppSettings(key="result_policy", value=value)
-                session.add(setting)
+            preferences.result_policy = {
+                "min_fit": policy.min_fit,
+                "top_k": policy.top_k,
+                "min_jd_required_coverage": policy.min_jd_required_coverage,
+            }
+            preferences.revision = int(preferences.revision or 0) + 1
 
             session.commit()
+
+    def _policy_from_mapping(self, data: dict) -> ResultPolicy:
+        return ResultPolicy(
+            min_fit=data.get("min_fit", self._default_policy.min_fit),
+            top_k=data.get("top_k", self._default_policy.top_k),
+            min_jd_required_coverage=data.get(
+                "min_jd_required_coverage",
+                self._default_policy.min_jd_required_coverage,
+            ),
+        )
 
     @staticmethod
     def _parse_value(value):

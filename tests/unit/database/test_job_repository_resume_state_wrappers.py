@@ -4,7 +4,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from database.models import SYSTEM_OWNER_ID
+from database.models import RESUME_FINGERPRINT_VERSION, SYSTEM_OWNER_ID
 from database.repository import JobRepository
 
 
@@ -46,7 +46,7 @@ def test_job_repository_forwards_resume_state_methods():
         error=None,
         extraction_completed_at="extract-ts",
         embedding_completed_at="embed-ts",
-        fingerprint_version=1,
+        fingerprint_version=RESUME_FINGERPRINT_VERSION,
         failure_stage=None,
         failure_class=None,
         retryable=None,

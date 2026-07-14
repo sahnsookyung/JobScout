@@ -38,10 +38,21 @@ export function GoogleLoginScreen() {
             document.head.appendChild(script);
         }
 
-        function initButton() {
+        async function initButton() {
             if (!globalThis.google || !buttonRef.current) return;
+            let nonce: string;
+            try {
+                nonce = (await cloudAuthApi.createGoogleLoginNonce()).data.nonce;
+            } catch {
+                if (isMountedRef.current) {
+                    setAuthError('Secure sign-in is temporarily unavailable. Please try again.');
+                }
+                return;
+            }
+            if (!isMountedRef.current) return;
             globalThis.google.accounts.id.initialize({
                 client_id: clientId,
+                nonce,
                 callback: async (response: GoogleCredentialResponse) => {
                     if (!isMountedRef.current) return;
                     const attemptId = exchangeAttemptRef.current + 1;
@@ -50,15 +61,20 @@ export function GoogleLoginScreen() {
                     setAuthError(null);
                     try {
                         const exchange = await cloudAuthApi.exchangeGoogleCredential(
-                            response.credential
+                            response.credential,
+                            nonce
                         );
                         if (!isMountedRef.current || attemptId !== exchangeAttemptRef.current) return;
                         const { user, access_token: accessToken, tenants = [] } = exchange.data;
                         login(
                             {
+                                id: user.id,
                                 email: user.email,
                                 name: user.name,
                                 picture: user.picture ?? undefined,
+                                is_platform_admin: user.is_platform_admin,
+                                data_expires_at: user.data_expires_at,
+                                session_expires_at: user.session_expires_at,
                             },
                             accessToken ?? tenants
                         );
@@ -111,8 +127,8 @@ export function GoogleLoginScreen() {
                         A quiet place to find your next role.
                     </h1>
                     <p className="mt-3 max-w-sm text-[14px] leading-relaxed text-ink-soft">
-                        Sign in with Google to keep your resume, preferences, and shortlist in one place.
-                        Take the time you need.
+                        Sign in with Google to try the complete workflow. Non-admin accounts and
+                        their uploaded data are deleted four hours after the last sign-in.
                     </p>
 
                     <div className="mt-6 flex justify-center">
@@ -136,7 +152,7 @@ export function GoogleLoginScreen() {
                 </div>
 
                 <div className="border-t border-rule px-8 py-4 text-[12px] text-ink-muted">
-                    We only store what you explicitly share. No tracking pixels. No cold emails.
+                    Temporary testing accounts are isolated from other users. Shared job data remains.
                 </div>
             </div>
         </main>

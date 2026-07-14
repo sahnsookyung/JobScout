@@ -33,6 +33,7 @@ class TestMetricDeclarations:
             "jobscout_oci_critical_log_bytes",
             "jobscout_oci_critical_log_dropped",
             "jobscout_oci_critical_log_budget_usage_ratio",
+            "jobscout_public_security_events",
         }
         exposed = set()
         for collector in REGISTRY._collector_to_names:
@@ -166,6 +167,18 @@ class TestRecordHelpers:
             self._sample("jobscout_email_verification_events_total", {"event": "other"})
             == 1
         )
+
+    def test_record_public_security_event(self):
+        before = self._sample(
+            "jobscout_public_security_events_total",
+            {"event": "quota_exhausted"},
+        )
+        m.record_public_security_event("quota_exhausted")
+        after = self._sample(
+            "jobscout_public_security_events_total",
+            {"event": "quota_exhausted"},
+        )
+        assert after - before == 1
 
     def test_record_worker_running(self):
         m.record_worker_running("mystery", "consumer", True)

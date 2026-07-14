@@ -145,6 +145,11 @@ _OCI_CRITICAL_LOG_SERVICES = frozenset({
     "orchestrator",
     "scorer_matcher",
 })
+_PUBLIC_SECURITY_EVENTS = frozenset({
+    "global_budget_exhausted",
+    "parser_failed",
+    "quota_exhausted",
+})
 
 
 def _safe(value: str, allowed: frozenset[str]) -> str:
@@ -384,6 +389,12 @@ description_recovery_provider_latency_seconds = Histogram(
     buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
 )
 
+public_security_events_total = Counter(
+    f"{NAMESPACE}_public_security_events_total",
+    "Bounded public-testing security and resource-control events.",
+    labelnames=("event",),
+)
+
 
 # ---------------------------------------------------------------------------
 # Classifiers
@@ -480,6 +491,12 @@ def set_llm_rerank_policy_revision(revision: int | float | None) -> None:
 
 def record_email_event(event: str) -> None:
     email_verification_events_total.labels(event=_safe(event, _EMAIL_EVENTS)).inc()
+
+
+def record_public_security_event(event: str) -> None:
+    public_security_events_total.labels(
+        event=_safe(event, _PUBLIC_SECURITY_EVENTS),
+    ).inc()
 
 
 def record_worker_running(service: str, worker: str, running: bool) -> None:

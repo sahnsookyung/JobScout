@@ -21,6 +21,8 @@ import yaml
 from docx import Document
 from pypdf import PdfReader
 
+from etl.resume.file_safety import validate_extracted_text, validate_resume_content
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,7 +68,7 @@ class ResumeParser:
     ) -> ParsedResume:
         return ParsedResume(
             data=data,
-            text=text,
+            text=validate_extracted_text(text),
             format=format,
             source_path=str(source_path),
         )
@@ -132,6 +134,8 @@ class ResumeParser:
                 f"Unsupported resume format: {ext}. "
                 f"Supported formats: {supported}"
             )
+
+        validate_resume_content(path.name, path.read_bytes())
 
         self.logger.info(f"Parsing resume from {file_path} (format: {ext})")
 
@@ -305,6 +309,9 @@ class ResumeParser:
         """
         try:
             reader = PdfReader(path)
+
+            if reader.is_encrypted:
+                raise ValueError("Encrypted PDF files are not supported")
 
             if len(reader.pages) == 0:
                 raise ValueError("PDF file has no pages")

@@ -174,6 +174,49 @@ class TestEnqueueJob:
         assert "non-JSON-serializable" in str(exc_info.value)
 
 
+class TestPublicEnqueueJob:
+    def test_owner_task_acquires_slot_and_is_indexed(self):
+        client = Mock()
+        client.xadd.return_value = "1-0"
+        with patch("core.redis_streams.get_redis_client", return_value=client), patch(
+            "core.public_concurrency.acquire_public_task_slot",
+            return_value="transferred",
+        ) as acquire:
+            result = enqueue_job(
+                STREAM_MATCHING,
+                {"task_id": "task-123", "owner_id": "owner-1"},
+            )
+
+        assert result == "1-0"
+        acquire.assert_called_once_with(
+            client,
+            task_id="task-123",
+            owner_id="owner-1",
+        )
+        client.sadd.assert_called_once_with(
+            "jobscout-cloud:user-tasks:owner-1",
+            "task-123",
+        )
+        client.expire.assert_not_called()
+
+    def test_enqueue_failure_releases_newly_transferred_slot(self):
+        client = Mock()
+        client.xadd.side_effect = RuntimeError("enqueue failed")
+        with patch("core.redis_streams.get_redis_client", return_value=client), patch(
+            "core.public_concurrency.acquire_public_task_slot",
+            return_value="transferred",
+        ), patch(
+            "core.public_concurrency.release_public_task_slot",
+        ) as release:
+            with pytest.raises(RuntimeError, match="enqueue failed"):
+                enqueue_job(
+                    STREAM_MATCHING,
+                    {"task_id": "task-123", "owner_id": "owner-1"},
+                )
+
+        release.assert_called_once_with(client, "task-123")
+
+
 class TestIsClaimable:
     """Test _is_claimable function."""
 
@@ -739,6 +782,18 @@ class TestTaskState:
         call_args = mock_redis.setex.call_args[0]
         assert call_args[0] == "task:task-123:state"
         assert call_args[1] == 3600
+
+    def test_terminal_task_state_releases_public_concurrency_slot(self, mock_redis):
+        with patch("core.public_concurrency.release_public_task_slot") as release:
+            set_task_state("task-123", {"status": "completed"})
+
+        release.assert_called_once_with(mock_redis, "task-123")
+
+    def test_nonterminal_task_state_keeps_public_concurrency_slot(self, mock_redis):
+        with patch("core.public_concurrency.release_public_task_slot") as release:
+            set_task_state("task-123", {"status": "running"})
+
+        release.assert_not_called()
 
     def test_set_task_state_non_serializable(self, mock_redis):
         """Test setting task state with non-serializable value."""

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import UUID
 
-from database.models import RESUME_PROCESSING_READY
+from database.models import RESUME_FINGERPRINT_VERSION, RESUME_PROCESSING_READY
 from database.repositories.resume import ResumeRepository, ResumeUploadCreateParams
 
 
@@ -140,6 +140,39 @@ def test_is_resume_ready_requires_structured_resume():
     assert repo.is_resume_ready("fp-1") is False
 
 
+def test_is_resume_ready_rejects_outdated_processing_state():
+    db = MagicMock()
+    repo = ResumeRepository(db)
+    repo.get_resume_processing_state = MagicMock(
+        return_value=SimpleNamespace(
+            processing_status=RESUME_PROCESSING_READY,
+            fingerprint_version=RESUME_FINGERPRINT_VERSION - 1,
+        )
+    )
+
+    assert repo.is_resume_ready("fp-v1") is False
+
+
+def test_is_resume_ready_rejects_outdated_structured_resume():
+    db = MagicMock()
+    repo = ResumeRepository(db)
+    repo.get_resume_processing_state = MagicMock(
+        return_value=SimpleNamespace(
+            processing_status=RESUME_PROCESSING_READY,
+            fingerprint_version=RESUME_FINGERPRINT_VERSION,
+        )
+    )
+    repo.get_structured_resume_by_fingerprint = MagicMock(
+        return_value=SimpleNamespace(
+            fingerprint_version=RESUME_FINGERPRINT_VERSION - 1,
+        )
+    )
+    repo.get_resume_summary_embedding = MagicMock()
+
+    assert repo.is_resume_ready("fp-v1") is False
+    repo.get_resume_summary_embedding.assert_not_called()
+
+
 def test_is_resume_ready_requires_summary_embedding():
     db = MagicMock()
     repo = ResumeRepository(db)
@@ -193,6 +226,30 @@ def test_get_latest_ready_resume_fingerprint_returns_none_when_none_verify():
     repo.is_resume_ready = MagicMock(return_value=False)
 
     assert repo.get_latest_ready_resume_fingerprint() is None
+
+
+def test_get_latest_ready_resume_fingerprint_skips_outdated_states():
+    db = MagicMock()
+    result = MagicMock()
+    result.scalars.return_value = iter(
+        [
+            SimpleNamespace(
+                resume_fingerprint="fp-v1",
+                fingerprint_version=RESUME_FINGERPRINT_VERSION - 1,
+            ),
+            SimpleNamespace(
+                resume_fingerprint="fp-v2",
+                fingerprint_version=RESUME_FINGERPRINT_VERSION,
+            ),
+        ]
+    )
+    db.execute.return_value = result
+
+    repo = ResumeRepository(db)
+    repo.is_resume_ready = MagicMock(return_value=True)
+
+    assert repo.get_latest_ready_resume_fingerprint() == "fp-v2"
+    repo.is_resume_ready.assert_called_once_with("fp-v2")
 
 
 def test_resume_needs_embedding_checks_extracted_state():

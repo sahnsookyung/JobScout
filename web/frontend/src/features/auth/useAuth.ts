@@ -2,12 +2,18 @@ import { useCallback, useEffect, useSyncExternalStore } from 'react';
 
 import { API_AUTH_FAILURE_EVENT, readRequestedTenantId, setVerifiedTenantId } from '@/services/api';
 import { cloudAuthApi } from '@/services/cloudAuthApi';
+import { clearPrivateQueryCache, setPrivateQueryScope } from '@/services/queryClient';
 import type { CloudTenant } from '@/types/api';
+import { deleteOwnerResumes, setResumeOwnerContext } from '@/utils/indexedDB';
 
 export interface AuthUser {
+    id?: string;
     email: string;
     name: string;
     picture?: string;
+    is_platform_admin?: boolean;
+    data_expires_at?: string | null;
+    session_expires_at?: number | null;
 }
 
 interface AuthState {
@@ -30,6 +36,7 @@ interface UseAuthResult {
     login: (user: AuthUser, tokenOrTenants: string | CloudTenant[]) => void;
     logout: () => void;
     retrySession: () => void;
+    expiresAt?: number | null;
 }
 
 const STORAGE_KEY = 'jobscout_auth';
@@ -52,6 +59,7 @@ const EMPTY_AUTH_STATE: AuthState = {
 
 let authState: AuthState | null = null;
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+let expiryTimer: ReturnType<typeof setTimeout> | null = null;
 let bootstrapRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let refreshInFlight: Promise<void> | null = null;
 let bootstrapInFlight: Promise<void> | null = null;
@@ -112,12 +120,18 @@ function createAuthState(
     isReady = true,
     tenants: CloudTenant[] = []
 ): AuthState {
+    const dataExpiry = user.data_expires_at ? Date.parse(user.data_expires_at) : null;
+    const sessionExpiry = user.session_expires_at ? user.session_expires_at * 1000 : null;
+    const providedExpiry = token ? expiresAt ?? decodeTokenExpiry(token) : expiresAt;
+    const expiryCandidates = [providedExpiry, dataExpiry, sessionExpiry].filter(
+        (value): value is number => typeof value === 'number' && Number.isFinite(value)
+    );
     return {
         user,
         token,
         tenants,
         selected_tenant_id: tenants.length > 0 ? selectVerifiedTenant(tenants) : null,
-        expires_at: token ? expiresAt ?? decodeTokenExpiry(token) : expiresAt,
+        expires_at: expiryCandidates.length > 0 ? Math.min(...expiryCandidates) : null,
         is_ready: isReady,
         restore_error: null,
     };
@@ -131,6 +145,29 @@ function clearRefreshTimer(): void {
     if (refreshTimer) {
         clearTimeout(refreshTimer);
         refreshTimer = null;
+    }
+}
+
+function clearExpiryTimer(): void {
+    if (expiryTimer) {
+        clearTimeout(expiryTimer);
+        expiryTimer = null;
+    }
+}
+
+function clearOwnerClientState(ownerId?: string): void {
+    clearPrivateQueryCache();
+    if (ownerId) {
+        void deleteOwnerResumes(ownerId).catch(() => undefined);
+    }
+    setResumeOwnerContext(null);
+    setPrivateQueryScope(null, null);
+    if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('jobscout_show_hidden');
+        localStorage.removeItem('jobscout_llm_ordering');
+    }
+    if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.removeItem('jobscout_turnstile_token');
     }
 }
 
@@ -166,6 +203,14 @@ function persistAuthState(next: AuthState): void {
 }
 
 function applyAuthState(next: AuthState): void {
+    const previous = getAuthState();
+    const identityChanged = previous.user?.id !== next.user?.id;
+    const tenantChanged = previous.selected_tenant_id !== next.selected_tenant_id;
+    if (identityChanged || tenantChanged) {
+        clearPrivateQueryCache();
+    }
+    setResumeOwnerContext(next.user?.id ?? null);
+    setPrivateQueryScope(next.user?.id ?? null, next.selected_tenant_id);
     clearBootstrapRetryTimer();
     bootstrapRetryCount = 0;
     authState = next;
@@ -186,7 +231,9 @@ function updateAuthReadiness(isReady: boolean): void {
 }
 
 function clearAuthState(): void {
+    const previousOwnerId = getAuthState().user?.id;
     clearRefreshTimer();
+    clearExpiryTimer();
     clearBootstrapRetryTimer();
     bootstrapRetryCount = 0;
     authState = { ...EMPTY_AUTH_STATE };
@@ -195,6 +242,7 @@ function clearAuthState(): void {
     if (typeof localStorage !== 'undefined') {
         localStorage.removeItem(STORAGE_KEY);
     }
+    clearOwnerClientState(previousOwnerId);
     emitChange();
 }
 
@@ -308,11 +356,16 @@ async function refreshAuthSession(): Promise<void> {
             applyAuthState(
                 createAuthState(
                     {
+                        id: response.data.user.id,
                         email: response.data.user.email,
                         name: response.data.user.name,
                         picture: response.data.user.picture ?? undefined,
+                        is_platform_admin: response.data.user.is_platform_admin,
+                        data_expires_at: response.data.user.data_expires_at,
+                        session_expires_at: response.data.user.session_expires_at,
                     },
-                    accessToken
+                    accessToken,
+                    currentAuth.expires_at
                 )
             );
         } catch (error) {
@@ -342,6 +395,7 @@ async function refreshAuthSession(): Promise<void> {
 function scheduleTokenRefresh(delayOverrideMs?: number): void {
     clearRefreshTimer();
     const currentAuth = getAuthState();
+    scheduleSessionExpiry();
     if (!currentAuth.token || !currentAuth.expires_at) {
         return;
     }
@@ -352,6 +406,18 @@ function scheduleTokenRefresh(delayOverrideMs?: number): void {
     refreshTimer = setTimeout(() => {
         void refreshAuthSession();
     }, refreshDelay);
+}
+
+function scheduleSessionExpiry(): void {
+    clearExpiryTimer();
+    const expiresAt = getAuthState().expires_at;
+    if (!expiresAt) return;
+    const delay = expiresAt - Date.now();
+    if (delay <= 0) {
+        clearAuthState();
+        return;
+    }
+    expiryTimer = setTimeout(clearAuthState, delay);
 }
 
 async function bootstrapStoredSession(): Promise<void> {
@@ -375,9 +441,13 @@ async function bootstrapStoredSession(): Promise<void> {
             applyAuthState(
                 createAuthState(
                     {
+                        id: response.data.id,
                         email: response.data.email,
                         name: response.data.name,
                         picture: response.data.picture ?? undefined,
+                        is_platform_admin: response.data.is_platform_admin,
+                        data_expires_at: response.data.data_expires_at,
+                        session_expires_at: response.data.session_expires_at,
                     },
                     expectedToken,
                     currentAuth.expires_at ?? null
@@ -421,12 +491,16 @@ async function bootstrapCookieSession(): Promise<void> {
             applyAuthState(
                 createAuthState(
                     {
+                        id: userResponse.data.id,
                         email: userResponse.data.email,
                         name: userResponse.data.name,
                         picture: userResponse.data.picture ?? undefined,
+                        is_platform_admin: userResponse.data.is_platform_admin,
+                        data_expires_at: userResponse.data.data_expires_at,
+                        session_expires_at: userResponse.data.session_expires_at,
                     },
                     null,
-                    userResponse.data.session_expires_at ?? null,
+                    null,
                     true,
                     tenantsResponse.data
                 )
@@ -505,6 +579,7 @@ export function useAuth(): UseAuthResult {
         selectedTenantId: auth.selected_tenant_id,
         isReady: auth.is_ready,
         restoreError: auth.restore_error,
+        expiresAt: auth.expires_at ?? null,
         login,
         logout,
         retrySession,
@@ -513,6 +588,7 @@ export function useAuth(): UseAuthResult {
 
 export function __resetAuthForTests(): void {
     clearRefreshTimer();
+    clearExpiryTimer();
     clearBootstrapRetryTimer();
     refreshInFlight = null;
     bootstrapInFlight = null;

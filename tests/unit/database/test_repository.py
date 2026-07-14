@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 from sqlalchemy.dialects import postgresql
 
-from database.models import SYSTEM_OWNER_ID
+from database.models import RESUME_FINGERPRINT_VERSION, SYSTEM_OWNER_ID
 from database.repository import JobRepository
 from database.repositories.job_post import JobPostRepository
 from database.repositories.resume import ResumeRepository
@@ -451,7 +451,7 @@ class TestResumeDelegation:
             total_experience_years=None,
             extraction_confidence=None,
             extraction_warnings=None,
-            fingerprint_version=1,
+            fingerprint_version=RESUME_FINGERPRINT_VERSION,
         )
 
     def test_get_resume_upload(self):
@@ -498,7 +498,7 @@ class TestResumeDelegation:
             resume_fingerprint="fp-1",
             sections=[],
             owner_id=SYSTEM_OWNER_ID,
-            fingerprint_version=1,
+            fingerprint_version=RESUME_FINGERPRINT_VERSION,
         )
         assert result == []
 
@@ -524,7 +524,7 @@ class TestResumeDelegation:
             resume_fingerprint="fp-1",
             evidence_units=[],
             owner_id=SYSTEM_OWNER_ID,
-            fingerprint_version=1,
+            fingerprint_version=RESUME_FINGERPRINT_VERSION,
         )
         assert result == []
 
@@ -545,7 +545,12 @@ class TestMatchDelegation:
         repo, _ = make_repo()
         repo.match.get_existing_match = MagicMock(return_value="match")
         result = repo.get_existing_match("job-1", "fp-1", load_job_post=True)
-        repo.match.get_existing_match.assert_called_once_with("job-1", "fp-1", True)
+        repo.match.get_existing_match.assert_called_once_with(
+            "job-1",
+            "fp-1",
+            True,
+            SYSTEM_OWNER_ID,
+        )
         assert result == "match"
 
     def test_get_matches_for_resume(self):

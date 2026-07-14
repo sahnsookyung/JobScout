@@ -343,6 +343,7 @@ class TestMatcherConsumer:
                 current_page=1,
                 resume_fingerprint="fp-123",
                 owner_id="owner-123",
+                tenant_id=None,
                 result=SimpleNamespace(success=True, cancelled=False, saved_count=25),
                 stats={"jobs_pending_matching": 75},
             )
@@ -375,6 +376,7 @@ class TestMatcherConsumer:
                 current_page=1,
                 resume_fingerprint="fp-123",
                 owner_id=None,
+                tenant_id=None,
                 result=SimpleNamespace(success=True, cancelled=False, saved_count=0),
                 stats={"jobs_pending_matching": 75},
             )

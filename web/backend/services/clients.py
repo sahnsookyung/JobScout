@@ -262,6 +262,7 @@ class OrchestratorClient(ServiceClient):
         *,
         upload_id: str | None = None,
         owner_id: str | None = None,
+        tenant_id: str | None = None,
         resume_fingerprint: str | None = None,
         mode: str = "extract_and_embed",
     ) -> dict:
@@ -278,6 +279,8 @@ class OrchestratorClient(ServiceClient):
             payload["upload_id"] = upload_id
         if owner_id is not None:
             payload["owner_id"] = owner_id
+        if tenant_id is not None:
+            payload["tenant_id"] = tenant_id
         if resume_fingerprint is not None:
             payload["resume_fingerprint"] = resume_fingerprint
         return self.post("/orchestrate/resume-etl", json=payload)

@@ -3,12 +3,22 @@ import type { CloudAuthExchangeResponse, CloudTenant, CloudUser } from '@/types/
 
 export interface GoogleCredentialExchangeRequest {
     credential: string;
+    nonce: string;
+}
+
+export interface GoogleLoginNonceResponse {
+    nonce: string;
+    expires_at: number;
 }
 
 export const cloudAuthApi = {
-    exchangeGoogleCredential: (credential: string) =>
+    createGoogleLoginNonce: () =>
+        apiClient.get<GoogleLoginNonceResponse>('/cloud/auth/google/nonce'),
+
+    exchangeGoogleCredential: (credential: string, nonce: string) =>
         apiClient.post<CloudAuthExchangeResponse>('/cloud/auth/google/exchange', {
             credential,
+            nonce,
         } satisfies GoogleCredentialExchangeRequest),
 
     getCurrentUser: () =>

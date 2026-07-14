@@ -6,6 +6,7 @@ Tests verify:
 - extract_structured_data sends proper JSON schema to LLM
 - Guardrails catch invalid schemas
 """
+
 import pytest
 from unittest.mock import MagicMock
 import json
@@ -81,12 +82,12 @@ class TestExtractStructuredData:
         service.extract_structured_data("test text", EXTRACTION_SCHEMA)
 
         call_kwargs = service.client.chat.completions.create.call_args[1]
-        json_schema = call_kwargs['response_format']['json_schema']
+        json_schema = call_kwargs["response_format"]["json_schema"]
 
-        assert json_schema['schema'].get("type") == "object"
-        assert "properties" in json_schema['schema']
-        assert "name" not in json_schema['schema']
-        assert "strict" not in json_schema['schema']
+        assert json_schema["schema"].get("type") == "object"
+        assert "properties" in json_schema["schema"]
+        assert "name" not in json_schema["schema"]
+        assert "strict" not in json_schema["schema"]
 
     def test_extract_with_raw_schema_sends_schema_directly(self, service):
         """Raw schema should be sent as-is."""
@@ -94,23 +95,37 @@ class TestExtractStructuredData:
         service.extract_structured_data("test text", raw_schema)
 
         call_kwargs = service.client.chat.completions.create.call_args[1]
-        json_schema = call_kwargs['response_format']['json_schema']
+        json_schema = call_kwargs["response_format"]["json_schema"]
 
-        assert json_schema['schema'] == raw_schema
+        assert json_schema["schema"] == raw_schema
 
     def test_extract_preserves_strict_setting_from_wrapper(self, service):
         """Strict=True from wrapper should be passed through."""
         service.extract_structured_data("test text", EXTRACTION_SCHEMA)
 
         call_kwargs = service.client.chat.completions.create.call_args[1]
-        assert call_kwargs['response_format']['json_schema']['strict'] is True
+        assert call_kwargs["response_format"]["json_schema"]["strict"] is True
+
+    def test_extract_applies_configured_max_output_tokens(self, service):
+        service.max_output_tokens = 16_384
+
+        service.extract_structured_data("test text", EXTRACTION_SCHEMA)
+
+        call_kwargs = service.client.chat.completions.create.call_args[1]
+        assert call_kwargs["max_tokens"] == 16_384
+
+    def test_extract_omits_max_output_tokens_by_default(self, service):
+        service.extract_structured_data("test text", EXTRACTION_SCHEMA)
+
+        call_kwargs = service.client.chat.completions.create.call_args[1]
+        assert "max_tokens" not in call_kwargs
 
     def test_extract_uses_name_from_wrapper(self, service):
         """Name from wrapper should be used in json_schema."""
         service.extract_structured_data("test text", EXTRACTION_SCHEMA)
 
         call_kwargs = service.client.chat.completions.create.call_args[1]
-        assert call_kwargs['response_format']['json_schema']['name'] == "job_extraction_schema"
+        assert call_kwargs["response_format"]["json_schema"]["name"] == "job_extraction_schema"
 
     def test_extract_raises_on_invalid_schema(self, service):
         """Invalid schema should raise ValueError with helpful message."""
@@ -140,6 +155,7 @@ class TestExtractStructuredData:
 
     def test_auto_mode_falls_back_to_json_object_when_json_schema_is_rejected(self, monkeypatch):
         """Groq-compatible providers can reject schema mode for some models; auto retries safely."""
+
         class FakeBadRequestError(Exception):
             pass
 
@@ -167,6 +183,7 @@ class TestExtractStructuredData:
 
     def test_json_object_validation_failure_retries_without_response_format(self, monkeypatch):
         """Providers may reject invalid generated JSON before returning content; retry without enforcement."""
+
         class FakeBadRequestError(Exception):
             pass
 
@@ -196,6 +213,7 @@ class TestExtractStructuredData:
 
     def test_auto_mode_does_not_hide_non_response_format_bad_request(self, monkeypatch):
         """Only structured-output compatibility errors should use the JSON Object fallback."""
+
         class FakeBadRequestError(Exception):
             pass
 
@@ -217,30 +235,35 @@ class TestRetryHelpers:
     def test_is_retryable_with_rate_limit_error(self):
         """RateLimitError should be retryable."""
         from unittest.mock import MagicMock
+
         exc = MagicMock(spec=openai.RateLimitError)
         assert _is_retryable(exc) is True
 
     def test_is_retryable_with_timeout_error(self):
         """APITimeoutError should be retryable."""
         from unittest.mock import MagicMock
+
         exc = MagicMock(spec=openai.APITimeoutError)
         assert _is_retryable(exc) is True
 
     def test_is_retryable_with_connection_error(self):
         """APIConnectionError should be retryable."""
         from unittest.mock import MagicMock
+
         exc = MagicMock(spec=openai.APIConnectionError)
         assert _is_retryable(exc) is True
 
     def test_is_retryable_with_internal_server_error(self):
         """InternalServerError should be retryable."""
         from unittest.mock import MagicMock
+
         exc = MagicMock(spec=openai.InternalServerError)
         assert _is_retryable(exc) is True
 
     def test_is_retryable_with_non_retryable_error(self):
         """Non-retryable errors should return False."""
         from unittest.mock import MagicMock
+
         exc = MagicMock(spec=openai.AuthenticationError)
         assert _is_retryable(exc) is False
 
@@ -310,6 +333,7 @@ class TestWaitFromRateLimitHeaders:
     def test_returns_retry_after_seconds(self):
         """Should use retry-after header when present."""
         from unittest.mock import MagicMock
+
         exc = MagicMock()
         exc.response.headers = {"retry-after": "30"}
         assert _wait_from_rate_limit_headers(exc) == 30.0
@@ -317,16 +341,15 @@ class TestWaitFromRateLimitHeaders:
     def test_returns_max_of_multiple_headers(self):
         """Should return maximum when multiple headers present."""
         from unittest.mock import MagicMock
+
         exc = MagicMock()
-        exc.response.headers = {
-            "retry-after": "10",
-            "x-ratelimit-reset-tokens": "30s"
-        }
+        exc.response.headers = {"retry-after": "10", "x-ratelimit-reset-tokens": "30s"}
         assert _wait_from_rate_limit_headers(exc) == 30.0
 
     def test_returns_zero_when_no_headers(self):
         """Should return 0.0 when no rate limit headers."""
         from unittest.mock import MagicMock
+
         exc = MagicMock()
         exc.response.headers = {}
         assert _wait_from_rate_limit_headers(exc) == 0.0
@@ -338,6 +361,7 @@ class TestWaitRespectingRetryAfter:
     def test_uses_headers_for_rate_limit(self):
         """Should use headers for RateLimitError when available."""
         from unittest.mock import MagicMock, PropertyMock
+
         exc = MagicMock(spec=openai.RateLimitError)
         type(exc).response = PropertyMock(return_value=MagicMock(headers={"retry-after": "45"}))
 
@@ -352,6 +376,7 @@ class TestWaitRespectingRetryAfter:
     def test_caps_at_120_seconds(self):
         """Should cap wait time at the configured ceiling."""
         from unittest.mock import MagicMock, PropertyMock
+
         exc = MagicMock(spec=openai.RateLimitError)
         type(exc).response = PropertyMock(return_value=MagicMock(headers={"retry-after": "500"}))
 
@@ -374,10 +399,12 @@ class TestExtractResumeData:
         svc.client = MagicMock()
 
         mock_message = MagicMock()
-        mock_message.content = json.dumps({
-            "profile": {"name": "John", "experience": [{"title": "Dev"}]},
-            "thought_process": "reasoning"
-        })
+        mock_message.content = json.dumps(
+            {
+                "profile": {"name": "John", "experience": [{"title": "Dev"}]},
+                "thought_process": "reasoning",
+            }
+        )
         mock_choice = MagicMock()
         mock_choice.message = mock_message
         mock_response = MagicMock()
@@ -409,10 +436,7 @@ class TestExtractRequirementsData:
         svc.client = MagicMock()
 
         mock_message = MagicMock()
-        mock_message.content = json.dumps({
-            "required": ["Python"],
-            "thought_process": "reasoning"
-        })
+        mock_message.content = json.dumps({"required": ["Python"], "thought_process": "reasoning"})
         mock_choice = MagicMock()
         mock_choice.message = mock_message
         mock_response = MagicMock()
@@ -478,7 +502,10 @@ class TestGenerateEmbedding:
 
     def test_generate_embedding_rejects_non_finite_values(self, service):
         """Should reject non-finite embedding vectors."""
-        service.embedding_client.embeddings.create.return_value.data[0].embedding = [0.1, float("nan")]
+        service.embedding_client.embeddings.create.return_value.data[0].embedding = [
+            0.1,
+            float("nan"),
+        ]
 
         with pytest.raises(ValueError, match="non-finite"):
             service.generate_embedding("test")
@@ -489,36 +516,43 @@ class TestValidateEmbeddingVector:
 
     def test_valid_vector_passes_through(self):
         from core.llm.openai_service import _validate_embedding_vector
+
         result = _validate_embedding_vector([0.1, 0.2, 0.3])
         assert result == [0.1, 0.2, 0.3]
 
     def test_integer_values_coerced_to_float(self):
         from core.llm.openai_service import _validate_embedding_vector
+
         result = _validate_embedding_vector([1, 2, 3])
         assert all(isinstance(v, float) for v in result)
 
     def test_empty_list_raises(self):
         from core.llm.openai_service import _validate_embedding_vector
+
         with pytest.raises(ValueError, match="empty or non-list"):
             _validate_embedding_vector([])
 
     def test_non_list_raises(self):
         from core.llm.openai_service import _validate_embedding_vector
+
         with pytest.raises(ValueError, match="empty or non-list"):
             _validate_embedding_vector("not a list")
 
     def test_inf_value_raises(self):
         from core.llm.openai_service import _validate_embedding_vector
+
         with pytest.raises(ValueError, match="non-finite"):
             _validate_embedding_vector([0.1, float("inf")])
 
     def test_nan_value_raises(self):
         from core.llm.openai_service import _validate_embedding_vector
+
         with pytest.raises(ValueError, match="non-finite"):
             _validate_embedding_vector([0.1, float("nan")])
 
     def test_string_element_raises(self):
         from core.llm.openai_service import _validate_embedding_vector
+
         with pytest.raises(ValueError):
             _validate_embedding_vector([0.1, "bad"])
 
@@ -529,6 +563,7 @@ class TestLogRetry:
     def test_logs_rate_limit_warning(self, caplog):
         import logging
         from core.llm.openai_service import _log_retry
+
         retry_state = MagicMock()
         exc = MagicMock(spec=openai.RateLimitError)
         retry_state.outcome.exception.return_value = exc
@@ -543,6 +578,7 @@ class TestLogRetry:
     def test_logs_generic_error_warning(self, caplog):
         import logging
         from core.llm.openai_service import _log_retry
+
         retry_state = MagicMock()
         exc = MagicMock(spec=openai.APITimeoutError)
         retry_state.outcome.exception.return_value = exc
@@ -557,6 +593,7 @@ class TestLogRetry:
     def test_handles_none_next_action(self, caplog):
         import logging
         from core.llm.openai_service import _log_retry
+
         retry_state = MagicMock()
         retry_state.outcome.exception.return_value = MagicMock(spec=openai.RateLimitError)
         retry_state.attempt_number = 1
@@ -584,6 +621,7 @@ class TestWaitRespectingRetryAfterFallback:
     def test_uses_exponential_backoff_when_rate_limit_headers_are_zero(self):
         """RateLimitError with wait=0 from headers falls back to exponential backoff."""
         from unittest.mock import PropertyMock
+
         exc = MagicMock(spec=openai.RateLimitError)
         type(exc).response = PropertyMock(return_value=MagicMock(headers={}))
         retry_state = MagicMock()
@@ -696,7 +734,7 @@ class TestOpenAIServiceConstructor:
                 "embedding_model": "text-embedding-3-large",
                 "embedding_dimensions": 3072,
                 "extraction_temperature": 0.7,
-            }
+            },
         )
         assert svc.extraction_model == "gpt-4o"
         assert svc.embedding_model == "text-embedding-3-large"
@@ -778,6 +816,7 @@ class TestUnloadModel:
         svc = OpenAIService(api_key="test", base_url="http://localhost:11434/v1")
         with MagicMock():
             import unittest.mock
+
             with unittest.mock.patch("core.llm.openai_service.requests.post") as mock_post:
                 svc.unload_model("llama3")
         mock_post.assert_called_once()
@@ -791,6 +830,7 @@ class TestUnloadModel:
         svc = OpenAIService(api_key="test", base_url="http://127.0.0.1:11434/v1")
         with MagicMock():
             import unittest.mock
+
             with unittest.mock.patch("core.llm.openai_service.requests.post") as mock_post:
                 svc.unload_model("mymodel")
         mock_post.assert_called_once()
@@ -799,6 +839,7 @@ class TestUnloadModel:
         """Should POST to Ollama API when base_url contains host.docker.internal."""
         svc = OpenAIService(api_key="test", base_url="http://host.docker.internal:11434/v1")
         import unittest.mock
+
         with unittest.mock.patch("core.llm.openai_service.requests.post") as mock_post:
             svc.unload_model("mymodel")
         mock_post.assert_called_once()
@@ -807,6 +848,7 @@ class TestUnloadModel:
         """Should not POST when base_url is a remote server."""
         svc = OpenAIService(api_key="sk-test", base_url="https://api.openai.com/v1")
         import unittest.mock
+
         with unittest.mock.patch("core.llm.openai_service.requests.post") as mock_post:
             svc.unload_model("gpt-4")
         mock_post.assert_not_called()
@@ -815,9 +857,9 @@ class TestUnloadModel:
         """Exceptions from requests.post should be caught and logged."""
         svc = OpenAIService(api_key="test", base_url="http://localhost:11434/v1")
         import unittest.mock
+
         with unittest.mock.patch(
-            "core.llm.openai_service.requests.post",
-            side_effect=ConnectionError("refused")
+            "core.llm.openai_service.requests.post", side_effect=ConnectionError("refused")
         ):
             # Should not raise
             svc.unload_model("llama3")
@@ -846,10 +888,7 @@ class TestExtractStructuredDataEdgeCases:
         self._mock_response(service, '{"key": "value"}')
         schema = {"type": "object", "properties": {"key": {"type": "string"}}}
         service.extract_structured_data(
-            "text",
-            schema,
-            system_prompt="Custom system",
-            user_message="Custom user message"
+            "text", schema, system_prompt="Custom system", user_message="Custom user message"
         )
         call_kwargs = service.client.chat.completions.create.call_args[1]
         messages = call_kwargs["messages"]

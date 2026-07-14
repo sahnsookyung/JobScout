@@ -11,6 +11,7 @@ from core.config_loader import (
     LlmJudgeRuntimeConfig,
     MatcherConfig,
     PreferencesConfig,
+    ResumeGenerationConfig,
     ScorerConfig,
     SemanticFitConfig,
     SemanticFitCrossEncoderLocalConfig,
@@ -21,8 +22,8 @@ from core.config_loader import (
     resolve_config_path,
 )
 
-class TestConfigLoader(unittest.TestCase):
 
+class TestConfigLoader(unittest.TestCase):
     def setUp(self):
         self.sample_config = {
             "database": {"url": "postgresql://user:pass@localhost:5432/db"},
@@ -31,7 +32,7 @@ class TestConfigLoader(unittest.TestCase):
                 "llm": {
                     "base_url": "http://ollama:11434",  # NOSONAR - local test service
                     "provider": "openai_compatible",
-                    "extraction_model": "qwen3:14b"
+                    "extraction_model": "qwen3:14b",
                 }
             },
             "preferences": {
@@ -40,11 +41,11 @@ class TestConfigLoader(unittest.TestCase):
                 "parser": {
                     "provider": "openai_compatible",
                     "base_url": "http://preferences-llm:11434/v1",
-                    "model": "qwen3:14b"
-                }
+                    "model": "qwen3:14b",
+                },
             },
             "schedule": {"interval_seconds": 3600},
-            "scrapers": []
+            "scrapers": [],
         }
         self.config_yaml = yaml.dump(self.sample_config)
 
@@ -98,7 +99,9 @@ class TestConfigLoader(unittest.TestCase):
                 try:
                     config = load_config("dummy_path.yaml")
                     self.assertIsInstance(config, AppConfig)
-                    self.assertEqual(config.database.url, "postgresql://user:pass@localhost:5432/db")
+                    self.assertEqual(
+                        config.database.url, "postgresql://user:pass@localhost:5432/db"
+                    )
                     self.assertEqual(config.etl.llm.extraction_model, "qwen3:14b")
                     self.assertEqual(config.preferences.default_mode, "semantic_rerank")
                     self.assertEqual(config.preferences.parser.model, "qwen3:14b")
@@ -111,7 +114,9 @@ class TestConfigLoader(unittest.TestCase):
     def test_env_var_override_database(self):
         with patch("builtins.open", mock_open(read_data=self.config_yaml)):
             with patch("os.path.exists", return_value=True):
-                with patch.dict(os.environ, {"DATABASE_URL": "postgresql://env:pass@envhost:5432/db"}):
+                with patch.dict(
+                    os.environ, {"DATABASE_URL": "postgresql://env:pass@envhost:5432/db"}
+                ):
                     config = load_config("dummy_path.yaml")
                     self.assertEqual(config.database.url, "postgresql://env:pass@envhost:5432/db")
 
@@ -132,11 +137,9 @@ class TestConfigLoader(unittest.TestCase):
 
     def test_llm_config_defaults(self):
         # Test loading a config without explicit LLM settings (should use defaults from pydantic model)
-        minimal_config_yaml = yaml.dump({
-            "database": {"url": "test"},
-            "schedule": {"interval_seconds": 60},
-            "scrapers": []
-        })
+        minimal_config_yaml = yaml.dump(
+            {"database": {"url": "test"}, "schedule": {"interval_seconds": 60}, "scrapers": []}
+        )
         env_to_clear = [
             "ETL_LLM_EXTRACTION_MODEL",
             "ETL_LLM_EXTRACTION_BASE_URL",
@@ -179,19 +182,19 @@ class TestConfigLoader(unittest.TestCase):
                 "channels": {
                     "email": {"enabled": True, "recipient": "test@example.com"},
                     "discord": {"enabled": True, "recipient": "https://discord.com/webhook"},
-                    "telegram": {"enabled": False}
+                    "telegram": {"enabled": False},
                 },
                 "deduplication_enabled": True,
-                "resend_interval_hours": 12
+                "resend_interval_hours": 12,
             },
-            "scrapers": []
+            "scrapers": [],
         }
         config_yaml = yaml.dump(config_with_notifications)
-        
+
         with patch("builtins.open", mock_open(read_data=config_yaml)):
             with patch("os.path.exists", return_value=True):
                 config = load_config("dummy")
-                
+
                 self.assertIsNotNone(config.notifications)
                 self.assertTrue(config.notifications.enabled)
                 self.assertEqual(config.notifications.user_id, "test_user_123")
@@ -200,28 +203,28 @@ class TestConfigLoader(unittest.TestCase):
                 self.assertFalse(config.notifications.notify_on_batch_complete)
                 self.assertTrue(config.notifications.deduplication_enabled)
                 self.assertEqual(config.notifications.resend_interval_hours, 12)
-                
+
                 # Check channels
                 self.assertIn("email", config.notifications.channels)
                 self.assertIn("discord", config.notifications.channels)
                 self.assertIn("telegram", config.notifications.channels)
-                
+
                 self.assertTrue(config.notifications.channels["email"].enabled)
-                self.assertEqual(config.notifications.channels["email"].recipient, "test@example.com")
+                self.assertEqual(
+                    config.notifications.channels["email"].recipient, "test@example.com"
+                )
                 self.assertFalse(config.notifications.channels["telegram"].enabled)
 
     def test_notification_config_defaults(self):
         """Test notification configuration defaults when not specified."""
-        minimal_config_yaml = yaml.dump({
-            "database": {"url": "test"},
-            "schedule": {"interval_seconds": 60},
-            "scrapers": []
-        })
-        
+        minimal_config_yaml = yaml.dump(
+            {"database": {"url": "test"}, "schedule": {"interval_seconds": 60}, "scrapers": []}
+        )
+
         with patch("builtins.open", mock_open(read_data=minimal_config_yaml)):
             with patch("os.path.exists", return_value=True):
                 config = load_config("dummy")
-                
+
                 # Notifications should have default config when not specified (enabled=False by default)
                 self.assertIsNotNone(config.notifications)
                 self.assertFalse(config.notifications.enabled)
@@ -233,17 +236,17 @@ class TestConfigLoader(unittest.TestCase):
             "schedule": {"interval_seconds": 60},
             "notifications": {
                 "enabled": True,
-                "user_id": "user456"
+                "user_id": "user456",
                 # Other fields will use defaults
             },
-            "scrapers": []
+            "scrapers": [],
         }
         config_yaml = yaml.dump(partial_config)
-        
+
         with patch("builtins.open", mock_open(read_data=config_yaml)):
             with patch("os.path.exists", return_value=True):
                 config = load_config("dummy")
-                
+
                 self.assertTrue(config.notifications.enabled)
                 self.assertEqual(config.notifications.user_id, "user456")
                 # Check defaults
@@ -252,17 +255,19 @@ class TestConfigLoader(unittest.TestCase):
                 self.assertTrue(config.notifications.deduplication_enabled)  # Default
 
     def test_notification_env_overrides_are_loaded_into_shared_config(self):
-        config_yaml = yaml.dump({
-            "database": {"url": "test"},
-            "schedule": {"interval_seconds": 60},
-            "notifications": {
-                "channels": {
-                    "email": {"enabled": True, "recipient": "yaml@example.com"},
-                    "discord": {"enabled": True, "recipient": "https://yaml.example/hook"},
-                }
-            },
-            "scrapers": []
-        })
+        config_yaml = yaml.dump(
+            {
+                "database": {"url": "test"},
+                "schedule": {"interval_seconds": 60},
+                "notifications": {
+                    "channels": {
+                        "email": {"enabled": True, "recipient": "yaml@example.com"},
+                        "discord": {"enabled": True, "recipient": "https://yaml.example/hook"},
+                    }
+                },
+                "scrapers": [],
+            }
+        )
 
         env = {
             "NOTIFICATION_EMAIL": "env@example.com",
@@ -308,15 +313,17 @@ class TestConfigLoader(unittest.TestCase):
         self.assertTrue(config.notifications.dry_run)
 
     def test_preference_env_overrides_use_independent_namespace(self):
-        config_yaml = yaml.dump({
-            "database": {"url": "test"},
-            "schedule": {"interval_seconds": 60},
-            "preferences": {
-                "default_mode": "semantic_rerank",
-                "parser": {"model": "yaml-parser"},
-            },
-            "scrapers": []
-        })
+        config_yaml = yaml.dump(
+            {
+                "database": {"url": "test"},
+                "schedule": {"interval_seconds": 60},
+                "preferences": {
+                    "default_mode": "semantic_rerank",
+                    "parser": {"model": "yaml-parser"},
+                },
+                "scrapers": [],
+            }
+        )
 
         env = {
             "PREFERENCES_DEFAULT_MODE": "llm_judge",
@@ -338,12 +345,14 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(config.etl.llm.provider, "openai_compatible")
 
     def test_etl_structured_output_mode_env_override(self):
-        config_yaml = yaml.dump({
-            "database": {"url": "test"},
-            "schedule": {"interval_seconds": 60},
-            "etl": {"llm": {"extraction_model": "yaml-model"}},
-            "scrapers": []
-        })
+        config_yaml = yaml.dump(
+            {
+                "database": {"url": "test"},
+                "schedule": {"interval_seconds": 60},
+                "etl": {"llm": {"extraction_model": "yaml-model"}},
+                "scrapers": [],
+            }
+        )
 
         env = {
             "ETL_LLM_STRUCTURED_OUTPUT_MODE": "json_object",
@@ -357,15 +366,17 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(config.etl.llm.structured_output_mode, "json_object")
 
     def test_preference_structured_output_mode_env_overrides(self):
-        config_yaml = yaml.dump({
-            "database": {"url": "test"},
-            "schedule": {"interval_seconds": 60},
-            "preferences": {
-                "parser": {"model": "parser"},
-                "semantic_reranker": {"model": "reranker"},
-            },
-            "scrapers": [],
-        })
+        config_yaml = yaml.dump(
+            {
+                "database": {"url": "test"},
+                "schedule": {"interval_seconds": 60},
+                "preferences": {
+                    "parser": {"model": "parser"},
+                    "semantic_reranker": {"model": "reranker"},
+                },
+                "scrapers": [],
+            }
+        )
         env = {
             "PREFERENCES_PARSER_STRUCTURED_OUTPUT_MODE": "json_object",
             "PREFERENCES_SEMANTIC_RERANKER_STRUCTURED_OUTPUT_MODE": "json_object",
@@ -383,19 +394,21 @@ class TestConfigLoader(unittest.TestCase):
         )
 
     def test_semantic_fit_defaults_are_loaded(self):
-        config_yaml = yaml.dump({
-            "database": {"url": "test"},
-            "schedule": {"interval_seconds": 60},
-            "matching": {
-                "scorer": {
-                    "semantic_fit": {
-                        "deploy_allowed_modes": ["cross_encoder"],
-                        "baseline_allowed_modes": ["cross_encoder"],
+        config_yaml = yaml.dump(
+            {
+                "database": {"url": "test"},
+                "schedule": {"interval_seconds": 60},
+                "matching": {
+                    "scorer": {
+                        "semantic_fit": {
+                            "deploy_allowed_modes": ["cross_encoder"],
+                            "baseline_allowed_modes": ["cross_encoder"],
+                        }
                     }
-                }
-            },
-            "scrapers": []
-        })
+                },
+                "scrapers": [],
+            }
+        )
 
         with patch("builtins.open", mock_open(read_data=config_yaml)):
             with patch("os.path.exists", return_value=True):
@@ -426,20 +439,22 @@ class TestConfigLoader(unittest.TestCase):
         self.assertFalse(scorer_config.semantic_fit_fallback_to_threshold)
 
     def test_semantic_fit_env_overrides_use_fit_namespace(self):
-        config_yaml = yaml.dump({
-            "database": {"url": "test"},
-            "matching": {
-                "scorer": {
-                    "semantic_fit": {
-                        "deploy_allowed_modes": ["cross_encoder", "llm"],
-                        "baseline_allowed_modes": ["cross_encoder", "llm"],
-                        "llm": {"enabled": True},
+        config_yaml = yaml.dump(
+            {
+                "database": {"url": "test"},
+                "matching": {
+                    "scorer": {
+                        "semantic_fit": {
+                            "deploy_allowed_modes": ["cross_encoder", "llm"],
+                            "baseline_allowed_modes": ["cross_encoder", "llm"],
+                            "llm": {"enabled": True},
+                        }
                     }
-                }
-            },
-            "schedule": {"interval_seconds": 60},
-            "scrapers": []
-        })
+                },
+                "schedule": {"interval_seconds": 60},
+                "scrapers": [],
+            }
+        )
 
         env = {
             "FIT_SEMANTIC_DEFAULT_MODE": "llm",
@@ -468,21 +483,25 @@ class TestConfigLoader(unittest.TestCase):
             "BAAI/bge-reranker-v2-gemma",
         )
         self.assertEqual(config.matching.scorer.semantic_fit.llm.provider, "openai_compatible")
-        self.assertEqual(config.matching.scorer.semantic_fit.llm.base_url, "https://fit-llm.example/v1")
+        self.assertEqual(
+            config.matching.scorer.semantic_fit.llm.base_url, "https://fit-llm.example/v1"
+        )
         self.assertEqual(config.matching.scorer.semantic_fit.llm.api_key, "fit-key")
         self.assertEqual(config.matching.scorer.semantic_fit.llm.model, "fit-gpt")
 
     def test_match_llm_judge_env_overrides_use_dedicated_groq_namespace(self):
-        config_yaml = yaml.dump({
-            "database": {"url": "test"},
-            "matching": {
-                "llm_judge": {
-                    "enabled": False,
-                }
-            },
-            "schedule": {"interval_seconds": 60},
-            "scrapers": []
-        })
+        config_yaml = yaml.dump(
+            {
+                "database": {"url": "test"},
+                "matching": {
+                    "llm_judge": {
+                        "enabled": False,
+                    }
+                },
+                "schedule": {"interval_seconds": 60},
+                "scrapers": [],
+            }
+        )
 
         env = {
             "MATCH_LLM_JUDGE_ENABLED": "true",
@@ -532,19 +551,21 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(config.resolve_preference_rerank_top_n(25), 25)
 
     def test_match_llm_judge_env_does_not_match_groq_lookalike_host(self):
-        config_yaml = yaml.dump({
-            "database": {"url": "test"},
-            "matching": {
-                "llm_judge": {
-                    "enabled": True,
-                    "runtime": {
-                        "base_url": "https://api.groq.com.evil.test/openai/v1",
-                    },
-                }
-            },
-            "schedule": {"interval_seconds": 60},
-            "scrapers": [],
-        })
+        config_yaml = yaml.dump(
+            {
+                "database": {"url": "test"},
+                "matching": {
+                    "llm_judge": {
+                        "enabled": True,
+                        "runtime": {
+                            "base_url": "https://api.groq.com.evil.test/openai/v1",
+                        },
+                    }
+                },
+                "schedule": {"interval_seconds": 60},
+                "scrapers": [],
+            }
+        )
         env = {"GROQ_API_KEY": "groq-key"}
 
         with patch("builtins.open", mock_open(read_data=config_yaml)):
@@ -622,7 +643,10 @@ class TestConfigLoader(unittest.TestCase):
                 llm={"enabled": False},
             )
 
-        self.assertIn("deploy_allowed_modes includes 'llm' but llm semantic fit is disabled", str(ctx.exception))
+        self.assertIn(
+            "deploy_allowed_modes includes 'llm' but llm semantic fit is disabled",
+            str(ctx.exception),
+        )
 
     def test_semantic_fit_raises_when_llm_is_enabled_without_base_url(self):
         with self.assertRaises(ValidationError) as ctx:
@@ -691,7 +715,9 @@ class TestConfigLoader(unittest.TestCase):
                 baseline_allowed_modes=["cross_encoder", "llm"],
             )
 
-        self.assertIn("baseline_allowed_modes contains modes that are not deploy-allowed", str(ctx.exception))
+        self.assertIn(
+            "baseline_allowed_modes contains modes that are not deploy-allowed", str(ctx.exception)
+        )
 
     def test_semantic_fit_raises_for_blank_local_model_name(self):
         with self.assertRaises(ValidationError) as ctx:
@@ -729,7 +755,9 @@ class TestConfigLoader(unittest.TestCase):
                 }
             )
 
-        self.assertIn("route_policy='auto' requires at least one cross-encoder provider", str(ctx.exception))
+        self.assertIn(
+            "route_policy='auto' requires at least one cross-encoder provider", str(ctx.exception)
+        )
 
     def test_matcher_config_raises_for_invalid_limits(self):
         invalid_cases = [
@@ -855,6 +883,18 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(nvidia.rate_limit_max_wait_seconds, 90)
         self.assertFalse(nvidia.fallback_on_rate_limit)
 
+    def test_resume_generation_defaults_to_nvidia_mistral(self):
+        with patch.dict(os.environ, {"NVIDIA_API_KEY": "nvidia-key"}, clear=True):
+            config = ResumeGenerationConfig()
+
+        self.assertTrue(config.enabled)
+        self.assertEqual(config.runtime.provider, "nvidia")
+        self.assertEqual(config.runtime.api_key, "nvidia-key")
+        self.assertEqual(config.runtime.model, "mistralai/mistral-medium-3.5-128b")
+        self.assertEqual(config.runtime.structured_output_mode, "json_schema")
+        self.assertEqual(config.runtime.max_output_tokens, 16_384)
+        self.assertEqual(config.prompt_version, "resume_tailoring_v3")
+
     def test_match_llm_judge_runtime_respects_explicit_nvidia_context_cap(self):
         with patch.dict(os.environ, {"NVIDIA_API_KEY": "nvidia-key"}, clear=True):
             provider = LlmJudgeProviderRuntimeConfig(
@@ -869,6 +909,7 @@ class TestConfigLoader(unittest.TestCase):
         invalid_cases = [
             {"requests_per_minute": 0},
             {"rate_limit_max_wait_seconds": -1},
+            {"max_output_tokens": 0},
         ]
 
         for overrides in invalid_cases:
@@ -933,7 +974,9 @@ class TestConfigLoader(unittest.TestCase):
         self.assertTrue(config.matching.llm_judge.enabled)
         self.assertEqual(config.matching.llm_judge.runtime.provider, "groq")
         self.assertEqual(config.matching.llm_judge.runtime.api_key, "groq-key")
-        self.assertEqual(config.matching.llm_judge.runtime.base_url, "https://api.groq.com/openai/v1")
+        self.assertEqual(
+            config.matching.llm_judge.runtime.base_url, "https://api.groq.com/openai/v1"
+        )
 
     def test_match_llm_judge_env_accepts_cerebras_provider(self):
         data = {"database": {"url": "test"}, "schedule": {"interval_seconds": 60}, "scrapers": []}
@@ -1048,6 +1091,7 @@ class TestConfigLoader(unittest.TestCase):
             updated["matching"]["llm_judge"]["runtime"]["headers"],
             {"X-API-Key": "secret-token"},
         )
+
 
 if __name__ == "__main__":
     unittest.main()

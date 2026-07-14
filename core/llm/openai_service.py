@@ -3,6 +3,7 @@ OpenAI Service - LLM implementation using OpenAI API.
 
 Provides structured data extraction and embedding generation.
 """
+
 import os
 from typing import Dict, Any, List, Optional, Tuple
 import json
@@ -51,14 +52,18 @@ OPENAI_CLIENT_MAX_RETRIES = max(0, int(os.getenv("OPENAI_CLIENT_MAX_RETRIES", "0
 # Retry helpers
 # ---------------------------------------------------------------------------
 
+
 def _is_retryable(exc: BaseException) -> bool:
     """Return True for transient errors that are worth retrying."""
-    return isinstance(exc, (
-        openai.RateLimitError,
-        openai.APITimeoutError,
-        openai.APIConnectionError,
-        openai.InternalServerError,
-    ))
+    return isinstance(
+        exc,
+        (
+            openai.RateLimitError,
+            openai.APITimeoutError,
+            openai.APIConnectionError,
+            openai.InternalServerError,
+        ),
+    )
 
 
 def _log_retry(retry_state: RetryCallState) -> None:
@@ -68,12 +73,16 @@ def _log_retry(retry_state: RetryCallState) -> None:
     if isinstance(exc, openai.RateLimitError):
         logger.warning(
             "Rate limit hit (attempt %s). Waiting %.1fs before retry. Details: %s",
-            retry_state.attempt_number, wait, exc,
+            retry_state.attempt_number,
+            wait,
+            exc,
         )
     else:
         logger.warning(
             "Transient API error (attempt %s). Waiting %.1fs before retry. Details: %s",
-            retry_state.attempt_number, wait, exc,
+            retry_state.attempt_number,
+            wait,
+            exc,
         )
 
 
@@ -147,18 +156,21 @@ def _wait_respecting_retry_after(retry_state: RetryCallState) -> float:
 def _llm_retry(**kwargs):
     """Return a tenacity @retry decorator for LLM API calls."""
     return retry(
-        retry=retry_if_exception_type((
-            openai.RateLimitError,
-            openai.APITimeoutError,
-            openai.APIConnectionError,
-            openai.InternalServerError,
-        )),
+        retry=retry_if_exception_type(
+            (
+                openai.RateLimitError,
+                openai.APITimeoutError,
+                openai.APIConnectionError,
+                openai.InternalServerError,
+            )
+        ),
         wait=_wait_respecting_retry_after,
         stop=stop_after_attempt(LLM_RETRY_MAX_ATTEMPTS),
         before_sleep=_log_retry,
         reraise=True,
         **kwargs,
     )
+
 
 def _unwrap_schema_spec(spec: Dict[str, Any]) -> Tuple[str, bool, Dict[str, Any]]:
     """Unwrap a schema spec to extract name, strict flag, and raw JSON schema.
@@ -171,7 +183,11 @@ def _unwrap_schema_spec(spec: Dict[str, Any]) -> Tuple[str, bool, Dict[str, Any]
         Tuple of (name, strict, raw_schema)
     """
     if isinstance(spec, dict) and "schema" in spec and "name" in spec:
-        return spec.get("name", "extraction_response"), bool(spec.get("strict", False)), spec["schema"]
+        return (
+            spec.get("name", "extraction_response"),
+            bool(spec.get("strict", False)),
+            spec["schema"],
+        )
     return "extraction_response", False, spec
 
 
@@ -229,7 +245,7 @@ def _extract_fenced_json_candidate(stripped: str) -> str:
     if fence_end == -1:
         return stripped
 
-    return stripped[header_end + 1:fence_end].strip()
+    return stripped[header_end + 1 : fence_end].strip()
 
 
 def _parse_structured_json_content(content: Any) -> Dict[str, Any]:
@@ -256,11 +272,11 @@ def _parse_structured_json_content(content: Any) -> Dict[str, Any]:
 class OpenAIService(LLMProvider):
     """
     OpenAI LLM Service.
-    
+
     Provides structured data extraction using JSON Schema mode
     and embedding generation.
     """
-    
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -274,48 +290,70 @@ class OpenAIService(LLMProvider):
         embedding_headers: Optional[Dict[str, str]] = None,
         timeout_seconds: Optional[int] = None,
         structured_output_mode: Optional[str] = None,
+        max_output_tokens: Optional[int] = None,
     ):
         # Build extraction client
         client_kwargs = {"max_retries": OPENAI_CLIENT_MAX_RETRIES}
         if timeout_seconds:
             client_kwargs["timeout"] = timeout_seconds
         if api_key:
-            client_kwargs['api_key'] = api_key
+            client_kwargs["api_key"] = api_key
         if base_url:
-            client_kwargs['base_url'] = base_url
-        
+            client_kwargs["base_url"] = base_url
+
         # If custom headers provided, create httpx client with headers
         if extraction_headers:
             http_client = httpx.Client(headers=extraction_headers)
-            client_kwargs['http_client'] = http_client
-            
+            client_kwargs["http_client"] = http_client
+
         self.client = OpenAI(**client_kwargs)
-        
+
         # Build embedding client (separate if different endpoint or headers)
         if embedding_base_url or embedding_api_key or embedding_api_secret or embedding_headers:
             embedding_client_kwargs = {"max_retries": OPENAI_CLIENT_MAX_RETRIES}
             if timeout_seconds:
                 embedding_client_kwargs["timeout"] = timeout_seconds
             if embedding_api_key:
-                embedding_client_kwargs['api_key'] = embedding_api_key
+                embedding_client_kwargs["api_key"] = embedding_api_key
             if embedding_base_url:
-                embedding_client_kwargs['base_url'] = embedding_base_url
-            
+                embedding_client_kwargs["base_url"] = embedding_base_url
+
             # If custom headers provided for embedding, create httpx client with headers
             if embedding_headers:
                 http_client = httpx.Client(headers=embedding_headers)
-                embedding_client_kwargs['http_client'] = http_client
-            
+                embedding_client_kwargs["http_client"] = http_client
+
             self.embedding_client = OpenAI(**embedding_client_kwargs)
         else:
             self.embedding_client = None
-        
+
         self.model_config = model_config or {}
-        self.extraction_model = self.model_config.get('extraction_model', 'qwen3:14b')
-        self.embedding_model = self.model_config.get('embedding_model', 'qwen3-embedding:4b')
-        self.embedding_dimensions = self.model_config.get('embedding_dimensions', 1024)
-        self.extraction_temperature = self.model_config.get('extraction_temperature', 0.0)
+        self.extraction_model = self.model_config.get("extraction_model", "qwen3:14b")
+        self.embedding_model = self.model_config.get("embedding_model", "qwen3-embedding:4b")
+        self.embedding_dimensions = self.model_config.get("embedding_dimensions", 1024)
+        self.extraction_temperature = self.model_config.get("extraction_temperature", 0.0)
         self.structured_output_mode = structured_output_mode or "json_schema"
+        self.max_output_tokens = max_output_tokens
+        self.last_usage: Dict[str, int] | None = None
+
+    def _record_usage(self, response: Any) -> int | None:
+        usage = getattr(response, "usage", None)
+        total_tokens = getattr(usage, "total_tokens", None) if usage is not None else None
+        if total_tokens is None and usage is not None:
+            prompt_tokens = getattr(usage, "prompt_tokens", None)
+            completion_tokens = getattr(usage, "completion_tokens", None)
+            if prompt_tokens is not None or completion_tokens is not None:
+                total_tokens = int(prompt_tokens or 0) + int(completion_tokens or 0)
+        try:
+            parsed = int(total_tokens)
+        except (TypeError, ValueError):
+            self.last_usage = None
+            return None
+        if parsed < 0:
+            self.last_usage = None
+            return None
+        self.last_usage = {"total_tokens": parsed}
+        return parsed
 
     @_llm_retry()
     def extract_structured_data(
@@ -323,7 +361,7 @@ class OpenAIService(LLMProvider):
         text: str,
         schema_spec: Dict,
         system_prompt: Optional[str] = None,
-        user_message: Optional[str] = None
+        user_message: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Extract structured data using JSON Schema mode.
 
@@ -337,13 +375,17 @@ class OpenAIService(LLMProvider):
         runtime_schema = copy.deepcopy(raw_schema)
 
         if runtime_schema.get("type") != "object" or "properties" not in runtime_schema:
-            raise ValueError(f"Not a valid JSON Schema object. Top-level keys: {list(runtime_schema.keys())}")
+            raise ValueError(
+                f"Not a valid JSON Schema object. Top-level keys: {list(runtime_schema.keys())}"
+            )
 
         if system_prompt is None:
             system_prompt = DEFAULT_EXTRACTION_SYSTEM_PROMPT
 
         if user_message is None:
-            user_message = f"Extract the data into the requested JSON format.\n\nDescription:\n{text}"
+            user_message = (
+                f"Extract the data into the requested JSON format.\n\nDescription:\n{text}"
+            )
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -365,7 +407,10 @@ class OpenAIService(LLMProvider):
         try:
             response = self._create_chat_completion(messages, response_format)
         except openai.BadRequestError as exc:
-            if self.structured_output_mode == "json_object" and _structured_json_object_validation_failed(exc):
+            if (
+                self.structured_output_mode == "json_object"
+                and _structured_json_object_validation_failed(exc)
+            ):
                 logger.info(
                     "JSON Object response_format generated invalid JSON for provider/model %s; retrying without provider response_format.",
                     self.extraction_model,
@@ -395,12 +440,13 @@ class OpenAIService(LLMProvider):
 
         try:
             content = response.choices[0].message.content
+            self._record_usage(response)
             data = _parse_structured_json_content(content)
         except (json.JSONDecodeError, IndexError, AttributeError, ValueError):
             logger.exception("Failed to parse structured data response")
             raise
 
-        thought_process = data.get('thought_process', 'No reasoning provided.')
+        thought_process = data.get("thought_process", "No reasoning provided.")
         logger.debug("=" * 60)
         logger.debug(f"MODEL THINKING ({self.extraction_model}):")
         logger.debug("-" * 60)
@@ -417,6 +463,8 @@ class OpenAIService(LLMProvider):
         kwargs: Dict[str, Any] = {}
         if response_format is not None:
             kwargs["response_format"] = response_format
+        if self.max_output_tokens is not None:
+            kwargs["max_tokens"] = self.max_output_tokens
         return self.client.chat.completions.create(
             model=self.extraction_model,
             messages=messages,
@@ -452,13 +500,15 @@ class OpenAIService(LLMProvider):
             text,
             RESUME_SCHEMA,
             system_prompt=RESUME_EXTRACTION_SYSTEM_PROMPT,
-            user_message=f"Extract the structured resume data following the schema.\n\nResume:\n{text}"
+            user_message=f"Extract the structured resume data following the schema.\n\nResume:\n{text}",
         )
 
         logger.debug("=" * 60)
         logger.debug(f"RESUME EXTRACTION ({self.extraction_model}):")
         logger.debug("-" * 60)
-        logger.debug(f"Extracted profile with {len(data.get('profile', {}).get('experience', []))} experience entries")
+        logger.debug(
+            f"Extracted profile with {len(data.get('profile', {}).get('experience', []))} experience entries"
+        )
         logger.debug("=" * 60)
 
         return data
@@ -479,7 +529,7 @@ class OpenAIService(LLMProvider):
             user_message=(
                 f"<JOB_DESCRIPTION>\n{text}\n</JOB_DESCRIPTION>\n\n"
                 "Extract qualification requirements and the job offerings profile."
-            )
+            ),
         )
 
         logger.debug("=" * 60)
@@ -495,10 +545,9 @@ class OpenAIService(LLMProvider):
         """Generate embedding vector for text."""
         client = self.embedding_client if self.embedding_client else self.client
         response = client.embeddings.create(
-            input=text,
-            model=self.embedding_model,
-            dimensions=self.embedding_dimensions
+            input=text, model=self.embedding_model, dimensions=self.embedding_dimensions
         )
+        self._record_usage(response)
         return _validate_embedding_vector(response.data[0].embedding)
 
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
@@ -513,28 +562,42 @@ class OpenAIService(LLMProvider):
         _MAX_BATCH = 32
         client = self.embedding_client if self.embedding_client else self.client
         results: List[List[float]] = []
+        total_tokens = 0
+        usage_available = True
 
         for i in range(0, len(texts), _MAX_BATCH):
-            chunk = texts[i:i + _MAX_BATCH]
+            chunk = texts[i : i + _MAX_BATCH]
 
             @_llm_retry()
             def _call(chunk=chunk):
-                response = client.embeddings.create(
-                    input=chunk,
-                    model=self.embedding_model,
-                    dimensions=self.embedding_dimensions
+                return client.embeddings.create(
+                    input=chunk, model=self.embedding_model, dimensions=self.embedding_dimensions
                 )
-                return [_validate_embedding_vector(item.embedding) for item in response.data]
 
-            results.extend(_call())
+            response = _call()
+            results.extend(
+                _validate_embedding_vector(item.embedding) for item in response.data
+            )
+            usage = getattr(response, "usage", None)
+            chunk_tokens = getattr(usage, "total_tokens", None) if usage is not None else None
+            if chunk_tokens is None:
+                usage_available = False
+            else:
+                total_tokens += max(int(chunk_tokens), 0)
+
+        self.last_usage = {"total_tokens": total_tokens} if usage_available else None
 
         return results
 
     def unload_model(self, model_name: str):
         """Unload model from Ollama (no-op for pure OpenAI)."""
-        if "localhost" in str(self.client.base_url) or "127.0.0.1" in str(self.client.base_url) or "host.docker.internal" in str(self.client.base_url):
+        if (
+            "localhost" in str(self.client.base_url)
+            or "127.0.0.1" in str(self.client.base_url)
+            or "host.docker.internal" in str(self.client.base_url)
+        ):
             try:
-                base = str(self.client.base_url).rstrip('/').replace('/v1', '')
+                base = str(self.client.base_url).rstrip("/").replace("/v1", "")
                 url = f"{base}/api/generate"
                 payload = {"model": model_name, "keep_alive": 0}
                 logger.info(f"Unloading model: {model_name} via {url}")

@@ -11,6 +11,10 @@ Hard rules
 - Never hallucinate dates, companies, titles, degrees, skills, certifications, languages, URLs, or technologies.
 
 Mapping rules
+Contact
+- Extract name, email, phone, location, LinkedIn URL, portfolio URL, and other professional links exactly as written.
+- Never infer a location or use an account identity that is not present in the resume.
+
 Summary
 - summary.text: Summary/Objective text verbatim; else null.
 - summary.total_experience_years: only if explicitly stated (e.g., “3.5+ years” -> 3.5); else null.

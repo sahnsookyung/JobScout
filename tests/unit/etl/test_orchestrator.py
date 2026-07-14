@@ -42,17 +42,17 @@ class TestIngestOne:
         mock_repo.get_by_fingerprint.return_value = None
 
         job_data = {
-            'title': 'Software Engineer',
-            'company_name': 'Tech Corp',
-            'location': 'San Francisco, CA',
-            'description': 'Job description here'
+            "title": "Software Engineer",
+            "company_name": "Tech Corp",
+            "location": "San Francisco, CA",
+            "description": "Job description here",
         }
 
         mock_job_post = Mock()
         mock_job_post.id = "job-123"
         mock_repo.create_job_post.return_value = mock_job_post
 
-        service.ingest_one(mock_repo, job_data, 'linkedin')
+        service.ingest_one(mock_repo, job_data, "linkedin")
 
         mock_repo.get_by_fingerprint.assert_called_once()
         mock_repo.create_job_post.assert_called_once()
@@ -73,12 +73,12 @@ class TestIngestOne:
         mock_repo.get_by_fingerprint.return_value = mock_job_post
 
         job_data = {
-            'title': 'Software Engineer',
-            'company_name': 'Tech Corp',
-            'location': 'San Francisco, CA'
+            "title": "Software Engineer",
+            "company_name": "Tech Corp",
+            "location": "San Francisco, CA",
         }
 
-        service.ingest_one(mock_repo, job_data, 'indeed')
+        service.ingest_one(mock_repo, job_data, "indeed")
 
         mock_repo.update_timestamp.assert_called_once_with(mock_job_post)
         mock_repo.create_job_post.assert_not_called()
@@ -93,12 +93,9 @@ class TestIngestOne:
         mock_repo = Mock()
         mock_repo.get_by_source.return_value = None
 
-        job_data = {
-            'company_name': 'Tech Corp',
-            'location': 'San Francisco, CA'
-        }
+        job_data = {"company_name": "Tech Corp", "location": "San Francisco, CA"}
 
-        service.ingest_one(mock_repo, job_data, 'linkedin')
+        service.ingest_one(mock_repo, job_data, "linkedin")
 
         mock_repo.get_by_fingerprint.assert_not_called()
         mock_repo.create_job_post.assert_not_called()
@@ -113,12 +110,9 @@ class TestIngestOne:
         mock_repo = Mock()
         mock_repo.get_by_source.return_value = None
 
-        job_data = {
-            'title': 'Software Engineer',
-            'location': 'San Francisco, CA'
-        }
+        job_data = {"title": "Software Engineer", "location": "San Francisco, CA"}
 
-        service.ingest_one(mock_repo, job_data, 'linkedin')
+        service.ingest_one(mock_repo, job_data, "linkedin")
 
         mock_repo.get_by_fingerprint.assert_not_called()
         mock_repo.create_job_post.assert_not_called()
@@ -133,13 +127,11 @@ class TestExtractOne:
 
         mock_ai = Mock()
         mock_ai.extract_requirements_data.return_value = {
-            'requirements': [
-                {'text': '5 years Python experience', 'category': 'skill'},
-                {'text': 'BS in Computer Science', 'category': 'education'}
+            "requirements": [
+                {"text": "5 years Python experience", "category": "skill"},
+                {"text": "BS in Computer Science", "category": "education"},
             ],
-            'benefits': [
-                {'text': 'Health insurance', 'type': 'medical'}
-            ]
+            "benefits": [{"text": "Health insurance", "type": "medical"}],
         }
 
         service = JobETLService(mock_ai)
@@ -148,7 +140,9 @@ class TestExtractOne:
         mock_job = Mock()
         mock_job.id = "job-123"
         mock_job.title = "Software Engineer"
-        mock_job.description = "Job description with Python APIs, distributed systems, and production support. " * 4
+        mock_job.description = (
+            "Job description with Python APIs, distributed systems, and production support. " * 4
+        )
 
         service.extract_one(mock_repo, mock_job)
 
@@ -160,9 +154,9 @@ class TestExtractOne:
         mock_repo.mark_as_extracted.assert_called_once()
 
         update_payload = mock_repo.update_content_metadata.call_args[0][1]
-        assert 'canonical_job_summary' in update_payload
-        assert 'canonical_job_summary_version' in update_payload
-        assert 'canonical_job_summary_hash' in update_payload
+        assert "canonical_job_summary" in update_payload
+        assert "canonical_job_summary_version" in update_payload
+        assert "canonical_job_summary_hash" in update_payload
         offerings_payload = mock_repo.save_job_offerings_profile.call_args.args[1]
         assert offerings_payload["schema_version"] == 1
         assert offerings_payload["confidence"] <= 0.4
@@ -172,10 +166,7 @@ class TestExtractOne:
         from etl.orchestrator import JobETLService
 
         mock_ai = Mock()
-        mock_ai.extract_requirements_data.return_value = {
-            'requirements': [],
-            'benefits': []
-        }
+        mock_ai.extract_requirements_data.return_value = {"requirements": [], "benefits": []}
 
         service = JobETLService(mock_ai)
 
@@ -184,7 +175,9 @@ class TestExtractOne:
         mock_job.id = "job-123"
         mock_job.title = "Project Manager"
         mock_job.company = "MoneyForward"
-        mock_job.description = "This is a detailed job description that is long enough to attempt extraction. " * 4
+        mock_job.description = (
+            "This is a detailed job description that is long enough to attempt extraction. " * 4
+        )
 
         service.extract_one(mock_repo, mock_job)
 
@@ -236,7 +229,7 @@ class TestExtractOne:
             "preferred": [
                 "Experience with partner ecosystem operations",
             ],
-            "benefits": []
+            "benefits": [],
         }
 
         service = JobETLService(mock_ai)
@@ -246,7 +239,9 @@ class TestExtractOne:
         mock_job.id = "job-alias"
         mock_job.title = "Customer Activation"
         mock_job.company = "Ramp"
-        mock_job.description = "Customer activation, partnerships, technical feedback, and product operations. " * 4
+        mock_job.description = (
+            "Customer activation, partnerships, technical feedback, and product operations. " * 4
+        )
 
         service.extract_one(mock_repo, mock_job)
 
@@ -279,8 +274,8 @@ class TestExtractOne:
 
         mock_ai = Mock()
         mock_ai.extract_requirements_data.return_value = {
-            'requirements': [{'text': 'Test requirement'}],
-            'benefits': []
+            "requirements": [{"text": "Test requirement"}],
+            "benefits": [],
         }
 
         service = JobETLService(mock_ai)
@@ -290,9 +285,11 @@ class TestExtractOne:
         mock_job.id = "job-raw"
         mock_job.title = "Data Engineer"
         mock_job.company = "Example"
-        mock_job.description = "Long enough description for extraction validation error coverage. " * 4
+        mock_job.description = (
+            "Long enough description for extraction validation error coverage. " * 4
+        )
 
-        with patch('etl.orchestrator.JobExtraction') as mock_model:
+        with patch("etl.orchestrator.JobExtraction") as mock_model:
             mock_model.model_validate.side_effect = ValidationError.from_exception_data(
                 "JobExtraction", []
             )
@@ -306,10 +303,7 @@ class TestExtractOne:
         from etl.orchestrator import JobETLService
 
         mock_ai = Mock()
-        mock_ai.extract_requirements_data.return_value = {
-            'requirements': [],
-            'benefits': []
-        }
+        mock_ai.extract_requirements_data.return_value = {"requirements": [], "benefits": []}
 
         service = JobETLService(mock_ai)
 
@@ -567,9 +561,9 @@ class TestExtractAndEmbedResume:
         mock_existing = Mock()
         mock_repo.resume.get_structured_resume_by_fingerprint.return_value = mock_existing
 
-        with patch('etl.orchestrator.generate_file_fingerprint', return_value="fp123"):
-            with patch('os.path.exists', return_value=True):
-                with patch('builtins.open', mock_open(read_data=b'{}')):
+        with patch("etl.orchestrator.generate_file_fingerprint", return_value="fp123"):
+            with patch("os.path.exists", return_value=True):
+                with patch("builtins.open", mock_open(read_data=b"{}")):
                     result = service.extract_and_embed_resume(mock_repo, "resume.json")
 
                     assert result == (False, "fp123", None)
@@ -588,16 +582,22 @@ class TestExtractAndEmbedResume:
         mock_parsed.data = {"skills": ["Python"]}
         mock_parsed.text = "Resume text"
 
-        with patch('etl.orchestrator.generate_file_fingerprint', return_value="fp123"):
-            with patch('os.path.exists', return_value=True):
-                with patch('builtins.open', mock_open(read_data=b'{}')):
-                    with patch('etl.orchestrator.ResumeParser') as mock_parser_class:
+        with patch("etl.orchestrator.generate_file_fingerprint", return_value="fp123"):
+            with patch("os.path.exists", return_value=True):
+                with patch("builtins.open", mock_open(read_data=b"{}")):
+                    with patch("etl.orchestrator.ResumeParser") as mock_parser_class:
                         mock_parser = Mock()
                         mock_parser.parse.return_value = mock_parsed
                         mock_parser_class.return_value = mock_parser
 
-                        with patch.object(service, '_extract_resume_data', return_value=(True, "fp123", {"skills": ["Python"]})):
-                            with patch.object(service, 'embed_resume', return_value=(True, "fp123")):
+                        with patch.object(
+                            service,
+                            "_extract_resume_data",
+                            return_value=(True, "fp123", {"skills": ["Python"]}),
+                        ):
+                            with patch.object(
+                                service, "embed_resume", return_value=(True, "fp123")
+                            ):
                                 result = service.extract_and_embed_resume(mock_repo, "resume.json")
 
                                 assert result[0] is True
@@ -614,10 +614,10 @@ class TestExtractAndEmbedResume:
         mock_repo = Mock()
         mock_repo.resume.get_structured_resume_by_fingerprint.return_value = None
 
-        with patch('etl.orchestrator.generate_file_fingerprint', return_value="fp123"):
-            with patch('os.path.exists', return_value=True):
-                with patch('builtins.open', mock_open(read_data=b'{}')):
-                    with patch('etl.orchestrator.ResumeParser') as mock_parser_class:
+        with patch("etl.orchestrator.generate_file_fingerprint", return_value="fp123"):
+            with patch("os.path.exists", return_value=True):
+                with patch("builtins.open", mock_open(read_data=b"{}")):
+                    with patch("etl.orchestrator.ResumeParser") as mock_parser_class:
                         mock_parser = Mock()
                         mock_parser.parse.side_effect = ValueError("Parse error")
                         mock_parser_class.return_value = mock_parser
@@ -638,8 +638,8 @@ class TestExtractAndEmbedResume:
         def raise_io_error(*args, **kwargs):
             raise IOError("Read error")
 
-        with patch('builtins.open', side_effect=raise_io_error):
-            with patch('os.path.exists', return_value=True):
+        with patch("builtins.open", side_effect=raise_io_error):
+            with patch("os.path.exists", return_value=True):
                 result = service.extract_and_embed_resume(mock_repo, "resume.json")
 
                 assert result == (False, "", None)
@@ -672,9 +672,9 @@ class TestExtractResume:
         mock_existing = Mock()
         mock_repo.resume.get_structured_resume_by_fingerprint.return_value = mock_existing
 
-        with patch('etl.orchestrator.generate_file_fingerprint', return_value="fp123"):
-            with patch('os.path.exists', return_value=True):
-                with patch('builtins.open', mock_open(read_data=b'{}')):
+        with patch("etl.orchestrator.generate_file_fingerprint", return_value="fp123"):
+            with patch("os.path.exists", return_value=True):
+                with patch("builtins.open", mock_open(read_data=b"{}")):
                     result = service.extract_resume(mock_repo, "resume.json")
 
                     assert result == (False, "fp123", None)
@@ -699,15 +699,15 @@ class TestExtractResume:
         mock_schema.extraction.warnings = []
         mock_schema.model_dump.return_value = {"skills": ["Python"]}
 
-        with patch('etl.orchestrator.generate_file_fingerprint', return_value="fp123"):
-            with patch('os.path.exists', return_value=True):
-                with patch('builtins.open', mock_open(read_data=b'{}')):
-                    with patch('etl.orchestrator.ResumeParser') as mock_parser_class:
+        with patch("etl.orchestrator.generate_file_fingerprint", return_value="fp123"):
+            with patch("os.path.exists", return_value=True):
+                with patch("builtins.open", mock_open(read_data=b"{}")):
+                    with patch("etl.orchestrator.ResumeParser") as mock_parser_class:
                         mock_parser = Mock()
                         mock_parser.parse.return_value = mock_parsed
                         mock_parser_class.return_value = mock_parser
 
-                        with patch('etl.orchestrator.ResumeProfiler') as mock_profiler_class:
+                        with patch("etl.orchestrator.ResumeProfiler") as mock_profiler_class:
                             mock_profiler = Mock()
                             mock_profiler.extract_only.return_value = mock_schema
                             mock_profiler_class.return_value = mock_profiler
@@ -731,14 +731,14 @@ class TestExtractResume:
         mock_parsed = Mock()
         mock_parsed.data = {"skills": ["Python"]}
 
-        with patch('etl.orchestrator.generate_file_fingerprint', return_value="fp123"):
-            with patch('builtins.open', mock_open(read_data=b'{}')):
-                with patch('etl.orchestrator.ResumeParser') as mock_parser_class:
+        with patch("etl.orchestrator.generate_file_fingerprint", return_value="fp123"):
+            with patch("builtins.open", mock_open(read_data=b"{}")):
+                with patch("etl.orchestrator.ResumeParser") as mock_parser_class:
                     mock_parser = Mock()
                     mock_parser.parse.return_value = mock_parsed
                     mock_parser_class.return_value = mock_parser
 
-                    with patch('etl.orchestrator.ResumeProfiler') as mock_profiler_class:
+                    with patch("etl.orchestrator.ResumeProfiler") as mock_profiler_class:
                         mock_profiler = Mock()
                         mock_profiler.extract_only.return_value = None
                         mock_profiler_class.return_value = mock_profiler
@@ -757,10 +757,10 @@ class TestExtractResume:
         mock_repo = Mock()
         mock_repo.resume.get_structured_resume_by_fingerprint.return_value = None
 
-        with patch('etl.orchestrator.generate_file_fingerprint', return_value="fp123"):
-            with patch('os.path.exists', return_value=True):
-                with patch('builtins.open', mock_open(read_data=b'{}')):
-                    with patch('etl.orchestrator.ResumeParser') as mock_parser_class:
+        with patch("etl.orchestrator.generate_file_fingerprint", return_value="fp123"):
+            with patch("os.path.exists", return_value=True):
+                with patch("builtins.open", mock_open(read_data=b"{}")):
+                    with patch("etl.orchestrator.ResumeParser") as mock_parser_class:
                         mock_parser = Mock()
                         mock_parser.parse.side_effect = ValueError("Parse error")
                         mock_parser_class.return_value = mock_parser
@@ -781,8 +781,8 @@ class TestExtractResume:
         def raise_io_error(*args, **kwargs):
             raise IOError("Read error")
 
-        with patch('builtins.open', side_effect=raise_io_error):
-            with patch('os.path.exists', return_value=True):
+        with patch("builtins.open", side_effect=raise_io_error):
+            with patch("os.path.exists", return_value=True):
                 result = service.extract_resume(mock_repo, "resume.json")
 
                 assert result == (False, "", None)
@@ -802,15 +802,16 @@ class TestEmbedResume:
         mock_existing = Mock()
         mock_existing.extracted_data = {
             "profile": {
+                "contact": {"name": "Test Candidate"},
                 "summary": {"text": "Experienced developer", "total_experience_years": 5},
                 "experience": [],
                 "projects": {"items": []},
                 "education": [],
                 "skills": {"groups": [], "all": []},
                 "certifications": [],
-                "languages": []
+                "languages": [],
             },
-            "extraction": {"confidence": 0.9, "warnings": []}
+            "extraction": {"confidence": 0.9, "warnings": []},
         }
         mock_repo.resume.get_structured_resume_by_fingerprint.return_value = mock_existing
 
@@ -861,15 +862,16 @@ class TestEmbedResume:
         mock_existing = Mock()
         mock_existing.extracted_data = {
             "profile": {
+                "contact": {"name": "Test Candidate"},
                 "summary": {"text": "Experienced developer", "total_experience_years": 5},
                 "experience": [],
                 "projects": {"items": []},
                 "education": [],
                 "skills": {"groups": [], "all": []},
                 "certifications": [],
-                "languages": []
+                "languages": [],
             },
-            "extraction": {"confidence": 0.9, "warnings": []}
+            "extraction": {"confidence": 0.9, "warnings": []},
         }
         mock_repo.resume.get_structured_resume_by_fingerprint.return_value = mock_existing
 
@@ -976,9 +978,7 @@ class TestLoadAndCheckResumeAdditional:
                     with patch("etl.orchestrator.ResumeParser") as mock_parser_class:
                         mock_parser_class.return_value.parse.return_value = mock_parsed
 
-                        changed, _, data = service._load_and_check_resume(
-                            mock_repo, "resume.pdf"
-                        )
+                        changed, _, data = service._load_and_check_resume(mock_repo, "resume.pdf")
 
         assert changed is True
         assert data == {"raw_text": "raw resume content"}
@@ -998,11 +998,13 @@ class TestExtractAndEmbedResumeAdditional:
         mock_repo.resume.get_structured_resume_by_fingerprint.return_value = None
 
         with patch.object(
-            service, "_load_and_check_resume",
+            service,
+            "_load_and_check_resume",
             return_value=(True, "fp-123", {"name": "J"}),
         ):
             with patch.object(
-                service, "_extract_resume_data",
+                service,
+                "_extract_resume_data",
                 return_value=(False, "fp-123", None),
             ):
                 result = service.extract_and_embed_resume(mock_repo, "resume.pdf")
@@ -1019,11 +1021,13 @@ class TestExtractAndEmbedResumeAdditional:
         mock_repo = Mock()
 
         with patch.object(
-            service, "_load_and_check_resume",
+            service,
+            "_load_and_check_resume",
             return_value=(True, "fp-123", {"name": "J"}),
         ):
             with patch.object(
-                service, "_extract_resume_data",
+                service,
+                "_extract_resume_data",
                 side_effect=RuntimeError("extraction boom"),
             ):
                 with pytest.raises(RuntimeError, match="extraction boom"):
@@ -1107,9 +1111,7 @@ class TestExtractResumeWithKnownFingerprint:
         with patch("etl.orchestrator.ResumeParser") as mock_parser_class:
             mock_parser_class.return_value.parse.side_effect = ValueError("bad file")
 
-            result = service.extract_resume(
-                mock_repo, "resume.pdf", known_fingerprint="fp-known"
-            )
+            result = service.extract_resume(mock_repo, "resume.pdf", known_fingerprint="fp-known")
 
         assert result == (False, "fp-known", None)
 

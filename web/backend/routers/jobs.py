@@ -13,7 +13,13 @@ from sqlalchemy.orm import Session, selectinload
 from database.models import JobPost, JobPostSource
 from database.repository import JobRepository
 
-from ..dependencies import TenantContext, get_current_user, get_db, get_tenant_context
+from ..dependencies import (
+    TenantContext,
+    get_current_user,
+    get_db,
+    get_tenant_context,
+    require_platform_admin,
+)
 from ..models.responses import (
     DescriptionRecoverySweepResponse,
     JobAvailabilityMutationResponse,
@@ -489,7 +495,7 @@ def list_processing_blockers(
 )
 def get_processing_blockers(
     db: DbSession,
-    _user: Annotated[object, Depends(get_current_user)],
+    _user: Annotated[object, Depends(require_platform_admin)],
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
     stage: Annotated[str, Query(description="Pipeline stage: all, extraction, embedding, or matching")] = "all",
     limit: Annotated[int, Query(ge=1, le=100, description="Maximum blockers to return")] = 25,
@@ -624,7 +630,7 @@ def _recovery_message(outcome: str) -> str:
 )
 def sweep_description_recovery(
     db: DbSession,
-    _user: Annotated[object, Depends(get_current_user)],
+    _user: Annotated[object, Depends(require_platform_admin)],
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
     limit: Annotated[int, Query(ge=1, le=50, description="Maximum missing-description jobs to recover")] = 25,
 ) -> DescriptionRecoverySweepResponse:
@@ -671,7 +677,7 @@ def sweep_description_recovery(
 def retire_job(
     job_id: str,
     db: DbSession,
-    user: Annotated[object, Depends(get_current_user)],
+    user: Annotated[object, Depends(require_platform_admin)],
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
 ) -> JobAvailabilityMutationResponse:
     """Mark a job manually retired without changing source activity."""
@@ -693,7 +699,7 @@ def retire_job(
 def restore_job(
     job_id: str,
     db: DbSession,
-    _user: Annotated[object, Depends(get_current_user)],
+    _user: Annotated[object, Depends(require_platform_admin)],
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
 ) -> JobAvailabilityMutationResponse:
     """Clear manual retirement metadata and return a job to the active pool."""
@@ -715,7 +721,7 @@ def restore_job(
 def refresh_job_description_now(
     job_id: str,
     db: DbSession,
-    _user: Annotated[object, Depends(get_current_user)],
+    _user: Annotated[object, Depends(require_platform_admin)],
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
 ) -> JobAvailabilityMutationResponse:
     """Queue compliant ATS recovery for one missing-description job."""
@@ -777,7 +783,7 @@ def refresh_job_description_now(
 def refresh_job_availability(
     job_id: str,
     db: DbSession,
-    _user: Annotated[object, Depends(get_current_user)],
+    _user: Annotated[object, Depends(require_platform_admin)],
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
 ) -> JobAvailabilityMutationResponse:
     """Report whether this deployment can refresh availability through a compliant source sync."""

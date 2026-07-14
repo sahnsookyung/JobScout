@@ -30,6 +30,7 @@ def _client(monkeypatch, fake_service) -> TestClient:
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uuid4())
     app.dependency_overrides[get_db] = lambda: iter([SimpleNamespace()])
     monkeypatch.setattr(resume_variants, "_service", lambda db: fake_service)
+    monkeypatch.setattr(resume_variants, "_generation_service", lambda db: fake_service)
     return TestClient(app, raise_server_exceptions=False)
 
 

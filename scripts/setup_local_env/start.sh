@@ -330,7 +330,7 @@ start_docker() {
     elif [[ "$MICROSERVICES" == true ]]; then
         log_info "Starting infrastructure + microservices..."
         INFRA=true
-        SERVICES_TO_START="postgres redis mailpit jobspy db-migrate extraction embeddings scorer-matcher notification-worker orchestrator"
+        SERVICES_TO_START="postgres redis mailpit jobspy db-migrate extraction embeddings scorer-matcher notification-worker llm-evaluation-worker orchestrator"
     elif [[ "$INFRA" == true ]]; then
         # Start all default infra services
         log_info "Starting all Docker services (postgres, redis)..."
@@ -385,9 +385,21 @@ start_docker() {
     # Wait for PostgreSQL if it was started
     if [[ "$DATABASE" == true ]] || [[ "$INFRA" == true ]]; then
         log_info "Waiting for PostgreSQL..."
-        timeout 30 bash -c "until docker compose -f '${DOCKER_COMPOSE_FILE}' exec -T postgres pg_isready -U '${POSTGRES_USER:-user}' -d '${POSTGRES_DB:-jobscout}'; do sleep 1; done" 2>/dev/null || {
-            log_warn "PostgreSQL may not be ready yet, continuing..."
-        }
+        local postgres_ready=false
+        local i
+        for i in {1..30}; do
+            if docker compose -f "${DOCKER_COMPOSE_FILE}" exec -T postgres \
+                pg_isready -U "${POSTGRES_USER:-user}" -d "${POSTGRES_DB:-jobscout}" \
+                >/dev/null 2>&1; then
+                postgres_ready=true
+                break
+            fi
+            sleep 1
+        done
+        if [[ "${postgres_ready}" != true ]]; then
+            log_error "PostgreSQL did not become ready within 30 seconds. Run 'docker compose logs postgres' and check Docker storage."
+            return 1
+        fi
     fi
 
     log_success "Docker services started"
@@ -396,6 +408,9 @@ start_docker() {
     if docker compose "${compose_files[@]}" ps mailpit 2>/dev/null | grep -q "Up"; then
         log_info "  - Mailpit SMTP: localhost:${MAILPIT_SMTP_PORT:-1025}"
         log_info "  - Mailpit UI: http://localhost:${MAILPIT_UI_PORT:-8025}"
+    fi
+    if docker compose "${compose_files[@]}" ps jobspy 2>/dev/null | grep -q "Up"; then
+        log_info "  - JobSpy API: http://localhost:${JOBSPY_PORT:-8000}"
     fi
 
     # Start background log capture for Docker services
@@ -410,7 +425,7 @@ start_docker() {
     fi
 
     # Capture microservice logs
-    for service in extraction embeddings scorer-matcher notification-worker orchestrator mailpit; do
+    for service in jobspy extraction embeddings scorer-matcher notification-worker llm-evaluation-worker orchestrator mailpit; do
         if docker compose "${compose_files[@]}" ps $service 2>/dev/null | grep -q "Up"; then
             start_log_capture "${service}" "${LOGS_DIR}/${service}.log" \
                 docker compose "${compose_files[@]}" logs -f "${service}"
@@ -584,7 +599,9 @@ print_summary() {
         printf "    - Embeddings:     http://localhost:8082\n"
         printf "    - Scorer-Matcher: http://localhost:8083\n"
         printf "    - Notification Worker: background queue consumer\n"
+        printf "    - LLM Evaluation Worker: background queue consumer\n"
         printf "    - Orchestrator:   http://localhost:8084\n"
+        printf "    - JobSpy API:     http://localhost:${JOBSPY_PORT:-8000}\n"
         printf "  ${GREEN}Mailpit${NC}:     http://localhost:${MAILPIT_UI_PORT:-8025}\n"
     fi
     echo ""
@@ -605,7 +622,7 @@ print_summary() {
         printf "    ${BLUE}PostgreSQL${NC}:  ${LOGS_DIR}/postgres.log\n"
     fi
     if [[ "$MICROSERVICES" == true ]]; then
-        for _svc in extraction embeddings scorer-matcher notification-worker orchestrator mailpit; do
+        for _svc in jobspy extraction embeddings scorer-matcher notification-worker llm-evaluation-worker orchestrator mailpit; do
             printf "    ${BLUE}${_svc}${NC}: ${LOGS_DIR}/${_svc}.log\n"
         done
     fi
@@ -622,7 +639,7 @@ print_summary() {
     printf "    ./scripts/setup_local_env/logs.sh web-ui       (web UI only)\n"
     echo ""
     echo "  To stop:"
-    printf "    ${YELLOW}./scripts/setup_local_env/start.sh --clean${NC}  (all services)\n"
+    printf "    ${YELLOW}./scripts/setup_local_env/stop.sh${NC}  (all services)\n"
     echo ""
     return 0
 }

@@ -716,6 +716,8 @@ class TestMatchesRouter:
             {"job": {"description": "Full JD"}},
             {"truncated": False, "fields": {}},
             enqueue_reason="manual",
+            owner_id="user-123",
+            tenant_id=None,
         )
 
     @pytest.mark.parametrize(
@@ -865,6 +867,8 @@ class TestMatchesRouter:
             None,
             None,
             enqueue_reason="retry_now",
+            owner_id="user-123",
+            tenant_id=None,
         )
 
     def test_retry_llm_evaluation_conflict_maps_to_409(

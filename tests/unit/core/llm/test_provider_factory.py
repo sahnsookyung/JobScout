@@ -2,11 +2,13 @@ import pytest
 
 from core.config_loader import (
     LlmConfig,
+    LlmJudgeProviderRuntimeConfig,
     LlmJudgeRuntimeConfig,
     PreferenceModelConfig,
     SemanticFitLlmConfig,
 )
 from core.llm.openai_service import OpenAIService
+from core.llm.provider_chain import runtime_config_from_provider_entry
 from core.llm.provider_factory import (
     RuntimeLLMConfig,
     build_llm_provider,
@@ -61,6 +63,7 @@ def test_runtime_llm_config_from_preference_maps_timeout_and_embeddings():
     assert runtime_config.timeout_seconds == 45
     assert runtime_config.embedding_model == "embed-model"
     assert runtime_config.embedding_dimensions == 512
+
 
 def test_runtime_llm_config_from_preference_maps_structured_output_mode():
     config = PreferenceModelConfig(
@@ -129,6 +132,20 @@ def test_runtime_llm_config_from_match_judge_maps_cerebras_defaults():
     assert runtime_config.structured_output_mode == "json_object"
 
 
+def test_provider_chain_maps_optional_max_output_tokens():
+    entry = LlmJudgeProviderRuntimeConfig(
+        name="nvidia-resume",
+        provider="nvidia",
+        api_key="nvidia-key",
+        model="mistralai/mistral-medium-3.5-128b",
+        max_output_tokens=16_384,
+    )
+
+    runtime_config = runtime_config_from_provider_entry(entry)
+
+    assert runtime_config.max_output_tokens == 16_384
+
+
 def test_build_llm_provider_constructs_openai_compatible_service():
     provider = build_llm_provider(
         RuntimeLLMConfig(
@@ -139,6 +156,7 @@ def test_build_llm_provider_constructs_openai_compatible_service():
             temperature=0.2,
             timeout_seconds=12,
             structured_output_mode="auto",
+            max_output_tokens=4096,
             embedding_model="embed-model",
             embedding_dimensions=1024,
         )
@@ -149,6 +167,7 @@ def test_build_llm_provider_constructs_openai_compatible_service():
     assert provider.embedding_model == "embed-model"
     assert provider.embedding_dimensions == 1024
     assert provider.structured_output_mode == "auto"
+    assert provider.max_output_tokens == 4096
 
 
 def test_build_llm_provider_constructs_groq_alias_service():

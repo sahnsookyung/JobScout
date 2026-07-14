@@ -37,14 +37,26 @@
       "type": "FOREIGN KEY"
     },
     {
+      "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE",
+      "name": "job_match_owner_id_fkey",
+      "table": "job_match",
+      "type": "FOREIGN KEY"
+    },
+    {
       "definition": "PRIMARY KEY (id)",
       "name": "job_match_pkey",
       "table": "job_match",
       "type": "PRIMARY KEY"
     },
     {
-      "definition": "UNIQUE (job_post_id, resume_fingerprint)",
-      "name": "uq_job_match_job_resume",
+      "definition": "FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE",
+      "name": "job_match_tenant_id_fkey",
+      "table": "job_match",
+      "type": "FOREIGN KEY"
+    },
+    {
+      "definition": "UNIQUE (owner_id, job_post_id, resume_fingerprint)",
+      "name": "uq_job_match_owner_job_resume",
       "table": "job_match",
       "type": "UNIQUE"
     },
@@ -229,7 +241,7 @@
       "type": "UNIQUE"
     },
     {
-      "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE SET NULL",
+      "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE",
       "name": "pipeline_run_owner_id_fkey",
       "table": "pipeline_run",
       "type": "FOREIGN KEY"
@@ -439,6 +451,12 @@
       "type": "PRIMARY KEY"
     },
     {
+      "definition": "CHECK (((NOT is_platform_admin) OR retention_exempt))",
+      "name": "ck_users_platform_admin_retention_exempt",
+      "table": "users",
+      "type": "CHECK"
+    },
+    {
       "definition": "UNIQUE (email)",
       "name": "users_email_key",
       "table": "users",
@@ -553,6 +571,15 @@
     },
     {
       "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_match_owner_job ON public.job_match USING btree (owner_id, job_post_id)",
+      "name": "idx_job_match_owner_job",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_match",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
       "definition": "CREATE INDEX idx_job_match_pref ON public.job_match USING btree (preference_score)",
       "name": "idx_job_match_pref",
       "predicate": null,
@@ -573,6 +600,15 @@
       "access_method": "btree",
       "definition": "CREATE INDEX idx_job_match_status ON public.job_match USING btree (status)",
       "name": "idx_job_match_status",
+      "predicate": null,
+      "reloptions": null,
+      "table": "job_match",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_job_match_tenant_owner ON public.job_match USING btree (tenant_id, owner_id)",
+      "name": "idx_job_match_tenant_owner",
       "predicate": null,
       "reloptions": null,
       "table": "job_match",
@@ -1420,12 +1456,39 @@
     },
     {
       "access_method": "btree",
+      "definition": "CREATE INDEX idx_users_deletion_started ON public.users USING btree (deletion_started_at) WHERE (NOT retention_exempt)",
+      "name": "idx_users_deletion_started",
+      "predicate": "(NOT retention_exempt)",
+      "reloptions": null,
+      "table": "users",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
       "definition": "CREATE INDEX idx_users_email ON public.users USING btree (email)",
       "name": "idx_users_email",
       "predicate": null,
       "reloptions": null,
       "table": "users",
       "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE INDEX idx_users_ephemeral_expiry ON public.users USING btree (data_expires_at) WHERE ((NOT retention_exempt) AND (deletion_started_at IS NULL))",
+      "name": "idx_users_ephemeral_expiry",
+      "predicate": "((NOT retention_exempt) AND (deletion_started_at IS NULL))",
+      "reloptions": null,
+      "table": "users",
+      "unique": false
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE UNIQUE INDEX uq_users_single_platform_admin ON public.users USING btree (is_platform_admin) WHERE is_platform_admin",
+      "name": "uq_users_single_platform_admin",
+      "predicate": "is_platform_admin",
+      "reloptions": null,
+      "table": "users",
+      "unique": true
     }
   ],
   "tables": {
@@ -1496,10 +1559,22 @@
           "type": "integer"
         },
         {
+          "default": null,
+          "name": "ranking_config",
+          "nullable": true,
+          "type": "jsonb"
+        },
+        {
           "default": "'any'::text",
           "name": "remote_mode",
           "nullable": false,
           "type": "text"
+        },
+        {
+          "default": null,
+          "name": "result_policy",
+          "nullable": true,
+          "type": "jsonb"
         },
         {
           "default": "0",
@@ -1673,6 +1748,12 @@
         },
         {
           "default": null,
+          "name": "owner_id",
+          "nullable": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
           "name": "penalties",
           "nullable": true,
           "type": "numeric(5,2)"
@@ -1730,6 +1811,12 @@
           "name": "status",
           "nullable": true,
           "type": "text"
+        },
+        {
+          "default": null,
+          "name": "tenant_id",
+          "nullable": true,
+          "type": "uuid"
         },
         {
           "default": null,
@@ -4053,6 +4140,18 @@
         },
         {
           "default": null,
+          "name": "data_expires_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "deletion_started_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
           "name": "display_name",
           "nullable": true,
           "type": "text"
@@ -4078,6 +4177,24 @@
         {
           "default": null,
           "name": "is_active",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "default": "false",
+          "name": "is_platform_admin",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "last_login_at",
+          "nullable": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "false",
+          "name": "retention_exempt",
           "nullable": false,
           "type": "boolean"
         }

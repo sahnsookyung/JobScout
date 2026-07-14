@@ -25,6 +25,7 @@ from database.models import (
 from etl.canonical_summary import CanonicalJobSummaryGenerator
 from etl.import_models import NormalizedJobRecord
 from etl.resume import ResumeProfiler, ResumeParser
+from etl.resume.file_safety import parse_resume_file
 from etl.resume.embedding_store import JobRepositoryAdapter
 
 logger = logging.getLogger(__name__)
@@ -542,7 +543,7 @@ class JobETLService:
         # Parse the resume
         try:
             parser = ResumeParser()
-            parsed = parser.parse(resume_file)
+            parsed = parse_resume_file(parser, resume_file)
             resume_data = parsed.data if parsed.data is not None else {"raw_text": parsed.text}
         except (ValueError, IOError):
             logger.exception(FAILED_PARSE_RESUME_FILE)
@@ -595,7 +596,7 @@ class JobETLService:
 
         try:
             parser = ResumeParser()
-            parsed = parser.parse(resume_file)
+            parsed = parse_resume_file(parser, resume_file)
             resume_data = parsed.data if parsed.data is not None else {"raw_text": parsed.text}
         except (ValueError, IOError) as exc:
             repo.set_resume_processing_state(
@@ -937,7 +938,7 @@ class JobETLService:
             # Parse the resume (file still needs to be read for parsing)
             try:
                 parser = ResumeParser()
-                parsed = parser.parse(resume_file)
+                parsed = parse_resume_file(parser, resume_file)
                 resume_data = parsed.data if parsed.data is not None else {"raw_text": parsed.text}
             except (ValueError, IOError) as e:
                 repo.set_resume_processing_state(

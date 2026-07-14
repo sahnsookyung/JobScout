@@ -63,6 +63,15 @@ class TestResumeSchemaValidation:
         
         assert "profile" in str(exc_info.value)
 
+    def test_missing_contact_fails(self):
+        resume_data = copy.deepcopy(VALID_RESUME)
+        del resume_data["profile"]["contact"]
+
+        with pytest.raises(ValidationError) as exc_info:
+            ResumeSchema.model_validate(resume_data)
+
+        assert "contact" in str(exc_info.value)
+
     def test_05_missing_summary_fails(self):
         """Missing summary field should fail validation."""
         with pytest.raises(ValidationError) as exc_info:
@@ -265,7 +274,7 @@ class TestGeneratedSchema:
         schema = RESUME_SCHEMA
         
         assert "name" in schema
-        assert schema["name"] == "resume_schema_v1.0"
+        assert schema["name"] == "resume_schema_v2.0"
         assert "strict" in schema
         assert schema["strict"] is True
         assert "schema" in schema

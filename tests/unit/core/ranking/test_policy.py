@@ -120,7 +120,9 @@ class TestUpdateConfig:
         cm, mock_session = _mock_session_scope(mock_setting)
 
         with patch("database.database.db_session_scope", return_value=cm):
-            result = self._store().update_config(_cfg(config_version="updated"))
+            result = self._store().update_config(
+                _cfg(config_version="updated"), owner_id="user-1"
+            )
 
         assert result.config_version == "updated"
         assert mock_setting.value is not None
@@ -130,7 +132,7 @@ class TestUpdateConfig:
         cm, mock_session = _mock_session_scope(None)
 
         with patch("database.database.db_session_scope", return_value=cm):
-            self._store().update_config(_cfg())
+            self._store().update_config(_cfg(), owner_id="user-1")
 
         mock_session.add.assert_called_once()
         mock_session.commit.assert_called_once()
@@ -140,7 +142,7 @@ class TestUpdateConfig:
         cfg = _cfg(config_version="v99")
 
         with patch("database.database.db_session_scope", return_value=cm):
-            returned = self._store().update_config(cfg)
+            returned = self._store().update_config(cfg, owner_id="user-1")
 
         assert returned is cfg
 

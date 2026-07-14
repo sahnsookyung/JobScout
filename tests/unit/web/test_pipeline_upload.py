@@ -10,6 +10,7 @@ import json
 import tempfile
 import os
 import hashlib
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
@@ -412,6 +413,34 @@ class TestResumeUploadSecurity(unittest.TestCase):
         self.assertEqual(response.status_code, 413)  # Payload Too Large
         self.assertEqual(response.json()['code'], 'pipeline.resume.file_too_large')
         self.assertIn('2', response.json()['message'])
+
+    def test_upload_reader_stops_after_the_size_limit_is_known(self):
+        from web.backend.routers.pipeline import (
+            PipelineApiError,
+            RESUME_MAX_SIZE,
+            _validate_resume_file,
+        )
+
+        class OversizedUpload:
+            filename = "resume.txt"
+
+            def __init__(self):
+                self.remaining = RESUME_MAX_SIZE * 5
+                self.read_sizes = []
+
+            async def read(self, size: int = -1) -> bytes:
+                self.read_sizes.append(size)
+                count = min(size, self.remaining)
+                self.remaining -= count
+                return b"x" * count
+
+        upload = OversizedUpload()
+        with self.assertRaises(PipelineApiError) as exc_info:
+            asyncio.run(_validate_resume_file(upload))
+
+        self.assertEqual(exc_info.exception.status_code, 413)
+        self.assertGreater(upload.remaining, 0)
+        self.assertLessEqual(max(upload.read_sizes), 64 * 1024)
 
     def test_upload_hash_mismatch_rejected(self):
         """Test that server rejects file when client hash doesn't match computed hash (security)."""

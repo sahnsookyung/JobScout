@@ -121,7 +121,7 @@ class TestResultPolicyStore:
              patch("core.policy.load_config") as mock_load_config:
             mock_load_config.return_value.matching.result_policy = ResultPolicy()
             store = ResultPolicyStore()
-            policy = store.update_policy(70.0, 25, 0.8)
+            policy = store.update_policy(70.0, 25, 0.8, owner_id="user-1")
 
         assert policy.min_fit == 70.0
         session.add.assert_called_once()
@@ -150,7 +150,7 @@ class TestResultPolicyStore:
              patch("core.policy.load_config") as mock_load_config:
             mock_load_config.return_value.matching.result_policy = ResultPolicy()
             store = ResultPolicyStore()
-            policy = store.apply_preset("strict")
+            policy = store.apply_preset("strict", owner_id="user-1")
 
         assert policy.min_fit == POLICY_PRESETS["strict"].min_fit
 

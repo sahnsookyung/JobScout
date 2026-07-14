@@ -5,6 +5,7 @@
 
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { PolicyPanel } from '../PolicyPanel';
+import { PreferenceRankingSettings } from '@/features/preferences/components/PreferenceRankingSettings';
 
 vi.mock('@/hooks/usePolicy');
 vi.mock('@tanstack/react-query', () => ({
@@ -90,6 +91,13 @@ describe('PolicyPanel', () => {
             expect(screen.getByText('Max results')).toBeTruthy();
         });
 
+        it('keeps preference ranking controls out of the shortlist sidebar', () => {
+            render(<PolicyPanel />);
+
+            expect(screen.queryByLabelText(/default order/i)).not.toBeInTheDocument();
+            expect(screen.queryByText(/LLM second pass/i)).not.toBeInTheDocument();
+        });
+
         it('shows default minFit value of 55', () => {
             render(<PolicyPanel />);
             const slider = screen.getByRole('slider', { name: /minimum fit score/i });
@@ -136,7 +144,7 @@ describe('PolicyPanel', () => {
                     balanced_w_fit: 0.3,
                 },
             });
-            render(<PolicyPanel />);
+            render(<PreferenceRankingSettings />);
 
             expect(screen.getByLabelText(/default order/i)).toHaveValue('preference_first');
             expect(screen.getByRole('slider', { name: /balanced preference weight/i })).toHaveValue('70');
@@ -238,7 +246,7 @@ describe('PolicyPanel', () => {
                     llm_judge_revision: 3,
                 },
             });
-            render(<PolicyPanel />);
+            render(<PreferenceRankingSettings />);
 
             fireEvent.click(screen.getByRole('checkbox', { name: /enable llm judging/i }));
             fireEvent.click(screen.getByRole('checkbox', { name: /automatically queue top n llm judging/i }));
@@ -280,7 +288,7 @@ describe('PolicyPanel', () => {
                     llm_judge_revision: 3,
                 },
             });
-            render(<PolicyPanel />);
+            render(<PreferenceRankingSettings />);
 
             fireEvent.click(screen.getByRole('checkbox', { name: /enable llm judging/i }));
             fireEvent.click(screen.getByRole('checkbox', { name: /automatically queue top n llm judging/i }));
@@ -328,7 +336,7 @@ describe('PolicyPanel', () => {
                     llm_judge_available: true,
                 },
             });
-            render(<PolicyPanel />);
+            render(<PreferenceRankingSettings />);
 
             fireEvent.click(screen.getByRole('checkbox', { name: /enable llm judging/i }));
 
@@ -370,7 +378,7 @@ describe('PolicyPanel', () => {
                     balanced_w_fit: 0.4,
                 },
             });
-            render(<PolicyPanel />);
+            render(<PreferenceRankingSettings />);
 
             fireEvent.change(screen.getByLabelText(/default order/i), {
                 target: { value: 'fit_first' },
@@ -387,6 +395,34 @@ describe('PolicyPanel', () => {
                     balanced_w_fit: 0.65,
                 }),
             );
+        });
+
+        it('flushes a pending ranking change when the settings close', () => {
+            const updatePolicy = vi.fn();
+            mockUsePolicy.mockReturnValue({
+                ...defaultHook,
+                updatePolicy,
+                policy: {
+                    min_fit: 55,
+                    top_k: 50,
+                    min_jd_required_coverage: null,
+                    active_default_mode: 'balanced',
+                    balanced_w_pref: 0.6,
+                    balanced_w_fit: 0.4,
+                },
+            });
+            const { unmount } = render(<PreferenceRankingSettings />);
+
+            fireEvent.change(screen.getByLabelText(/default order/i), {
+                target: { value: 'fit_first' },
+            });
+            unmount();
+
+            expect(updatePolicy).toHaveBeenCalledWith(expect.objectContaining({
+                active_default_mode: 'fit_first',
+                balanced_w_pref: 0.6,
+                balanced_w_fit: 0.4,
+            }));
         });
 
         it('marks Balanced preset as aria-pressed=true by default', () => {

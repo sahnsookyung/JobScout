@@ -5,7 +5,7 @@ import { useMutation } from '@tanstack/react-query';
 import { Button } from '@/components/ui/Button';
 import { toast } from '@/components/ui/Toast';
 import { resumeVariantsApi, type ResumeVariantDownload } from '@/services/resumeVariantsApi';
-import type { ResumeVariant, ResumeVariantClaim, ResumeVariantDownloadFormat } from '@/types/api';
+import type { ResumeVariant, ResumeVariantDownloadFormat } from '@/types/api';
 
 type ResumeVariantPanelProps = Readonly<{
     matchId: string;
@@ -19,10 +19,6 @@ const DOWNLOAD_LABELS: Record<ResumeVariantDownloadFormat, string> = {
 
 function apiErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : 'Resume draft request failed.';
-}
-
-function claimText(claims: ResumeVariantClaim[] | undefined, fallback: string): string {
-    return claims?.find((claim) => claim.text.trim())?.text ?? fallback;
 }
 
 function evidenceLabel(variant: ResumeVariant): string {
@@ -97,9 +93,17 @@ export const ResumeVariantPanel: React.FC<ResumeVariantPanelProps> = ({ matchId 
         () => variant?.download_formats.filter((format) => format in DOWNLOAD_LABELS) ?? [],
         [variant],
     );
-    const summary = variant ? claimText(variant.content.summary, 'No summary text generated.') : null;
-    const targetedEvidence = variant ? claimText(variant.content.targeted_evidence, 'No targeted evidence generated.') : null;
+    const summaryClaims = variant?.content.summary?.filter((claim) => claim.text.trim()) ?? [];
+    const targetedEvidenceClaims = variant?.content.targeted_evidence?.filter((claim) => claim.text.trim()) ?? [];
     const skillLabels = variant?.content.skills?.map((skill) => skill.text).filter(Boolean).slice(0, 8) ?? [];
+    const contactParts = variant
+        ? [
+            variant.content.contact?.email,
+            variant.content.contact?.phone,
+            variant.content.contact?.location,
+            ...(variant.content.contact?.links ?? []),
+        ].filter((value): value is string => Boolean(value))
+        : [];
     const gapLabels = variant?.content.gaps?.map((gap) => gap.text).filter(Boolean).slice(0, 6) ?? [];
     const sourceQuality = variant?.content.source_quality;
     const isGenerating = createMutation.isPending;
@@ -150,14 +154,124 @@ export const ResumeVariantPanel: React.FC<ResumeVariantPanelProps> = ({ matchId 
                         <div className="grid gap-5 px-5 py-5 md:grid-cols-[1.3fr_0.7fr]">
                             <div>
                                 <p className="caption">Preview</p>
-                                <p className="mt-2 text-[14px] leading-relaxed text-ink">{summary}</p>
-                                <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">{targetedEvidence}</p>
+                                <article className="mt-3 max-h-[36rem] overflow-y-auto border border-rule bg-white px-5 py-5 text-ink">
+                                    <h5 className="text-[20px] font-semibold">
+                                        {variant.content.contact?.name || 'Resume'}
+                                    </h5>
+                                    {contactParts.length > 0 && (
+                                        <p className="mt-1 text-[12px] leading-5 text-ink-soft">
+                                            {contactParts.join(' · ')}
+                                        </p>
+                                    )}
+
+                                    <h6 className="mt-5 border-b border-rule pb-1 text-[13px] font-semibold uppercase tracking-wide">
+                                        Professional Summary
+                                    </h6>
+                                    {summaryClaims.length > 0 ? summaryClaims.map((claim, index) => (
+                                        <p key={`${index}-${claim.text}`} className="mt-2 text-[13px] leading-relaxed">
+                                            {claim.text}
+                                        </p>
+                                    )) : (
+                                        <p className="mt-2 text-[13px] text-ink-soft">No summary text generated.</p>
+                                    )}
+
+                                    {variant.content.skills && variant.content.skills.length > 0 && (
+                                        <>
+                                            <h6 className="mt-5 border-b border-rule pb-1 text-[13px] font-semibold uppercase tracking-wide">
+                                                Skills
+                                            </h6>
+                                            <p className="mt-2 text-[13px] leading-relaxed">
+                                                {variant.content.skills.map((skill) => skill.text).filter(Boolean).join(', ')}
+                                            </p>
+                                        </>
+                                    )}
+
+                                    {variant.content.experience && variant.content.experience.length > 0 && (
+                                        <>
+                                            <h6 className="mt-5 border-b border-rule pb-1 text-[13px] font-semibold uppercase tracking-wide">
+                                                Experience
+                                            </h6>
+                                            <div className="space-y-4">
+                                                {variant.content.experience.map((entry, index) => (
+                                                    <section key={entry.entry_id || `${entry.company}-${entry.title}-${index}`} className="mt-3">
+                                                        <div className="flex flex-wrap justify-between gap-x-4 gap-y-1">
+                                                            <p className="text-[13px] font-semibold">
+                                                                {[entry.title, entry.company].filter(Boolean).join(' — ')}
+                                                            </p>
+                                                            <p className="text-[12px] text-ink-soft">
+                                                                {[entry.start_date, entry.end_date].filter(Boolean).join(' – ')}
+                                                            </p>
+                                                        </div>
+                                                        {entry.bullets && entry.bullets.length > 0 && (
+                                                            <ul className="mt-1 list-disc space-y-1 pl-5 text-[13px] leading-relaxed">
+                                                                {entry.bullets.map((bullet, bulletIndex) => (
+                                                                    <li key={`${bulletIndex}-${bullet.text}`}>{bullet.text}</li>
+                                                                ))}
+                                                            </ul>
+                                                        )}
+                                                    </section>
+                                                ))}
+                                            </div>
+                                        </>
+                                    )}
+
+                                    {variant.content.projects && variant.content.projects.length > 0 && (
+                                        <>
+                                            <h6 className="mt-5 border-b border-rule pb-1 text-[13px] font-semibold uppercase tracking-wide">
+                                                Projects
+                                            </h6>
+                                            {variant.content.projects.map((project, index) => (
+                                                <section key={project.entry_id || `${project.name}-${index}`} className="mt-3">
+                                                    <p className="text-[13px] font-semibold">{project.name}</p>
+                                                    {project.technologies && project.technologies.length > 0 && (
+                                                        <p className="text-[12px] text-ink-soft">{project.technologies.join(', ')}</p>
+                                                    )}
+                                                    {project.bullets && project.bullets.length > 0 && (
+                                                        <ul className="mt-1 list-disc space-y-1 pl-5 text-[13px] leading-relaxed">
+                                                            {project.bullets.map((bullet, bulletIndex) => (
+                                                                <li key={`${bulletIndex}-${bullet.text}`}>{bullet.text}</li>
+                                                            ))}
+                                                        </ul>
+                                                    )}
+                                                </section>
+                                            ))}
+                                        </>
+                                    )}
+
+                                    {variant.content.education && variant.content.education.length > 0 && (
+                                        <>
+                                            <h6 className="mt-5 border-b border-rule pb-1 text-[13px] font-semibold uppercase tracking-wide">
+                                                Education
+                                            </h6>
+                                            {variant.content.education.map((entry, index) => (
+                                                <p key={`${entry.institution}-${entry.degree}-${index}`} className="mt-2 text-[13px]">
+                                                    {[entry.degree, entry.field_of_study, entry.institution, entry.graduation_year]
+                                                        .filter(Boolean)
+                                                        .join(' — ')}
+                                                </p>
+                                            ))}
+                                        </>
+                                    )}
+                                </article>
                             </div>
                             <div>
                                 <p className="caption">Evidence</p>
                                 <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">
                                     {evidenceLabel(variant)}
                                 </p>
+                                {variant.content.generation?.tailored && (
+                                    <p className="mt-2 text-[12px] leading-5 text-ink-soft">
+                                        Tailored by {variant.content.generation.provider || 'configured provider'}
+                                        {variant.content.generation.model ? ` · ${variant.content.generation.model}` : ''}
+                                    </p>
+                                )}
+                                {targetedEvidenceClaims.length > 0 && (
+                                    <ul className="mt-3 list-disc space-y-1 pl-4 text-[12px] leading-5 text-ink-soft">
+                                        {targetedEvidenceClaims.slice(0, 5).map((claim, index) => (
+                                            <li key={`${index}-${claim.text}`}>{claim.text}</li>
+                                        ))}
+                                    </ul>
+                                )}
                                 {skillLabels.length > 0 && (
                                     <div className="mt-3 flex flex-wrap gap-1.5">
                                         {skillLabels.map((skill) => (

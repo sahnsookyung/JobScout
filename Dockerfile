@@ -25,6 +25,7 @@ COPY services/embeddings/ ./services/embeddings/
 COPY services/scorer_matcher/ ./services/scorer_matcher/
 COPY services/orchestrator/ ./services/orchestrator/
 COPY web/backend/ ./web/backend/
+COPY web/shared/ ./web/shared/
 COPY config.yaml ./
 
 RUN uv sync --frozen --no-dev --group web
@@ -34,6 +35,8 @@ RUN uv sync --frozen --no-dev --group web
 FROM python@sha256:7a500125bc50693f2214e842a621440a1b1b9cbb2188f74ab045d29ed2ea5856 AS runtime
 
 RUN useradd --create-home --shell /bin/bash appuser
+RUN mkdir -p /home/appuser/.cache/huggingface && \
+    chown -R appuser:appuser /home/appuser/.cache
 
 WORKDIR /app
 

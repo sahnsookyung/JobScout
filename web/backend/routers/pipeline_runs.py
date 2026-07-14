@@ -7,7 +7,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from ..dependencies import TenantContext, get_current_user, get_db, get_tenant_context
+from ..dependencies import (
+    TenantContext,
+    get_current_user,
+    get_db,
+    get_tenant_context,
+    require_platform_admin,
+)
 from ..models.requests import LlmEvaluationQueuePauseRequest, LlmProviderCircuitResetRequest
 from ..models.responses import (
     LlmEvaluationQueueOperationResponse,
@@ -58,7 +64,7 @@ def _pipeline_run_for_view(run: PipelineRunSummary, view: str) -> PipelineRunSum
 )
 def get_pipeline_runs(
     db: DbSession,
-    _user: Annotated[object, Depends(get_current_user)],
+    user: Annotated[object, Depends(get_current_user)],
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
     status: Annotated[str, Query(description="Run status or all")] = "all",
     run_type: Annotated[str, Query(description="Run type or all")] = "all",
@@ -92,6 +98,7 @@ def get_pipeline_runs(
     try:
         result = pipeline_run_read_service.list_runs(
             db,
+            owner_id=user.id,
             tenant_id=tenant_context.tenant_id,
             status=status,
             run_type=run_type,
@@ -130,7 +137,7 @@ def get_pipeline_runs(
     response_model=LlmEvaluationQueueStatusResponse,
 )
 def get_llm_evaluation_queue_status(
-    _user: Annotated[object, Depends(get_current_user)],
+    _user: Annotated[object, Depends(require_platform_admin)],
 ) -> LlmEvaluationQueueStatusResponse:
     return LlmEvaluationQueueStatusResponse(**pipeline_run_ops_service.llm_queue_status())
 
@@ -141,7 +148,7 @@ def get_llm_evaluation_queue_status(
 )
 def pause_llm_evaluation_queue(
     request: LlmEvaluationQueuePauseRequest,
-    _user: Annotated[object, Depends(get_current_user)],
+    _user: Annotated[object, Depends(require_platform_admin)],
 ) -> LlmEvaluationQueueOperationResponse:
     status = pipeline_run_ops_service.pause_llm_queue(
         reason=request.reason,
@@ -160,7 +167,7 @@ def pause_llm_evaluation_queue(
     response_model=LlmEvaluationQueueOperationResponse,
 )
 def resume_llm_evaluation_queue(
-    _user: Annotated[object, Depends(get_current_user)],
+    _user: Annotated[object, Depends(require_platform_admin)],
 ) -> LlmEvaluationQueueOperationResponse:
     status = pipeline_run_ops_service.resume_llm_queue()
     return LlmEvaluationQueueOperationResponse(
@@ -176,7 +183,7 @@ def resume_llm_evaluation_queue(
     response_model=LlmEvaluationQueueOperationResponse,
 )
 def retry_llm_evaluation_queue(
-    _user: Annotated[object, Depends(get_current_user)],
+    _user: Annotated[object, Depends(require_platform_admin)],
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
 ) -> LlmEvaluationQueueOperationResponse:
     status, enqueued = pipeline_run_ops_service.retry_llm_queue(limit=limit)
@@ -194,7 +201,7 @@ def retry_llm_evaluation_queue(
     response_model=LlmProviderStatusResponse,
 )
 def get_llm_provider_status(
-    _user: Annotated[object, Depends(get_current_user)],
+    _user: Annotated[object, Depends(require_platform_admin)],
 ) -> LlmProviderStatusResponse:
     return LlmProviderStatusResponse(**pipeline_run_ops_service.llm_provider_status())
 
@@ -204,7 +211,7 @@ def get_llm_provider_status(
     response_model=LlmProviderCanaryResponse,
 )
 def run_llm_provider_canaries(
-    _user: Annotated[object, Depends(get_current_user)],
+    _user: Annotated[object, Depends(require_platform_admin)],
 ) -> LlmProviderCanaryResponse:
     return LlmProviderCanaryResponse(**pipeline_run_ops_service.run_llm_provider_canaries())
 
@@ -216,7 +223,7 @@ def run_llm_provider_canaries(
 )
 def reset_llm_provider_circuit(
     request: LlmProviderCircuitResetRequest,
-    _user: Annotated[object, Depends(get_current_user)],
+    _user: Annotated[object, Depends(require_platform_admin)],
 ) -> LlmProviderCircuitResetResponse:
     try:
         result = pipeline_run_ops_service.reset_llm_provider_circuit(
@@ -239,12 +246,13 @@ def reset_llm_provider_circuit(
 def cancel_pipeline_run(
     run_id: str,
     db: DbSession,
-    _user: Annotated[object, Depends(get_current_user)],
+    user: Annotated[object, Depends(get_current_user)],
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
 ) -> PipelineRunOperationResponse:
     try:
         run = pipeline_run_ops_service.cancel_run(
             db,
+            owner_id=user.id,
             tenant_id=tenant_context.tenant_id,
             run_id=run_id,
         )
@@ -271,12 +279,13 @@ def cancel_pipeline_run(
 def requeue_pipeline_run(
     run_id: str,
     db: DbSession,
-    _user: Annotated[object, Depends(get_current_user)],
+    user: Annotated[object, Depends(get_current_user)],
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
 ) -> PipelineRunOperationResponse:
     try:
         run, enqueued_task_id = pipeline_run_ops_service.requeue_run(
             db,
+            owner_id=user.id,
             tenant_id=tenant_context.tenant_id,
             run_id=run_id,
         )
@@ -305,12 +314,13 @@ def requeue_pipeline_run(
 def retry_pipeline_run(
     run_id: str,
     db: DbSession,
-    _user: Annotated[object, Depends(get_current_user)],
+    user: Annotated[object, Depends(get_current_user)],
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
 ) -> PipelineRunOperationResponse:
     try:
         run, enqueued_task_id = pipeline_run_ops_service.retry_run(
             db,
+            owner_id=user.id,
             tenant_id=tenant_context.tenant_id,
             run_id=run_id,
         )
@@ -339,11 +349,12 @@ def retry_pipeline_run(
 def get_pipeline_run(
     run_id: str,
     db: DbSession,
-    _user: Annotated[object, Depends(get_current_user)],
+    user: Annotated[object, Depends(get_current_user)],
     tenant_context: Annotated[TenantContext, Depends(get_tenant_context)],
 ) -> PipelineRunDetailResponse:
     run = pipeline_run_read_service.get_run(
         db,
+        owner_id=user.id,
         tenant_id=tenant_context.tenant_id,
         run_id=run_id,
     )

@@ -54,6 +54,8 @@ class CandidatePreferences(Base):
     )
     preference_rerank_top_n = Column(Integer)
     preference_profile = Column(JSONB)
+    result_policy = Column(JSONB)
+    ranking_config = Column(JSONB)
     revision = Column(Integer, nullable=False, default=0, server_default=sql_text("0"))
     created_at = Column(
         TIMESTAMP(timezone=True),

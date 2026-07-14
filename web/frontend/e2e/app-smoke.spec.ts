@@ -3,13 +3,50 @@ import { expect, test, type Page, type Route } from '@playwright/test';
 
 const MATCH_ID = '00000000-0000-0000-0000-000000000101';
 const JOB_ID = '00000000-0000-0000-0000-000000000201';
+const ADMIN_ID = '00000000-0000-0000-0000-000000000001';
+const ADMIN_USER = {
+    id: ADMIN_ID,
+    email: 'admin@jobscout.local',
+    name: 'JobScout Admin',
+    picture: null,
+    is_platform_admin: true,
+    data_expires_at: null,
+    session_expires_at: null,
+};
+
+test.use({
+    storageState: {
+        cookies: [],
+        origins: [
+            {
+                origin: 'http://127.0.0.1:4173',
+                localStorage: [
+                    {
+                        name: 'jobscout_auth',
+                        value: JSON.stringify({
+                            user: ADMIN_USER,
+                            token: 'jobscout-e2e-admin-token',
+                            expires_at: Date.now() + 60 * 60 * 1000,
+                        }),
+                    },
+                ],
+            },
+        ],
+    },
+});
 
 const policy = {
     min_fit: 55,
     top_k: 50,
     min_jd_required_coverage: null,
+    active_default_mode: 'balanced',
+    balanced_w_pref: 0.6,
+    balanced_w_fit: 0.4,
     llm_judge_enabled: true,
+    llm_judge_auto_enqueue_enabled: true,
     llm_judge_top_n: 5,
+    llm_judge_top_n_max: 10,
+    llm_judge_available: true,
 };
 
 const stats = {
@@ -69,6 +106,9 @@ async function mockApi(page: Page) {
         const url = new URL(request.url());
         const path = url.pathname;
 
+        if (path === '/api/cloud/auth/me') {
+            return fulfillJson(route, ADMIN_USER);
+        }
         if (path === `/api/matches/${MATCH_ID}`) {
             return fulfillJson(route, {
                 success: true,
@@ -192,9 +232,20 @@ async function mockApi(page: Page) {
         }
         if (path === '/api/v1/candidate-preferences') {
             return fulfillJson(route, {
-                enabled: false,
-                natural_language_wants: '',
-                version: 1,
+                remote_mode: 'remote',
+                target_locations: ['Tokyo'],
+                visa_sponsorship_required: false,
+                salary_min: null,
+                employment_types: ['Full-time'],
+                soft_preferences: 'Small product teams and Python backend work',
+                soft_preference_summary: 'small teams, Python backend',
+                preference_mode: 'semantic_rerank',
+                preference_rerank_top_n: 25,
+                effective_preference_rerank_top_n: 25,
+                preference_rerank_top_n_bounds: { min: 1, max: 100, default: 25 },
+                allowed_preference_modes: ['semantic_rerank', 'llm_judge'],
+                effective_preference_mode: 'semantic_rerank',
+                revision: 1,
             });
         }
         if (path === '/api/v1/notification-settings') {
@@ -237,4 +288,20 @@ test('switches to the job management workspace', async ({ page }) => {
     await expect(page.getByRole('tabpanel', { name: 'Job Management' })).toBeVisible();
     await expect(page.getByText(/source/i).first()).toBeVisible();
     await expectNoSeriousAccessibilityViolations(page);
+});
+
+test('keeps shortlist controls visible and preference ranking in Candidate Preferences', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    const resultPolicy = page.getByTestId('result-policy-panel');
+    await resultPolicy.evaluate((element) => element.scrollIntoView({ block: 'start' }));
+    await expect(resultPolicy).toBeInViewport({ ratio: 1 });
+    await expect(resultPolicy.getByLabel('Default order')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Preferences' }).click();
+
+    const rankingSettings = page.getByTestId('preference-ranking-settings');
+    await expect(rankingSettings).toBeVisible();
+    await expect(rankingSettings.getByLabel('Default order')).toHaveValue('balanced');
+    await expect(rankingSettings.getByText('60% preference · 40% fit')).toBeVisible();
 });

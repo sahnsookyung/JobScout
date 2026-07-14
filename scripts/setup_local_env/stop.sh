@@ -457,7 +457,7 @@ main() {
             # Stop pipeline services via docker compose
             build_compose_args
             docker compose "${COMPOSE_ARGS[@]}" \
-                stop extraction embeddings scorer-matcher notification-worker orchestrator 2>/dev/null || true
+                stop extraction embeddings scorer-matcher notification-worker llm-evaluation-worker orchestrator 2>/dev/null || true
             log_success "Microservices stopped"
         fi
         echo ""

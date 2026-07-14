@@ -243,6 +243,25 @@ def evaluate_resume_eligibility(owner_id: Any) -> ResumeEligibility:
         upload_id = str(latest_upload.id)
         task_id = latest_upload.processing_task_id if isinstance(latest_upload.processing_task_id, str) else None
 
+        if (
+            getattr(latest_upload, "fingerprint_version", RESUME_FINGERPRINT_VERSION)
+            != RESUME_FINGERPRINT_VERSION
+        ):
+            return ResumeEligibility(
+                owner_id=owner_id,
+                can_run=False,
+                processing_status="outdated",
+                message=(
+                    "This resume was processed with an older extraction schema. "
+                    "Re-upload it before running matching."
+                ),
+                retryable=False,
+                upload_id=upload_id,
+                resume_hash=latest_upload.resume_hash,
+                resume_fingerprint=latest_upload.resume_fingerprint,
+                processing_task_id=task_id,
+            )
+
         if latest_upload.status == RESUME_UPLOAD_READY and repo.is_resume_ready(latest_upload.resume_fingerprint):
             return ResumeEligibility(
                 owner_id=owner_id,

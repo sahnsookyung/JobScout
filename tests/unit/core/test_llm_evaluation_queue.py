@@ -98,7 +98,14 @@ def test_custom_job_ids_are_accepted_by_rq():
 def test_enqueue_unique_reuses_active_job():
     queue = _FakeQueue(existing=_ExistingJob("queued"))
 
-    job_id = llm_evaluation_queue._enqueue_unique(queue, "eval-1", None, {})
+    job_id = llm_evaluation_queue._enqueue_unique(
+        queue,
+        "eval-1",
+        None,
+        {},
+        owner_id="owner-1",
+        tenant_id=None,
+    )
 
     assert job_id == "llm-evaluation-eval-1"
     assert queue.enqueued == []
@@ -109,7 +116,14 @@ def test_enqueue_unique_replaces_terminal_job():
     existing = _ExistingJob("finished")
     queue = _FakeQueue(existing=existing)
 
-    job_id = llm_evaluation_queue._enqueue_unique(queue, "eval-2", {"payload": True}, {})
+    job_id = llm_evaluation_queue._enqueue_unique(
+        queue,
+        "eval-2",
+        {"payload": True},
+        {},
+        owner_id="owner-2",
+        tenant_id="tenant-2",
+    )
 
     assert job_id == "llm-evaluation-eval-2"
     assert existing.deleted is True
@@ -124,7 +138,7 @@ def test_process_task_skips_when_row_not_claimed():
         result = llm_evaluation_queue.process_llm_evaluation_task("eval-3")
 
     assert result == "eval-3"
-    claim.assert_called_once_with("eval-3")
+    claim.assert_called_once_with("eval-3", owner_id=None, tenant_id=None)
     session_local.assert_not_called()
 
 
@@ -148,7 +162,12 @@ def test_process_task_marks_claimed_row_retryable_on_unexpected_failure():
 
     db.rollback.assert_called_once()
     db.close.assert_called_once()
-    mark_failure.assert_called_once_with("eval-4", error_code="worker_error")
+    mark_failure.assert_called_once_with(
+        "eval-4",
+        error_code="worker_error",
+        owner_id=None,
+        tenant_id=None,
+    )
 
 
 def test_process_task_raises_to_rq_for_retryable_domain_failure():
@@ -268,6 +287,8 @@ def test_process_task_defers_without_claiming_when_queue_paused():
         "eval-paused",
         {"payload": True},
         {"trimmed": False},
+        None,
+        None,
     )
     assert kwargs["job_id"].startswith("llm-evaluation-paused-eval-paused-")
 
@@ -467,7 +488,14 @@ def test_enqueue_llm_evaluation_normalizes_inputs():
         )
 
     assert job_id == "llm-evaluation-42"
-    enqueue_unique.assert_called_once_with(queue, "42", {"raw": True}, {})
+    enqueue_unique.assert_called_once_with(
+        queue,
+        "42",
+        {"raw": True},
+        {},
+        owner_id=None,
+        tenant_id=None,
+    )
 
 
 def test_check_readiness_pings_redis_and_reports_queue_status():
@@ -655,8 +683,8 @@ def test_enqueue_stale_or_retryable_evaluations_enqueues_each_row(caplog):
     db = Mock()
     execute_result = Mock()
     execute_result.scalars.return_value.all.return_value = [
-        SimpleNamespace(id="eval-1"),
-        SimpleNamespace(id="eval-2"),
+        SimpleNamespace(id="eval-1", owner_id="owner-1", tenant_id="tenant-1"),
+        SimpleNamespace(id="eval-2", owner_id="owner-2", tenant_id=None),
     ]
     db.execute.return_value = execute_result
 
@@ -693,11 +721,26 @@ def test_enqueue_stale_or_retryable_evaluations_paginates_large_backlog():
     first_created = datetime(2026, 7, 6, 1, tzinfo=timezone.utc)
     second_created = datetime(2026, 7, 6, 2, tzinfo=timezone.utc)
     rows_page_1 = [
-        SimpleNamespace(id=uuid.uuid4(), created_at=first_created),
-        SimpleNamespace(id=uuid.uuid4(), created_at=second_created),
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            created_at=first_created,
+            owner_id="owner-1",
+            tenant_id="tenant-1",
+        ),
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            created_at=second_created,
+            owner_id="owner-2",
+            tenant_id=None,
+        ),
     ]
     rows_page_2 = [
-        SimpleNamespace(id=uuid.uuid4(), created_at=datetime(2026, 7, 6, 3, tzinfo=timezone.utc)),
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            created_at=datetime(2026, 7, 6, 3, tzinfo=timezone.utc),
+            owner_id="owner-3",
+            tenant_id="tenant-3",
+        ),
     ]
     db1 = Mock()
     db2 = Mock()

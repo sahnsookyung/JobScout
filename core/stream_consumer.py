@@ -34,6 +34,7 @@ import threading
 from typing import Optional
 
 from core.redis_streams import read_stream, ack_message, publish_completion
+from database.database import worker_database_context
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +184,11 @@ class StreamConsumer:
                 msg_id, msg = result
                 self.message_count += 1
 
-                success = await self._process_message(msg_id, msg)
+                with worker_database_context(
+                    user_id=msg.get("owner_id"),
+                    tenant_id=msg.get("tenant_id"),
+                ):
+                    success = await self._process_message(msg_id, msg)
                 if not success:
                     self.error_count += 1
 

@@ -220,9 +220,19 @@ class ResumeRepository(BaseRepository):
         state = self.get_resume_processing_state(resume_fingerprint)
         if not state or state.processing_status != RESUME_PROCESSING_READY:
             return False
+        if (
+            getattr(state, "fingerprint_version", RESUME_FINGERPRINT_VERSION)
+            != RESUME_FINGERPRINT_VERSION
+        ):
+            return False
 
         structured = self.get_structured_resume_by_fingerprint(resume_fingerprint)
         if structured is None:
+            return False
+        if (
+            getattr(structured, "fingerprint_version", RESUME_FINGERPRINT_VERSION)
+            != RESUME_FINGERPRINT_VERSION
+        ):
             return False
 
         summary_embedding = self.get_resume_summary_embedding(resume_fingerprint)
@@ -243,13 +253,19 @@ class ResumeRepository(BaseRepository):
 
     def get_latest_ready_resume_fingerprint(self) -> Optional[str]:
         stmt = select(ResumeProcessingState).where(
-            ResumeProcessingState.processing_status == RESUME_PROCESSING_READY
+            ResumeProcessingState.processing_status == RESUME_PROCESSING_READY,
+            ResumeProcessingState.fingerprint_version == RESUME_FINGERPRINT_VERSION,
         ).order_by(
             ResumeProcessingState.embedding_completed_at.desc().nullslast(),
             ResumeProcessingState.updated_at.desc(),
         )
 
         for state in self.db.execute(stmt).scalars():
+            if (
+                getattr(state, "fingerprint_version", RESUME_FINGERPRINT_VERSION)
+                != RESUME_FINGERPRINT_VERSION
+            ):
+                continue
             if self.is_resume_ready(state.resume_fingerprint):
                 return state.resume_fingerprint
         return None

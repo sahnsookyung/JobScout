@@ -864,6 +864,8 @@ export interface CloudUser {
     provider: string;
     token_kind: string;
     session_expires_at?: number | null;
+    is_platform_admin?: boolean;
+    data_expires_at?: string | null;
 }
 
 export interface CloudTenant {
@@ -1097,15 +1099,42 @@ export interface ResumeVariantClaim {
 }
 
 export interface ResumeVariantExperience {
+    entry_id?: string | null;
     title?: string | null;
     company?: string | null;
+    start_date?: string | null;
+    end_date?: string | null;
     bullets?: ResumeVariantClaim[];
     sources?: Array<Record<string, any>>;
+}
+
+export interface ResumeVariantProject {
+    entry_id?: string | null;
+    name?: string | null;
+    date?: string | null;
+    url?: string | null;
+    technologies?: string[];
+    bullets?: ResumeVariantClaim[];
+}
+
+export interface ResumeVariantEducation {
+    institution?: string | null;
+    degree?: string | null;
+    field_of_study?: string | null;
+    graduation_year?: number | null;
+    details?: ResumeVariantClaim[];
 }
 
 export interface ResumeVariantContent {
     template_key?: string;
     tone?: string;
+    contact?: {
+        name?: string | null;
+        email?: string | null;
+        phone?: string | null;
+        location?: string | null;
+        links?: string[];
+    };
     job?: {
         title?: string | null;
         company?: string | null;
@@ -1114,7 +1143,27 @@ export interface ResumeVariantContent {
     targeted_evidence?: ResumeVariantClaim[];
     skills?: ResumeVariantClaim[];
     experience?: ResumeVariantExperience[];
+    projects?: ResumeVariantProject[];
+    education?: ResumeVariantEducation[];
+    certifications?: Array<{
+        name?: string | null;
+        issuer?: string | null;
+        issued_year?: number | null;
+        expires_year?: number | null;
+    }>;
+    languages?: Array<{
+        language?: string | null;
+        proficiency?: string | null;
+    }>;
     gaps?: ResumeVariantClaim[];
+    generation?: {
+        tailored?: boolean;
+        provider?: string;
+        model?: string;
+        prompt_version?: string;
+        applied_claim_count?: number;
+        rejected_claim_count?: number;
+    };
     source_quality?: {
         job_description_completeness?: string | null;
         job_description_source?: string | null;

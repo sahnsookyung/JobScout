@@ -3,6 +3,7 @@ import uuid
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Column,
     Enum,
     ForeignKey,
@@ -32,6 +33,21 @@ class User(Base):
     display_name = Column(Text)
     email_verified_at = Column(TIMESTAMP(timezone=True))
     is_active = Column(Boolean, nullable=False, default=True)
+    last_login_at = Column(TIMESTAMP(timezone=True))
+    data_expires_at = Column(TIMESTAMP(timezone=True))
+    deletion_started_at = Column(TIMESTAMP(timezone=True))
+    is_platform_admin = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=sql_text("FALSE"),
+    )
+    retention_exempt = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=sql_text("FALSE"),
+    )
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
 
     files = relationship("UserFile", back_populates="owner", cascade=CASCADE_DELETE_ORPHAN)
@@ -43,6 +59,28 @@ class User(Base):
 
     __table_args__ = (
         Index('idx_users_email', 'email'),
+        Index(
+            'uq_users_single_platform_admin',
+            'is_platform_admin',
+            unique=True,
+            postgresql_where=sql_text("is_platform_admin"),
+        ),
+        Index(
+            'idx_users_ephemeral_expiry',
+            'data_expires_at',
+            postgresql_where=sql_text(
+                "NOT retention_exempt AND deletion_started_at IS NULL"
+            ),
+        ),
+        Index(
+            'idx_users_deletion_started',
+            'deletion_started_at',
+            postgresql_where=sql_text("NOT retention_exempt"),
+        ),
+        CheckConstraint(
+            "NOT is_platform_admin OR retention_exempt",
+            name="ck_users_platform_admin_retention_exempt",
+        ),
     )
 
 

@@ -17,6 +17,7 @@ from core.llm_evaluation import (
     evaluation_public_dict,
 )
 from core.llm_evaluation_queue import enqueue_llm_evaluation
+from core.public_concurrency import PublicTaskAlreadyRunning
 from core.metrics import record_match_query_payload_bytes
 from ..dependencies import TenantContext, get_current_user, get_db, get_tenant_context
 from ..exceptions import InvalidMatchOperationException
@@ -43,12 +44,20 @@ router = APIRouter(prefix="/api/matches", tags=["matches"])
 DbSession = Annotated[Session, Depends(get_db)]
 
 
+def _bind_public_operation_lease(request: Request, task_id: object) -> None:
+    binder = getattr(request.state, "bind_public_operation_lease", None)
+    if callable(binder):
+        binder(str(task_id))
+
+
 def _run_match_llm_evaluation_background(
     evaluation_id: str,
     provider_payload: dict | None,
     truncation: dict | None,
     *,
     enqueue_reason: str | None = None,
+    owner_id: object | None = None,
+    tenant_id: object | None = None,
 ) -> str:
     """Compatibility hook that now enqueues durable RQ work."""
     return enqueue_llm_evaluation(
@@ -56,6 +65,8 @@ def _run_match_llm_evaluation_background(
         provider_payload=provider_payload,
         truncation=truncation or {},
         enqueue_reason=enqueue_reason,
+        owner_id=owner_id,
+        tenant_id=tenant_id,
     )
 
 
@@ -208,7 +219,7 @@ def get_matches(
             tier = "primary"
 
     policy_service = get_policy_service()
-    current_policy = policy_service.get_current_policy()
+    current_policy = policy_service.get_current_policy(getattr(user, "id", None))
 
     effective_top_k = top_k
     if effective_top_k is None and tier == "primary":
@@ -491,13 +502,18 @@ def generate_match_llm_evaluation(
                 getattr(result, "provider_payload", None) or {},
                 getattr(result, "truncation", None) or {},
                 enqueue_reason="manual",
+                owner_id=getattr(user, "id", None),
+                tenant_id=tenant_context.tenant_id,
             )
         except Exception as exc:
             logger.exception("Failed to enqueue LLM evaluation %s", result.evaluation.id)
+            if isinstance(exc, PublicTaskAlreadyRunning):
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
             raise HTTPException(
                 status_code=503,
                 detail=_llm_evaluation_queue_unavailable_detail(exc),
             ) from exc
+        _bind_public_operation_lease(request, result.evaluation.id)
 
     return MatchLlmEvaluationMutationResponse(
         success=True,
@@ -548,13 +564,18 @@ def retry_match_llm_evaluation(
             None,
             None,
             enqueue_reason="retry_now",
+            owner_id=getattr(user, "id", None),
+            tenant_id=tenant_context.tenant_id,
         )
     except Exception as exc:
         logger.exception("Failed to enqueue LLM evaluation retry %s", result.evaluation.id)
+        if isinstance(exc, PublicTaskAlreadyRunning):
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         raise HTTPException(
             status_code=503,
             detail=_llm_evaluation_queue_unavailable_detail(exc),
         ) from exc
+    _bind_public_operation_lease(request, result.evaluation.id)
 
     return MatchLlmEvaluationMutationResponse(
         success=True,

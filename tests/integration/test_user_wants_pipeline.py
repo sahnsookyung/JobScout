@@ -34,7 +34,8 @@ def candidate_preferences_env(test_db_url, monkeypatch):
     from tests.mocks.fake_service import FakeLLMService
     from services.scorer_matcher.preference_semantics import LLMPreferenceParser
     
-    def fake_build_parser(config):
+    def fake_build_parser(config, provider_route=None):
+        del config, provider_route
         return LLMPreferenceParser(FakeLLMService())
     
     monkeypatch.setattr(

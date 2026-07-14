@@ -30,6 +30,7 @@ def _malicious_content() -> dict:
 
 def _complete_content() -> dict:
     return {
+        "contact": {"name": "Ada Engineer", "email": "ada@example.com", "location": "Tokyo"},
         "job": {"title": "Platform Engineer"},
         "summary": [{"text": "Ships reliable APIs\x00"}],
         "targeted_evidence": [{"text": "Cut incident response time"}],
@@ -43,6 +44,24 @@ def _complete_content() -> dict:
             "ignored",
             {"title": "", "company": "No Heading", "bullets": [{"text": "Kept services healthy"}]},
         ],
+        "projects": [
+            {
+                "name": "Reliability Toolkit",
+                "technologies": ["Python", "Postgres"],
+                "bullets": [{"text": "Automated incident triage"}],
+            }
+        ],
+        "education": [
+            {
+                "degree": "BSc",
+                "field_of_study": "Computer Science",
+                "institution": "Example University",
+                "graduation_year": 2020,
+                "details": [],
+            }
+        ],
+        "certifications": [{"name": "Cloud Architect", "issuer": "Example", "issued_year": 2024}],
+        "languages": [{"language": "Japanese", "proficiency": "Professional"}],
     }
 
 
@@ -87,12 +106,16 @@ def test_renderers_include_all_resume_sections() -> None:
     html = renderer.render_html(_complete_content()).decode("utf-8")
     docx = renderer.render_docx(_complete_content())
 
-    assert "# Resume draft for Platform Engineer" in markdown
-    assert "## Targeted evidence" in markdown
+    assert "# Ada Engineer" in markdown
+    assert "ada@example.com | Tokyo" in markdown
+    assert "## Professional Summary" in markdown
+    assert "## Targeted evidence" not in markdown
     assert "## Skills" in markdown
     assert "### Senior Engineer - Acme" in markdown
     assert "- Led migration" in markdown
-    assert "<h2>Targeted evidence</h2><ul>" in html
+    assert "## Projects" in markdown
+    assert "## Education" in markdown
+    assert "<h2>Professional Summary</h2>" in html
     assert "<h2>Skills</h2><p>Python, Postgres</p>" in html
     assert "<h3>Senior Engineer - Acme</h3>" in html
     with ZipFile(BytesIO(docx)) as package:
@@ -105,7 +128,7 @@ def test_renderer_uses_target_role_fallback_and_bounds_output() -> None:
 
     markdown = renderer.render_markdown({"job": None}).decode("utf-8")
 
-    assert "target role" in markdown
+    assert markdown.startswith("# Resume")
     with pytest.raises(ValueError, match="size limit"):
         renderer.render_markdown({"summary": [{"text": "x" * (MAX_RENDERED_BYTES + 1)}]})
 

@@ -43,10 +43,46 @@ function makeVariant(overrides: Partial<ResumeVariant> = {}): ResumeVariant {
         generation_mode: 'deterministic',
         created_at: '2026-05-24T00:00:00Z',
         content: {
+            contact: {
+                name: 'Ada Engineer',
+                email: 'ada@example.com',
+                location: 'Tokyo',
+                links: ['https://example.com/ada'],
+            },
             summary: [{ text: 'Backend engineer with Python and Redis experience.' }],
             targeted_evidence: [{ text: 'Built FastAPI services with Redis queues.' }],
             skills: [{ text: 'Python' }, { text: 'Redis' }],
-            experience: [],
+            experience: [
+                {
+                    entry_id: 'experience-0',
+                    title: 'Backend Engineer',
+                    company: 'ExampleCo',
+                    start_date: '2022',
+                    end_date: 'Present',
+                    bullets: [{ text: 'Reduced API latency by 30% using Python.' }],
+                },
+            ],
+            projects: [
+                {
+                    entry_id: 'project-0',
+                    name: 'Queue Monitor',
+                    technologies: ['Python', 'Redis'],
+                    bullets: [{ text: 'Built queue monitoring dashboards.' }],
+                },
+            ],
+            education: [
+                {
+                    degree: 'BSc',
+                    field_of_study: 'Computer Science',
+                    institution: 'Example University',
+                    graduation_year: 2020,
+                },
+            ],
+            generation: {
+                tailored: true,
+                provider: 'nvidia',
+                model: 'mistralai/mistral-medium-3.5-128b',
+            },
             gaps: [{ text: 'Kubernetes leadership' }],
             source_quality: {
                 job_description_completeness: 'full',
@@ -97,6 +133,11 @@ describe('ResumeVariantPanel', () => {
             });
         });
         expect(screen.getByText('Backend engineer with Python and Redis experience.')).toBeInTheDocument();
+        expect(screen.getByText('Ada Engineer')).toBeInTheDocument();
+        expect(screen.getByText('Backend Engineer — ExampleCo')).toBeInTheDocument();
+        expect(screen.getByText('Reduced API latency by 30% using Python.')).toBeInTheDocument();
+        expect(screen.getByText('Queue Monitor')).toBeInTheDocument();
+        expect(screen.getByText(/Tailored by nvidia/)).toBeInTheDocument();
         expect(screen.getByText(/4 sourced claims from structured_resume, job_match_requirement/i)).toBeInTheDocument();
         expect(screen.getByText('Not claimed')).toBeInTheDocument();
         expect(screen.getByText('Kubernetes leadership')).toBeInTheDocument();
@@ -128,7 +169,6 @@ describe('ResumeVariantPanel', () => {
         fireEvent.click(screen.getByRole('button', { name: /generate draft/i }));
 
         expect(await screen.findByText('No summary text generated.')).toBeInTheDocument();
-        expect(screen.getByText('No targeted evidence generated.')).toBeInTheDocument();
         expect(screen.getByText('Sourced claims')).toBeInTheDocument();
         expect(screen.getByText('Current draft reused.')).toBeInTheDocument();
         expect(screen.getByRole('button', { name: /download markdown/i })).toBeInTheDocument();

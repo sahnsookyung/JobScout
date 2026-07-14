@@ -646,6 +646,7 @@ class TestPipelineCoveragePushHelpers:
             "task-1",
             upload_id="upload-1",
             owner_id="owner-1",
+            tenant_id=None,
             resume_fingerprint="fp-1",
             mode="embed_only",
         )
@@ -665,7 +666,46 @@ class TestPipelineCoveragePushHelpers:
             resume_hash="hash-1",
             resume_fingerprint="fp-1",
             trigger="resume_retry_ready",
+            tenant_id=None,
         )
+
+    def test_resume_ready_releases_upload_before_enqueuing_matching(self):
+        from web.backend.routers import pipeline
+
+        events: list[tuple[str, object]] = []
+
+        def _set_state(_task_id, state, **_kwargs):
+            events.append(("state", state.get("matching_task_id")))
+
+        def _enqueue(**_kwargs):
+            events.append(("enqueue", None))
+            return "matching-task"
+
+        with patch(
+            "web.backend.routers.pipeline.get_task_state",
+            return_value={"started_at": "start"},
+        ), patch(
+            "web.backend.routers.pipeline.set_task_state",
+            side_effect=_set_state,
+        ), patch(
+            "web.backend.routers.pipeline._enqueue_matching_for_ready_resume",
+            side_effect=_enqueue,
+        ):
+            result = pipeline._write_resume_ready_state(
+                task_id="upload-task",
+                upload_id="upload-1",
+                owner_id="owner-1",
+                resume_hash="hash-1",
+                resume_fingerprint="fp-1",
+                trigger="resume_upload_ready",
+            )
+
+        assert result == "matching-task"
+        assert events == [
+            ("state", None),
+            ("enqueue", None),
+            ("state", "matching-task"),
+        ]
 
     def test_retry_resume_background_writes_failure_for_failed_retry(self):
         from web.backend.routers import pipeline

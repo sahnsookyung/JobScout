@@ -9,11 +9,13 @@ from core.resume_selection import (
     resolve_owner_id,
     serialize_owner_id,
 )
+from database.models import RESUME_FINGERPRINT_VERSION, generate_resume_fingerprint
 
 
 def test_resolve_owner_id_reads_authenticated_user():
     user = SimpleNamespace(id=UUID("00000000-0000-0000-0000-000000000001"))
     assert resolve_owner_id(user) == user.id
+
 
 def test_resolve_owner_id_rejects_missing_user_id():
     user = SimpleNamespace()
@@ -24,9 +26,27 @@ def test_resolve_owner_id_rejects_missing_user_id():
     else:
         raise AssertionError("Expected ValueError for missing user id")
 
+
 def test_serialize_owner_id_returns_string():
     owner_id = UUID("00000000-0000-0000-0000-000000000001")
     assert serialize_owner_id(owner_id) == str(owner_id)
+
+
+def test_current_fingerprint_version_invalidates_pre_contact_extractions():
+    owner_id = UUID("00000000-0000-0000-0000-000000000001")
+    resume_hash = "same-resume-bytes"
+
+    assert RESUME_FINGERPRINT_VERSION == 2
+    assert build_resume_fingerprint(owner_id, resume_hash) == generate_resume_fingerprint(
+        owner_id,
+        resume_hash,
+        version=2,
+    )
+    assert build_resume_fingerprint(owner_id, resume_hash) != generate_resume_fingerprint(
+        owner_id,
+        resume_hash,
+        version=1,
+    )
 
 
 @patch("core.resume_selection.job_uow")
@@ -91,6 +111,7 @@ def test_evaluate_resume_preflight_returns_ready_for_known_resume(mock_uow):
     assert result.can_skip_upload is True
     assert result.resume_fingerprint == owned_fingerprint
 
+
 @patch("core.resume_selection.job_uow")
 def test_evaluate_resume_preflight_returns_processing_existing_for_pending_upload(mock_uow):
     repo = MagicMock()
@@ -109,6 +130,7 @@ def test_evaluate_resume_preflight_returns_processing_existing_for_pending_uploa
     assert result.status == "processing_existing"
     assert result.processing_task_id == "task-1"
     assert result.can_skip_upload is True
+
 
 @patch("core.resume_selection.job_uow")
 def test_evaluate_resume_preflight_returns_retryable_failure_for_upload(mock_uow):
@@ -130,6 +152,7 @@ def test_evaluate_resume_preflight_returns_retryable_failure_for_upload(mock_uow
     assert result.status == "failed_retryable"
     assert result.retryable is True
     assert result.message == "Retry me"
+
 
 @patch("core.resume_selection.job_uow")
 def test_evaluate_resume_preflight_returns_reupload_required_for_upload(mock_uow):
@@ -153,6 +176,7 @@ def test_evaluate_resume_preflight_returns_reupload_required_for_upload(mock_uow
     assert result.can_skip_upload is False
     assert result.message == "Need new upload"
 
+
 @patch("core.resume_selection.job_uow")
 def test_evaluate_resume_preflight_falls_back_to_processing_state(mock_uow):
     repo = MagicMock()
@@ -170,6 +194,7 @@ def test_evaluate_resume_preflight_falls_back_to_processing_state(mock_uow):
 
     assert result.status == "processing_existing"
     assert result.message == "Still embedding"
+
 
 @patch("core.resume_selection.job_uow")
 def test_evaluate_resume_preflight_uses_failed_processing_state_retryable_flag(mock_uow):
@@ -191,6 +216,7 @@ def test_evaluate_resume_preflight_uses_failed_processing_state_retryable_flag(m
     assert result.status == "failed_reupload_required"
     assert result.can_skip_upload is False
 
+
 @patch("core.resume_selection.job_uow")
 def test_evaluate_resume_preflight_returns_upload_required_when_unknown(mock_uow):
     repo = MagicMock()
@@ -205,6 +231,7 @@ def test_evaluate_resume_preflight_returns_upload_required_when_unknown(mock_uow
 
     assert result.status == "upload_required"
     assert result.can_skip_upload is False
+
 
 @patch("core.resume_selection.job_uow")
 def test_evaluate_resume_eligibility_returns_ready_when_latest_upload_ready(mock_uow):
@@ -227,6 +254,31 @@ def test_evaluate_resume_eligibility_returns_ready_when_latest_upload_ready(mock
     assert result.processing_status == "ready"
     assert result.processing_task_id is None
 
+
+@patch("core.resume_selection.job_uow")
+def test_evaluate_resume_eligibility_rejects_outdated_ready_upload(mock_uow):
+    repo = MagicMock()
+    repo.get_latest_resume_upload.return_value = SimpleNamespace(
+        id="upload-v1",
+        resume_hash="hash-v1",
+        resume_fingerprint="fp-v1",
+        fingerprint_version=RESUME_FINGERPRINT_VERSION - 1,
+        status="ready",
+        processing_task_id=None,
+    )
+    mock_uow.return_value.__enter__ = MagicMock(return_value=repo)
+    mock_uow.return_value.__exit__ = MagicMock(return_value=False)
+
+    owner_id = UUID("00000000-0000-0000-0000-000000000001")
+    result = evaluate_resume_eligibility(owner_id)
+
+    assert result.can_run is False
+    assert result.processing_status == "outdated"
+    assert result.retryable is False
+    assert "Re-upload" in result.message
+    repo.is_resume_ready.assert_not_called()
+
+
 @patch("core.resume_selection.job_uow")
 def test_evaluate_resume_eligibility_uses_default_processing_message(mock_uow):
     repo = MagicMock()
@@ -246,6 +298,7 @@ def test_evaluate_resume_eligibility_uses_default_processing_message(mock_uow):
 
     assert result.processing_status == "processing"
     assert "still processing" in result.message
+
 
 @patch("core.resume_selection.job_uow")
 def test_evaluate_resume_eligibility_returns_failed_latest_upload(mock_uow):
@@ -270,6 +323,7 @@ def test_evaluate_resume_eligibility_returns_failed_latest_upload(mock_uow):
     assert result.processing_status == "failed_retryable"
     assert result.message == "Retry later"
     assert result.retryable is True
+
 
 @patch("core.resume_selection.job_uow")
 def test_evaluate_resume_eligibility_returns_fallback_for_unready_status(mock_uow):

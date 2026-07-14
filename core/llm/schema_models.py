@@ -8,8 +8,8 @@ This module provides:
 
 All schemas follow OpenAI's structured output requirements with strict validation.
 """
-from typing import List, Optional, Literal
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Any, List, Optional, Literal
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 
 # ============================================================================
@@ -158,10 +158,43 @@ class Summary(BaseModel):
     )
 
 
+class ResumeContact(BaseModel):
+    """Candidate identity and contact details explicitly present in the resume."""
+    model_config = ConfigDict(extra='forbid')
+
+    name: Optional[str] = Field(description="Candidate name")
+    email: Optional[str] = Field(description="Candidate email address")
+    phone: Optional[str] = Field(description="Candidate phone number")
+    location: Optional[str] = Field(description="Candidate location")
+    linkedin_url: Optional[str] = Field(description="LinkedIn profile URL")
+    portfolio_url: Optional[str] = Field(description="Portfolio or personal website URL")
+    links: List[str] = Field(description="Other professional profile URLs")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _backfill_legacy_contact(cls, value: Any) -> Any:
+        """Accept old stored profiles while keeping the output schema strict."""
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        for field_name in (
+            "name",
+            "email",
+            "phone",
+            "location",
+            "linkedin_url",
+            "portfolio_url",
+        ):
+            normalized.setdefault(field_name, None)
+        normalized.setdefault("links", [])
+        return normalized
+
+
 class Profile(BaseModel):
     """Complete profile extracted from resume."""
     model_config = ConfigDict(extra='forbid')
     
+    contact: ResumeContact = Field(description="Candidate identity and contact details")
     summary: Summary = Field(description="Professional summary and claimed experience")
     experience: List[ExperienceItem] = Field(description="Work experience history")
     projects: Projects = Field(description="Notable projects")
@@ -200,7 +233,7 @@ class ResumeSchema(BaseModel):
 
 # Generate OpenAI-compatible schema
 RESUME_SCHEMA = {
-    "name": "resume_schema_v1.0",
+    "name": "resume_schema_v2.0",
     "strict": True,
     "schema": ResumeSchema.model_json_schema()
 }

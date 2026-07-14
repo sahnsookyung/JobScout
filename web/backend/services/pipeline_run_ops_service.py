@@ -70,6 +70,7 @@ class PipelineRunOpsService:
         self,
         db: Session,
         *,
+        owner_id: Any,
         tenant_id: Any,
         run_id: str,
     ) -> PipelineRun | None:
@@ -79,17 +80,27 @@ class PipelineRunOpsService:
         return db.execute(
             select(PipelineRun)
             .options(selectinload(PipelineRun.stages))
-            .where(PipelineRun.id == lookup_id, _tenant_filter(tenant_id))
+            .where(
+                PipelineRun.id == lookup_id,
+                PipelineRun.owner_id == owner_id,
+                _tenant_filter(tenant_id),
+            )
         ).scalar_one_or_none()
 
     def cancel_run(
         self,
         db: Session,
         *,
+        owner_id: Any,
         tenant_id: Any,
         run_id: str,
     ) -> PipelineRunSummary:
-        run = self.get_run_model(db, tenant_id=tenant_id, run_id=run_id)
+        run = self.get_run_model(
+            db,
+            owner_id=owner_id,
+            tenant_id=tenant_id,
+            run_id=run_id,
+        )
         if run is None:
             raise LookupError("Pipeline run not found")
         if "cancel" not in pipeline_run_allowed_actions(run):
@@ -111,11 +122,17 @@ class PipelineRunOpsService:
         self,
         db: Session,
         *,
+        owner_id: Any,
         tenant_id: Any,
         run_id: str,
         action: str = "requeue",
     ) -> tuple[PipelineRunSummary, str]:
-        source = self.get_run_model(db, tenant_id=tenant_id, run_id=run_id)
+        source = self.get_run_model(
+            db,
+            owner_id=owner_id,
+            tenant_id=tenant_id,
+            run_id=run_id,
+        )
         if source is None:
             raise LookupError("Pipeline run not found")
         if action not in pipeline_run_allowed_actions(source):
@@ -153,6 +170,8 @@ class PipelineRunOpsService:
             "task_id": new_task_id,
             "pipeline_run_id": str(retry_run.id),
             "pipeline_stage_id": str(stage_row.id),
+            "owner_id": str(source.owner_id),
+            "tenant_id": str(source.tenant_id) if source.tenant_id else None,
         }
         if stage in {"extraction", "embedding"}:
             payload["limit"] = _stage_limit(source, stage)
@@ -167,10 +186,17 @@ class PipelineRunOpsService:
         self,
         db: Session,
         *,
+        owner_id: Any,
         tenant_id: Any,
         run_id: str,
     ) -> tuple[PipelineRunSummary, str]:
-        return self.requeue_run(db, tenant_id=tenant_id, run_id=run_id, action="retry")
+        return self.requeue_run(
+            db,
+            owner_id=owner_id,
+            tenant_id=tenant_id,
+            run_id=run_id,
+            action="retry",
+        )
 
     def llm_queue_status(self) -> dict[str, Any]:
         try:

@@ -32,7 +32,7 @@ from core.scorer.persistence import save_match_to_db
 from core.scorer.semantic_fit import get_shared_local_cross_encoder_provider
 from core.llm.interfaces import LLMProvider
 from core.llm.schema_models import ResumeSchema
-from database.models import SYSTEM_OWNER_ID
+from database.models import RESUME_FINGERPRINT_VERSION, SYSTEM_OWNER_ID
 from etl.resume import ResumeProfiler
 from etl.resume.embedding_store import JobRepositoryAdapter
 from database.uow import job_uow
@@ -111,9 +111,14 @@ class MatchingPipelineResult:
     cancelled: bool = False
 
 
-def _resolve_ranking_context() -> RankingContext:
+def _resolve_ranking_context(owner_id: object | None = None) -> RankingContext:
     """Resolve the ranking policy once so ranking and notifications share a snapshot."""
-    ranking_config = get_ranking_policy_store().get_current_config()
+    ranking_store = get_ranking_policy_store()
+    ranking_config = (
+        ranking_store.get_current_config(owner_id)
+        if owner_id is not None
+        else ranking_store.get_current_config()
+    )
     try:
         ranking_mode = RankingMode(ranking_config.active_default_mode)
     except ValueError:
@@ -129,6 +134,19 @@ def _load_resume_from_db(resume_fingerprint: str) -> Optional[dict]:
             structured_resume = repo.resume.get_structured_resume_by_fingerprint(resume_fingerprint)
             if not structured_resume:
                 logger.error("No resume found in DB for fingerprint: %s...", resume_fingerprint[:16])
+                return None
+            if (
+                getattr(
+                    structured_resume,
+                    "fingerprint_version",
+                    RESUME_FINGERPRINT_VERSION,
+                )
+                != RESUME_FINGERPRINT_VERSION
+            ):
+                logger.warning(
+                    "Resume fingerprint %s... uses an outdated extraction schema",
+                    resume_fingerprint[:16],
+                )
                 return None
             if not structured_resume.extracted_data:
                 logger.error("Resume found but no extracted_data for fingerprint: %s...", resume_fingerprint[:16])
@@ -336,6 +354,7 @@ def run_matching_pipeline(
     status_callback: Optional[Callable[[str], None]] = None,
     resume_fingerprint: Optional[str] = None,
     owner_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
     task_id: Optional[str] = None,
 ) -> MatchingPipelineResult:
     """Run the matching pipeline as a self-contained operation.
@@ -382,12 +401,13 @@ def run_matching_pipeline(
         if error_result:
             return error_result
 
-        ranking_context = _resolve_ranking_context()
+        ranking_context = _resolve_ranking_context(owner_id)
 
         # Step 2: Run matching and scoring
         prepared_selection = _run_matching_and_scoring(
             ctx, resume_data, resume_fingerprint, should_re_extract,
             matching_config, stop_event, status_callback, owner_id=owner_id,
+            tenant_id=tenant_id,
             ranking_context=ranking_context,
             task_id=task_id,
             resume_resolution_reason=(
@@ -410,6 +430,7 @@ def run_matching_pipeline(
             matching_config=matching_config,
             prepared_selection=prepared_selection,
             task_id=task_id,
+            tenant_id=tenant_id,
         )
         saved_count = save_batch_result.saved_count
 
@@ -458,6 +479,7 @@ def _save_results_and_publish_selection(
     matching_config,
     prepared_selection: PreparedSelectionResult,
     task_id: Optional[str],
+    tenant_id=None,
 ) -> tuple[SaveMatchesBatchResult, Optional[str]]:
     """Persist the selected match set and publish its immutable run artifact."""
     persist_match_dtos = prepared_selection.persist_match_dtos
@@ -467,6 +489,8 @@ def _save_results_and_publish_selection(
         persist_match_dtos,
         resume_fingerprint,
         matching_config,
+        owner_id=prepared_selection.owner_id or SYSTEM_OWNER_ID,
+        tenant_id=tenant_id,
     )
     if save_batch_result.failed_count > 0:
         logger.warning(
@@ -499,6 +523,7 @@ def _save_results_and_publish_selection(
     _run_llm_judge_for_selection(
         selection_run_id=selection_run_id,
         owner_id=prepared_selection.owner_id,
+        tenant_id=tenant_id,
     )
     return save_batch_result, selection_run_id
 
@@ -507,6 +532,7 @@ def _run_llm_judge_for_selection(
     *,
     selection_run_id: Optional[str],
     owner_id: Optional[str],
+    tenant_id=None,
 ) -> dict[str, int]:
     """Schedule optional match-level LLM judging for the current selected top-N."""
     if not selection_run_id or not owner_id:
@@ -524,7 +550,7 @@ def _run_llm_judge_for_selection(
         scheduled = enqueue_llm_top_n_for_selection(
             selection_run_id=selection_run_id,
             owner_id=owner_id,
-            tenant_id=None,
+            tenant_id=tenant_id,
             top_n=llm_policy.top_n,
             policy_revision=int(getattr(llm_policy, "revision", 0) or 0),
         )
@@ -689,6 +715,7 @@ def _run_vector_matching(
     pre_extracted_resume,
     resume_fingerprint,
     owner_id=None,
+    tenant_id=None,
     exclude_reusable_resume_fingerprint: Optional[str] = None,
 ):
     """Run vector-based job matching."""
@@ -700,12 +727,19 @@ def _run_vector_matching(
         pre_extracted_resume=pre_extracted_resume,
         resume_fingerprint=resume_fingerprint,
         owner_id=owner_id,
+        tenant_id=tenant_id,
         exclude_reusable_resume_fingerprint=exclude_reusable_resume_fingerprint,
     )
     return preliminary_matches
 
 
-def _run_scorer_service(scorer, preliminary_matches, matching_config, stop_event):
+def _run_scorer_service(
+    scorer,
+    preliminary_matches,
+    matching_config,
+    stop_event,
+    owner_id=None,
+):
     """Run rule-based scoring over every preliminary match.
 
     We deliberately widen the scoring pass to include every preliminary match
@@ -716,7 +750,7 @@ def _run_scorer_service(scorer, preliminary_matches, matching_config, stop_event
     canonical selection contract.
     """
     logger.info("=== MATCHING STEP 2: Running ScorerService (Fit-first scoring) ===")
-    result_policy = _resolve_result_policy(matching_config)
+    result_policy = _resolve_result_policy(matching_config, owner_id)
     if result_policy and preliminary_matches:
         widened_top_k = max(
             int(getattr(result_policy, "top_k", len(preliminary_matches)) or len(preliminary_matches)),
@@ -760,7 +794,7 @@ def _prepare_selection_result(
     are tiered as 'excluded' rather than dropped, so stats and the API can
     reconcile with what the user configured.
     """
-    result_policy = _resolve_result_policy(matching_config)
+    result_policy = _resolve_result_policy(matching_config, owner_id)
     fit_floor_used = float(getattr(result_policy, "min_fit", 0.0) or 0.0)
     required_coverage_floor_used = getattr(
         result_policy,
@@ -803,11 +837,16 @@ def _resolve_preference_provider_route(ctx: AppContext):
     return getattr(llm_judge, "runtime", None)
 
 
-def _resolve_result_policy(matching_config):
+def _resolve_result_policy(matching_config, owner_id=None):
     """Resolve the active result policy from the shared store with config fallback."""
     fallback_policy = getattr(matching_config, "result_policy", None)
     try:
-        return get_result_policy_store().get_current_policy()
+        policy_store = get_result_policy_store()
+        return (
+            policy_store.get_current_policy(owner_id)
+            if owner_id is not None
+            else policy_store.get_current_policy()
+        )
     except Exception:
         logger.warning("Falling back to configured result policy", exc_info=True)
         return fallback_policy
@@ -852,6 +891,7 @@ def _run_preliminary_matching(
     should_re_extract: bool,
     resume_fingerprint: str,
     owner_id=None,
+    tenant_id=None,
     exclude_reusable_resume_fingerprint: Optional[str] = None,
 ):
     """Run vector matching and log its completion timing."""
@@ -868,6 +908,7 @@ def _run_preliminary_matching(
         pre_extracted_resume,
         resume_fingerprint,
         owner_id=owner_id,
+        tenant_id=tenant_id,
         exclude_reusable_resume_fingerprint=exclude_reusable_resume_fingerprint,
     )
 
@@ -996,12 +1037,13 @@ def _run_matching_and_scoring(
     status_callback: Optional[Callable[[str], None]],
     ranking_context: RankingContext | None = None,
     owner_id: Optional[str] = None,
+    tenant_id=None,
     task_id: Optional[str] = None,
     resume_resolution_reason: str = "latest_ready_resume",
 ) -> PreparedSelectionResult:
     """Run the matching and scoring pipeline within a UOW context."""
     if ranking_context is None:
-        ranking_context = _resolve_ranking_context()
+        ranking_context = _resolve_ranking_context(owner_id)
 
     if status_callback:
         status_callback("loading_resume")
@@ -1043,7 +1085,7 @@ def _run_matching_and_scoring(
             reusable_match_dtos = _load_reusable_match_dtos(
                 repo,
                 resume_fingerprint,
-                tenant_id=None,
+                tenant_id=tenant_id,
                 candidate_preferences=candidate_preferences,
             )
             reusable_match_ids_by_job_id = {
@@ -1053,7 +1095,7 @@ def _run_matching_and_scoring(
             }
             matching_backlog_remaining = repo.count_pending_matching_jobs(
                 resume_fingerprint,
-                tenant_id=None,
+                tenant_id=tenant_id,
                 candidate_preferences=candidate_preferences,
             )
 
@@ -1067,6 +1109,7 @@ def _run_matching_and_scoring(
             should_re_extract,
             resume_fingerprint,
             owner_id=resolved_owner_id,
+            tenant_id=tenant_id,
             exclude_reusable_resume_fingerprint=(
                 None if recalculate_existing else resume_fingerprint
             ),
@@ -1094,7 +1137,11 @@ def _run_matching_and_scoring(
             ai_service=_resolve_pipeline_ai_service(ctx),
         )
         scored_matches = _run_scorer_service(
-            scorer, preliminary_matches, matching_config, stop_event,
+            scorer,
+            preliminary_matches,
+            matching_config,
+            stop_event,
+            owner_id=resolved_owner_id,
         )
         scored_match_dtos = _convert_matches_to_dtos(scored_matches)
         selection_candidates = reusable_match_dtos + scored_match_dtos
@@ -1431,6 +1478,9 @@ def _save_matches_batch(
     scored_match_dtos: List[MatchResultDTO],
     resume_fingerprint: str,
     matching_config,
+    *,
+    owner_id: str = SYSTEM_OWNER_ID,
+    tenant_id=None,
 ) -> SaveMatchesBatchResult:
     """Save matches to database with per-match transactions."""
     saved_count = 0
@@ -1440,7 +1490,11 @@ def _save_matches_batch(
     for dto in scored_match_dtos:
         try:
             with job_uow() as repo:
-                existing = repo.get_existing_match(dto.job.id, resume_fingerprint)
+                existing = repo.get_existing_match(
+                    dto.job.id,
+                    resume_fingerprint,
+                    owner_id=owner_id,
+                )
 
                 if existing and existing.status == 'active':
                     if existing.job_content_hash != dto.job.content_hash:
@@ -1451,6 +1505,8 @@ def _save_matches_batch(
                             scored_match=dto,
                             repo=repo,
                             is_stale_replacement=True,
+                            owner_id=owner_id,
+                            tenant_id=tenant_id,
                         )
                         saved_count += 1
                         active_job_ids.add(str(dto.job.id))
@@ -1490,6 +1546,8 @@ def _save_matches_batch(
                     scored_match=dto,
                     repo=repo,
                     is_stale_replacement=False,
+                    owner_id=owner_id,
+                    tenant_id=tenant_id,
                 )
                 saved_count += 1
                 active_job_ids.add(str(dto.job.id))

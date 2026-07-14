@@ -16,7 +16,7 @@ from sqlalchemy import and_, func, or_, select, update
 
 from core.config_loader import load_config
 from core.llm_evaluation import MatchLlmEvaluationService
-from database.database import SessionLocal
+from database.database import SessionLocal, worker_database_context
 from database.models import (
     LLM_EVALUATION_FAILED,
     LLM_EVALUATION_PENDING,
@@ -43,6 +43,7 @@ _ZERO_LLM_ENQUEUE_STATS = {
     "enqueued": 0,
     "failed": 0,
 }
+USER_TASK_INDEX_PREFIX = "jobscout-cloud:user-tasks"
 
 
 class RetryableLlmEvaluationError(RuntimeError):
@@ -95,6 +96,20 @@ def _queue() -> Queue:
     return Queue(LLM_EVALUATION_QUEUE, connection=_redis_conn())
 
 
+def _release_public_task_slot_safely(task_id: Any, connection: Redis | None = None) -> None:
+    from core.public_concurrency import (
+        public_task_concurrency_enabled,
+        release_public_task_slot,
+    )
+
+    if not public_task_concurrency_enabled():
+        return
+    try:
+        release_public_task_slot(connection or _redis_conn(), task_id)
+    except Exception:
+        logger.exception("Could not release public LLM task slot for %s", task_id)
+
+
 def _job_id(evaluation_id: Any) -> str:
     return f"llm-evaluation-{_job_component(evaluation_id)}"
 
@@ -132,28 +147,66 @@ def _enqueue_unique(
     evaluation_id: str,
     provider_payload: dict[str, Any] | None,
     truncation: dict[str, Any],
+    *,
+    owner_id: Any | None,
+    tenant_id: Any | None,
 ) -> str:
     job_id = _job_id(evaluation_id)
-    existing = queue.fetch_job(job_id)
-    if existing is not None:
-        raw_status = existing.get_status(refresh=True)
-        status = getattr(raw_status, "value", raw_status)
-        if status in _ACTIVE_RQ_STATUSES:
-            return job_id
-        existing.delete()
+    from core.public_concurrency import acquire_public_task_slot
 
-    job = queue.enqueue(
-        process_llm_evaluation_task,
-        evaluation_id,
-        provider_payload,
-        truncation,
-        retry=_retry_policy(),
-        job_timeout=LLM_EVALUATION_JOB_TIMEOUT,
-        result_ttl=LLM_EVALUATION_RESULT_TTL_SECONDS,
-        failure_ttl=LLM_EVALUATION_FAILURE_TTL_SECONDS,
-        job_id=job_id,
+    concurrency_state = acquire_public_task_slot(
+        queue.connection,
+        task_id=evaluation_id,
+        owner_id=owner_id,
     )
+    try:
+        existing = queue.fetch_job(job_id)
+        if existing is not None:
+            raw_status = existing.get_status(refresh=True)
+            status = getattr(raw_status, "value", raw_status)
+            if status in _ACTIVE_RQ_STATUSES:
+                _index_user_task(queue, owner_id=owner_id, job_id=job_id)
+                return job_id
+            existing.delete()
+
+        job = queue.enqueue(
+            process_llm_evaluation_task,
+            evaluation_id,
+            provider_payload,
+            truncation,
+            str(owner_id) if owner_id is not None else None,
+            str(tenant_id) if tenant_id is not None else None,
+            retry=_retry_policy(),
+            job_timeout=LLM_EVALUATION_JOB_TIMEOUT,
+            result_ttl=LLM_EVALUATION_RESULT_TTL_SECONDS,
+            failure_ttl=LLM_EVALUATION_FAILURE_TTL_SECONDS,
+            job_id=job_id,
+        )
+        _index_user_task(queue, owner_id=owner_id, job_id=str(job.id))
+    except Exception:
+        if concurrency_state in {"acquired", "transferred"}:
+            _release_public_task_slot_safely(evaluation_id, queue.connection)
+        raise
     return str(job.id)
+
+
+def _index_user_task(queue: Queue, *, owner_id: Any | None, job_id: str) -> None:
+    if owner_id is None:
+        if os.getenv("JOBSCOUT_CLOUD_SIGNUP_MODE", "allowlist").strip().lower() == "public":
+            raise RuntimeError("Public LLM evaluation jobs require owner context")
+        return
+    index_key = f"{USER_TASK_INDEX_PREFIX}:{owner_id}"
+    try:
+        queue.connection.sadd(index_key, job_id)
+    except Exception:
+        job = queue.fetch_job(job_id)
+        if job is not None:
+            try:
+                job.cancel()
+                job.delete()
+            except Exception:
+                logger.warning("Could not remove unindexed RQ job %s", job_id, exc_info=True)
+        raise
 
 def _update_evaluation_queue_metadata(
     evaluation_id: Any,
@@ -164,6 +217,8 @@ def _update_evaluation_queue_metadata(
     next_retry_at: datetime | None = None,
     retry_after_seconds: int | float | None = None,
     provider_status_message: str | None = None,
+    owner_id: Any | None = None,
+    tenant_id: Any | None = None,
 ) -> None:
     try:
         lookup_id = uuid.UUID(str(evaluation_id))
@@ -183,32 +238,33 @@ def _update_evaluation_queue_metadata(
     if not updates:
         return
 
-    db = SessionLocal()
-    try:
-        evaluation = db.get(LlmMatchEvaluation, lookup_id)
-        if evaluation is None or evaluation.deleted_at is not None:
-            return
-        analysis = evaluation.analysis if isinstance(evaluation.analysis, dict) else {}
-        queue_metadata = analysis.get("queue")
-        if not isinstance(queue_metadata, dict):
-            queue_metadata = {}
-        queue_metadata.update(updates)
-        analysis["queue"] = queue_metadata
-        if enqueue_reason is not None:
-            analysis["enqueue_reason"] = enqueue_reason
-        if queue_job_id is not None:
-            analysis["queue_job_id"] = queue_job_id
-        evaluation.analysis = analysis
-        db.commit()
-    except Exception:
-        db.rollback()
-        logger.warning(
-            "Could not update LLM evaluation queue metadata for %s",
-            evaluation_id,
-            exc_info=True,
-        )
-    finally:
-        db.close()
+    with worker_database_context(user_id=owner_id, tenant_id=tenant_id):
+        db = SessionLocal()
+        try:
+            evaluation = db.get(LlmMatchEvaluation, lookup_id)
+            if evaluation is None or evaluation.deleted_at is not None:
+                return
+            analysis = evaluation.analysis if isinstance(evaluation.analysis, dict) else {}
+            queue_metadata = analysis.get("queue")
+            if not isinstance(queue_metadata, dict):
+                queue_metadata = {}
+            queue_metadata.update(updates)
+            analysis["queue"] = queue_metadata
+            if enqueue_reason is not None:
+                analysis["enqueue_reason"] = enqueue_reason
+            if queue_job_id is not None:
+                analysis["queue_job_id"] = queue_job_id
+            evaluation.analysis = analysis
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.warning(
+                "Could not update LLM evaluation queue metadata for %s",
+                evaluation_id,
+                exc_info=True,
+            )
+        finally:
+            db.close()
 
 
 def _enqueue_top_n_scheduler_unique(
@@ -232,6 +288,7 @@ def _enqueue_top_n_scheduler_unique(
         raw_status = existing.get_status(refresh=True)
         status = getattr(raw_status, "value", raw_status)
         if status in _ACTIVE_RQ_STATUSES:
+            _index_user_task(queue, owner_id=owner_id, job_id=job_id)
             try:
                 from core.metrics import record_llm_judge_scheduler_job
 
@@ -254,6 +311,7 @@ def _enqueue_top_n_scheduler_unique(
         failure_ttl=LLM_EVALUATION_FAILURE_TTL_SECONDS,
         job_id=job_id,
     )
+    _index_user_task(queue, owner_id=owner_id, job_id=str(job.id))
     try:
         from core.metrics import record_llm_judge_scheduler_job
 
@@ -324,6 +382,8 @@ def _schedule_paused_evaluation_retry(
     evaluation_id: str,
     provider_payload: dict[str, Any] | None,
     truncation: dict[str, Any] | None,
+    owner_id: str | None,
+    tenant_id: str | None,
 ) -> str:
     defer_seconds = _queue_pause_defer_seconds()
     next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=defer_seconds)
@@ -333,12 +393,15 @@ def _schedule_paused_evaluation_retry(
         evaluation_id,
         provider_payload,
         truncation or {},
+        owner_id,
+        tenant_id,
         retry=_retry_policy(),
         job_timeout=LLM_EVALUATION_JOB_TIMEOUT,
         result_ttl=LLM_EVALUATION_RESULT_TTL_SECONDS,
         failure_ttl=LLM_EVALUATION_FAILURE_TTL_SECONDS,
         job_id=_paused_job_id("llm-evaluation-paused", evaluation_id),
     )
+    _index_user_task(_queue(), owner_id=owner_id, job_id=str(job.id))
     logger.info(
         "Deferred LLM evaluation %s for %ss because queue is paused",
         evaluation_id,
@@ -351,6 +414,8 @@ def _schedule_paused_evaluation_retry(
         next_retry_at=next_retry_at,
         retry_after_seconds=defer_seconds,
         provider_status_message="LLM queue is paused; retry is deferred.",
+        owner_id=owner_id,
+        tenant_id=tenant_id,
     )
     return str(job.id)
 
@@ -385,6 +450,7 @@ def _schedule_paused_top_n_retry(
         failure_ttl=LLM_EVALUATION_FAILURE_TTL_SECONDS,
         job_id=_paused_job_id("llm-top-n-paused", stable_id),
     )
+    _index_user_task(_queue(), owner_id=owner_id, job_id=str(job.id))
     logger.info(
         "Deferred LLM top-N scheduler %s for %ss because queue is paused",
         selection_run_id,
@@ -397,6 +463,8 @@ def _claim_evaluation_for_execution(
     evaluation_id: str,
     *,
     stale_after_minutes: int = 30,
+    owner_id: Any | None = None,
+    tenant_id: Any | None = None,
 ) -> bool:
     try:
         lookup_id = uuid.UUID(str(evaluation_id))
@@ -406,50 +474,53 @@ def _claim_evaluation_for_execution(
 
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=stale_after_minutes)
     now = datetime.now(timezone.utc)
-    db = SessionLocal()
-    try:
-        stmt = (
-            update(LlmMatchEvaluation)
-            .where(
-                LlmMatchEvaluation.id == lookup_id,
-                LlmMatchEvaluation.deleted_at.is_(None),
-                or_(
-                    LlmMatchEvaluation.status == LLM_EVALUATION_PENDING,
-                    and_(
-                        LlmMatchEvaluation.status == LLM_EVALUATION_RUNNING,
-                        or_(
-                            LlmMatchEvaluation.started_at.is_(None),
-                            LlmMatchEvaluation.started_at <= cutoff,
+    with worker_database_context(user_id=owner_id, tenant_id=tenant_id):
+        db = SessionLocal()
+        try:
+            stmt = (
+                update(LlmMatchEvaluation)
+                .where(
+                    LlmMatchEvaluation.id == lookup_id,
+                    LlmMatchEvaluation.deleted_at.is_(None),
+                    or_(
+                        LlmMatchEvaluation.status == LLM_EVALUATION_PENDING,
+                        and_(
+                            LlmMatchEvaluation.status == LLM_EVALUATION_RUNNING,
+                            or_(
+                                LlmMatchEvaluation.started_at.is_(None),
+                                LlmMatchEvaluation.started_at <= cutoff,
+                            ),
+                        ),
+                        and_(
+                            LlmMatchEvaluation.status == LLM_EVALUATION_FAILED,
+                            LlmMatchEvaluation.retryable.is_(True),
                         ),
                     ),
-                    and_(
-                        LlmMatchEvaluation.status == LLM_EVALUATION_FAILED,
-                        LlmMatchEvaluation.retryable.is_(True),
-                    ),
-                ),
+                )
+                .values(
+                    status=LLM_EVALUATION_RUNNING,
+                    retryable=False,
+                    error_code=None,
+                    started_at=now,
+                    completed_at=None,
+                )
             )
-            .values(
-                status=LLM_EVALUATION_RUNNING,
-                retryable=False,
-                error_code=None,
-                started_at=now,
-                completed_at=None,
-            )
-        )
-        result = db.execute(stmt)
-        db.commit()
-        return bool(result.rowcount)
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+            result = db.execute(stmt)
+            db.commit()
+            return bool(result.rowcount)
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
 
 def _mark_evaluation_worker_failure(
     evaluation_id: str,
     *,
     error_code: str = "worker_error",
+    owner_id: Any | None = None,
+    tenant_id: Any | None = None,
 ) -> bool:
     try:
         lookup_id = uuid.UUID(str(evaluation_id))
@@ -457,29 +528,30 @@ def _mark_evaluation_worker_failure(
         logger.warning("Skipping invalid failed LLM evaluation id %s", evaluation_id)
         return False
 
-    db = SessionLocal()
-    try:
-        result = db.execute(
-            update(LlmMatchEvaluation)
-            .where(
-                LlmMatchEvaluation.id == lookup_id,
-                LlmMatchEvaluation.deleted_at.is_(None),
-                LlmMatchEvaluation.status == LLM_EVALUATION_RUNNING,
+    with worker_database_context(user_id=owner_id, tenant_id=tenant_id):
+        db = SessionLocal()
+        try:
+            result = db.execute(
+                update(LlmMatchEvaluation)
+                .where(
+                    LlmMatchEvaluation.id == lookup_id,
+                    LlmMatchEvaluation.deleted_at.is_(None),
+                    LlmMatchEvaluation.status == LLM_EVALUATION_RUNNING,
+                )
+                .values(
+                    status=LLM_EVALUATION_FAILED,
+                    retryable=True,
+                    error_code=error_code,
+                    completed_at=datetime.now(timezone.utc),
+                )
             )
-            .values(
-                status=LLM_EVALUATION_FAILED,
-                retryable=True,
-                error_code=error_code,
-                completed_at=datetime.now(timezone.utc),
-            )
-        )
-        db.commit()
-        return bool(result.rowcount)
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+            db.commit()
+            return bool(result.rowcount)
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
 
 def enqueue_llm_evaluation(
@@ -488,6 +560,8 @@ def enqueue_llm_evaluation(
     provider_payload: dict[str, Any] | None = None,
     truncation: dict[str, Any] | None = None,
     enqueue_reason: str | None = None,
+    owner_id: Any | None = None,
+    tenant_id: Any | None = None,
 ) -> str:
     """Enqueue provider execution for a durable evaluation row."""
     job_id = _enqueue_unique(
@@ -495,12 +569,16 @@ def enqueue_llm_evaluation(
         str(evaluation_id),
         provider_payload,
         truncation or {},
+        owner_id=owner_id,
+        tenant_id=tenant_id,
     )
     _update_evaluation_queue_metadata(
         evaluation_id,
         enqueue_reason=enqueue_reason,
         queue_job_id=job_id,
         queue_state="queued",
+        owner_id=owner_id,
+        tenant_id=tenant_id,
     )
     return job_id
 
@@ -654,51 +732,71 @@ def process_llm_evaluation_task(
     evaluation_id: str,
     provider_payload: dict[str, Any] | None = None,
     truncation: dict[str, Any] | None = None,
+    owner_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> str:
     """RQ task entrypoint for match-level LLM judge execution."""
     pause_status = get_llm_evaluation_queue_pause_status()
     if pause_status.get("paused"):
-        _schedule_paused_evaluation_retry(evaluation_id, provider_payload, truncation)
+        _schedule_paused_evaluation_retry(
+            evaluation_id,
+            provider_payload,
+            truncation,
+            owner_id,
+            tenant_id,
+        )
         return str(evaluation_id)
 
-    if not _claim_evaluation_for_execution(evaluation_id):
+    if not _claim_evaluation_for_execution(
+        evaluation_id,
+        owner_id=owner_id,
+        tenant_id=tenant_id,
+    ):
+        _release_public_task_slot_safely(evaluation_id)
         logger.info("Skipping LLM evaluation %s because it is already claimed or terminal", evaluation_id)
         return str(evaluation_id)
 
-    db = SessionLocal()
-    try:
-        service = MatchLlmEvaluationService(db)
-        if provider_payload is not None:
-            evaluation = service.run_pending_evaluation(
-                evaluation_id,
-                provider_payload,
-                truncation=truncation or {},
-            )
-        else:
-            evaluation = service.resume_pending_evaluation(evaluation_id)
-        if _is_retryable_failed_evaluation(evaluation):
-            error_code = getattr(evaluation, "error_code", None) or "retryable_failure"
-            raise RetryableLlmEvaluationError(
-                f"LLM evaluation {evaluation_id} failed retryably: {error_code}"
-            )
-        return str(getattr(evaluation, "id", evaluation_id))
-    except RetryableLlmEvaluationError:
-        logger.warning("LLM evaluation %s failed retryably; RQ will retry", evaluation_id)
-        raise
-    except Exception:
-        db.rollback()
-        logger.exception("LLM evaluation worker failed for %s", evaluation_id)
+    with worker_database_context(user_id=owner_id, tenant_id=tenant_id):
+        db = SessionLocal()
         try:
-            _mark_evaluation_worker_failure(evaluation_id, error_code="worker_error")
+            service = MatchLlmEvaluationService(db)
+            if provider_payload is not None:
+                evaluation = service.run_pending_evaluation(
+                    evaluation_id,
+                    provider_payload,
+                    truncation=truncation or {},
+                )
+            else:
+                evaluation = service.resume_pending_evaluation(evaluation_id)
+            if _is_retryable_failed_evaluation(evaluation):
+                error_code = getattr(evaluation, "error_code", None) or "retryable_failure"
+                raise RetryableLlmEvaluationError(
+                    f"LLM evaluation {evaluation_id} failed retryably: {error_code}"
+                )
+            _release_public_task_slot_safely(evaluation_id)
+            return str(getattr(evaluation, "id", evaluation_id))
+        except RetryableLlmEvaluationError:
+            logger.warning("LLM evaluation %s failed retryably; RQ will retry", evaluation_id)
+            raise
         except Exception:
-            logger.warning(
-                "Failed to mark LLM evaluation %s as retryable after worker error",
-                evaluation_id,
-                exc_info=True,
-            )
-        raise
-    finally:
-        db.close()
+            db.rollback()
+            logger.exception("LLM evaluation worker failed for %s", evaluation_id)
+            try:
+                _mark_evaluation_worker_failure(
+                    evaluation_id,
+                    error_code="worker_error",
+                    owner_id=owner_id,
+                    tenant_id=tenant_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to mark LLM evaluation %s as retryable after worker error",
+                    evaluation_id,
+                    exc_info=True,
+                )
+            raise
+        finally:
+            db.close()
 
 
 def process_llm_top_n_selection_task(
@@ -720,42 +818,43 @@ def process_llm_top_n_selection_task(
         )
         return dict(_ZERO_LLM_ENQUEUE_STATS)
 
-    db = SessionLocal()
-    try:
-        stats = MatchLlmEvaluationService(db).evaluate_selection_run(
-            selection_run_id,
-            owner_id=owner_id,
-            tenant_id=tenant_id,
-            top_n=int(top_n),
-        )
+    with worker_database_context(user_id=owner_id, tenant_id=tenant_id):
+        db = SessionLocal()
         try:
-            from core.metrics import record_llm_judge_scheduler_job
+            stats = MatchLlmEvaluationService(db).evaluate_selection_run(
+                selection_run_id,
+                owner_id=owner_id,
+                tenant_id=tenant_id,
+                top_n=int(top_n),
+            )
+            try:
+                from core.metrics import record_llm_judge_scheduler_job
 
-            record_llm_judge_scheduler_job("succeeded")
+                record_llm_judge_scheduler_job("succeeded")
+            except Exception:
+                pass
+            logger.info(
+                "LLM top-N scheduler completed for selection %s revision %s: %s",
+                selection_run_id,
+                policy_revision,
+                stats,
+            )
+            return {
+                **_ZERO_LLM_ENQUEUE_STATS,
+                **{key: int(value or 0) for key, value in stats.items()},
+            }
         except Exception:
-            pass
-        logger.info(
-            "LLM top-N scheduler completed for selection %s revision %s: %s",
-            selection_run_id,
-            policy_revision,
-            stats,
-        )
-        return {
-            **_ZERO_LLM_ENQUEUE_STATS,
-            **{key: int(value or 0) for key, value in stats.items()},
-        }
-    except Exception:
-        db.rollback()
-        try:
-            from core.metrics import record_llm_judge_scheduler_job
+            db.rollback()
+            try:
+                from core.metrics import record_llm_judge_scheduler_job
 
-            record_llm_judge_scheduler_job("failed")
-        except Exception:
-            pass
-        logger.exception("LLM top-N scheduler failed for selection %s", selection_run_id)
-        raise
-    finally:
-        db.close()
+                record_llm_judge_scheduler_job("failed")
+            except Exception:
+                pass
+            logger.exception("LLM top-N scheduler failed for selection %s", selection_run_id)
+            raise
+        finally:
+            db.close()
 
 
 def enqueue_stale_or_retryable_evaluations(
@@ -815,7 +914,12 @@ def enqueue_stale_or_retryable_evaluations(
         if not evaluations:
             break
         for evaluation in evaluations:
-            enqueue_llm_evaluation(evaluation.id, enqueue_reason=enqueue_reason)
+            enqueue_llm_evaluation(
+                evaluation.id,
+                enqueue_reason=enqueue_reason,
+                owner_id=evaluation.owner_id,
+                tenant_id=evaluation.tenant_id,
+            )
             enqueued += 1
         last = evaluations[-1]
         last_created_at = getattr(last, "created_at", None)
