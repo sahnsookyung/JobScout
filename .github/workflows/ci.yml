@@ -158,7 +158,7 @@ jobs:
       - name: Run DB and Redis tests
         run: |
           uv run python -m pytest tests/ -q \
-            -m "db or redis"
+            -m "(db or redis) and not e2e"
 
   python-performance:
     name: Python Bounded Performance Tests
@@ -310,6 +310,7 @@ jobs:
       contents: read
     env:
       PYTHONPATH: ${{ github.workspace }}
+      JOBSPY_API_TOKEN: jobscout-ci-internal-token
 
     steps:
       - name: Checkout
@@ -361,6 +362,7 @@ jobs:
       PYTHONPATH: ${{ github.workspace }}
       JOBSCOUT_ENV: test
       AUTH_MODE: dev-bypass
+      JOBSPY_API_TOKEN: jobscout-ci-internal-token
       JOBSCOUT_E2E_SKIP_BUILD: "1"
 
     steps:

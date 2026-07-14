@@ -44,6 +44,7 @@ from tests.integration.helpers.seed_matching_jobs import (
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.db,
+    pytest.mark.e2e,
     pytest.mark.slow,
 ]
 

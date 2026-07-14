@@ -70,6 +70,9 @@ def pytest_configure(config):
         "markers", "slow: marks tests as slower end-to-end or container-backed coverage"
     )
     config.addinivalue_line(
+        "markers", "e2e: marks tests that start the complete Dockerized application stack"
+    )
+    config.addinivalue_line(
         "markers", "security: marks tests as security or tenant-isolation coverage"
     )
     config.addinivalue_line(
