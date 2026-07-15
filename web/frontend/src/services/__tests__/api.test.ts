@@ -550,5 +550,27 @@ describe('apiClient', () => {
             window.removeEventListener(API_AUTH_FAILURE_EVENT, listener);
             consoleSpy.mockRestore();
         });
+
+        it('should not emit a hosted auth failure event for forbidden responses', async () => {
+            vi.stubEnv('VITE_AUTH_REQUIRED', 'true');
+            const listener = vi.fn();
+            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            window.addEventListener(API_AUTH_FAILURE_EVENT, listener);
+            const mockError = createMockError({
+                message: 'Forbidden',
+                status: 403,
+                data: { error: 'This operation requires tenant-admin access.' },
+            });
+
+            const { responseHandler } = getMockHandlers();
+            await expect(responseHandler.rejected(mockError)).rejects.toMatchObject({
+                status: 403,
+                code: 'common.http.403',
+            });
+
+            expect(listener).not.toHaveBeenCalled();
+            window.removeEventListener(API_AUTH_FAILURE_EVENT, listener);
+            consoleSpy.mockRestore();
+        });
     });
 });
