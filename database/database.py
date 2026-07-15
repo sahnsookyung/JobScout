@@ -7,11 +7,16 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from core.config_loader import load_config_data
+from database.context_signing import (
+    database_context_signing_enabled,
+    sign_database_context,
+)
 
 DEFAULT_DATABASE_URL = "postgresql://user:password@localhost:5432/jobscout"
 _engine_lock = threading.Lock()
 RLS_USER_INFO_KEY = "jobscout.user_id"
 RLS_TENANT_INFO_KEY = "jobscout.tenant_id"
+RLS_SIGNATURE_INFO_KEY = "jobscout.context_signature"
 _worker_user_id: ContextVar[str | None] = ContextVar("jobscout_worker_user_id", default=None)
 _worker_tenant_id: ContextVar[str | None] = ContextVar("jobscout_worker_tenant_id", default=None)
 
@@ -21,14 +26,24 @@ class ContextSession(Session):
 
 
 def _apply_database_context(connection, session: Session) -> None:
-    for setting_name in (RLS_USER_INFO_KEY, RLS_TENANT_INFO_KEY):
-        setting_value = session.info.get(setting_name)
-        if setting_value is None:
-            setting_value = (
-                _worker_user_id.get()
-                if setting_name == RLS_USER_INFO_KEY
-                else _worker_tenant_id.get()
-            )
+    user_id = session.info.get(RLS_USER_INFO_KEY)
+    if user_id is None:
+        user_id = _worker_user_id.get()
+    tenant_id = session.info.get(RLS_TENANT_INFO_KEY)
+    if tenant_id is None:
+        tenant_id = _worker_tenant_id.get()
+
+    settings = {
+        RLS_USER_INFO_KEY: user_id,
+        RLS_TENANT_INFO_KEY: tenant_id,
+    }
+    if database_context_signing_enabled():
+        settings[RLS_SIGNATURE_INFO_KEY] = sign_database_context(
+            user_id=user_id,
+            tenant_id=tenant_id,
+        )
+
+    for setting_name, setting_value in settings.items():
         connection.execute(
             text("SELECT set_config(:name, :value, true)"),
             {
@@ -64,12 +79,12 @@ def set_database_context(
 
 
 @contextlib.contextmanager
-def worker_database_context(
+def database_context(
     *,
     user_id: object | None,
     tenant_id: object | None,
 ):
-    """Install one message's owner and tenant for every session it opens."""
+    """Install one request or message identity for every session it opens."""
     user_token = _worker_user_id.set(str(user_id) if user_id is not None else None)
     tenant_token = _worker_tenant_id.set(str(tenant_id) if tenant_id is not None else None)
     try:
@@ -77,6 +92,17 @@ def worker_database_context(
     finally:
         _worker_tenant_id.reset(tenant_token)
         _worker_user_id.reset(user_token)
+
+
+@contextlib.contextmanager
+def worker_database_context(
+    *,
+    user_id: object | None,
+    tenant_id: object | None,
+):
+    """Install one worker message's owner and tenant context."""
+    with database_context(user_id=user_id, tenant_id=tenant_id):
+        yield
 
 
 class _EngineCache:

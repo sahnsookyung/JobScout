@@ -206,7 +206,9 @@ function applyAuthState(next: AuthState): void {
     const previous = getAuthState();
     const identityChanged = previous.user?.id !== next.user?.id;
     const tenantChanged = previous.selected_tenant_id !== next.selected_tenant_id;
-    if (identityChanged || tenantChanged) {
+    if (identityChanged) {
+        clearOwnerClientState(previous.user?.id);
+    } else if (tenantChanged) {
         clearPrivateQueryCache();
     }
     setResumeOwnerContext(next.user?.id ?? null);

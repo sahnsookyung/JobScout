@@ -10,9 +10,15 @@ vi.mock('@/services/cloudAuthApi', () => ({
     },
 }));
 
+vi.mock('@/utils/indexedDB', () => ({
+    deleteOwnerResumes: vi.fn(() => Promise.resolve()),
+    setResumeOwnerContext: vi.fn(),
+}));
+
 import { cloudAuthApi } from '@/services/cloudAuthApi';
 import { API_AUTH_FAILURE_EVENT } from '@/services/api';
 import type { CloudAuthExchangeResponse, CloudTenant, CloudUser } from '@/types/api';
+import { deleteOwnerResumes } from '@/utils/indexedDB';
 import { useAuth, __resetAuthForTests } from '../useAuth';
 
 const STORAGE_KEY = 'jobscout_auth';
@@ -209,6 +215,7 @@ describe('useAuth', () => {
         vi.unstubAllEnvs();
         vi.stubGlobal('localStorage', storageMock);
         storageMock.clear();
+        sessionStorage.clear();
         __resetAuthForTests();
         vi.clearAllMocks();
     });
@@ -469,6 +476,33 @@ describe('useAuth', () => {
 
             expect(result.current.user?.email).toBe('second@example.com');
             expect(result.current.token).toBe('tok-2');
+        });
+
+        it('clears the previous owner client data when the login identity changes', async () => {
+            const { result } = renderHook(() => useAuth());
+
+            act(() => {
+                result.current.login(
+                    { id: 'owner-a', email: 'a@example.com', name: 'Owner A' },
+                    'token-a'
+                );
+            });
+            localStorage.setItem('jobscout_show_hidden', 'true');
+            localStorage.setItem('jobscout_llm_ordering', 'score');
+            sessionStorage.setItem('jobscout_turnstile_token', 'owner-a-token');
+
+            act(() => {
+                result.current.login(
+                    { id: 'owner-b', email: 'b@example.com', name: 'Owner B' },
+                    'token-b'
+                );
+            });
+            await flushAuthEffects();
+
+            expect(deleteOwnerResumes).toHaveBeenCalledWith('owner-a');
+            expect(localStorage.getItem('jobscout_show_hidden')).toBeNull();
+            expect(localStorage.getItem('jobscout_llm_ordering')).toBeNull();
+            expect(sessionStorage.getItem('jobscout_turnstile_token')).toBeNull();
         });
 
         it('falls back to a conservative expiry for opaque login tokens', () => {
