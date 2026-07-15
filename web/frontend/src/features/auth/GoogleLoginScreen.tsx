@@ -17,6 +17,10 @@ interface GoogleCredentialResponse {
     credential: string;
 }
 
+const NONCE_REFRESH_SKEW_MS = 30_000;
+const MIN_NONCE_REFRESH_DELAY_MS = 30_000;
+const MAX_NONCE_REFRESH_DELAY_MS = 4 * 60_000;
+
 export function GoogleLoginScreen() {
     const { login } = useAuth();
     const buttonRef = useRef<HTMLDivElement>(null);
@@ -28,6 +32,7 @@ export function GoogleLoginScreen() {
 
     useEffect(() => {
         isMountedRef.current = true;
+        let nonceRefreshTimer: ReturnType<typeof setTimeout> | null = null;
         const scriptId = 'google-gsi';
         if (!document.getElementById(scriptId)) {
             const script = document.createElement('script');
@@ -41,8 +46,11 @@ export function GoogleLoginScreen() {
         async function initButton() {
             if (!globalThis.google || !buttonRef.current) return;
             let nonce: string;
+            let expiresAt: number;
             try {
-                nonce = (await cloudAuthApi.createGoogleLoginNonce()).data.nonce;
+                const response = await cloudAuthApi.createGoogleLoginNonce();
+                nonce = response.data.nonce;
+                expiresAt = response.data.expires_at;
             } catch {
                 if (isMountedRef.current) {
                     setAuthError('Secure sign-in is temporarily unavailable. Please try again.');
@@ -50,6 +58,22 @@ export function GoogleLoginScreen() {
                 return;
             }
             if (!isMountedRef.current) return;
+            if (nonceRefreshTimer) {
+                clearTimeout(nonceRefreshTimer);
+            }
+            const refreshDelay = Math.min(
+                MAX_NONCE_REFRESH_DELAY_MS,
+                Math.max(
+                    MIN_NONCE_REFRESH_DELAY_MS,
+                    expiresAt * 1000 - Date.now() - NONCE_REFRESH_SKEW_MS
+                )
+            );
+            nonceRefreshTimer = setTimeout(() => {
+                nonceRefreshTimer = null;
+                void initButton();
+            }, refreshDelay);
+            // GSI keeps the most recent initialization, so renewing it also replaces
+            // the callback closure that carries the expiring server-side nonce.
             globalThis.google.accounts.id.initialize({
                 client_id: clientId,
                 nonce,
@@ -81,6 +105,7 @@ export function GoogleLoginScreen() {
                     } catch {
                         if (!isMountedRef.current || attemptId !== exchangeAttemptRef.current) return;
                         setAuthError('Sign-in didn’t go through. Please try once more.');
+                        void initButton();
                     } finally {
                         if (isMountedRef.current && attemptId === exchangeAttemptRef.current) {
                             setIsSigningIn(false);
@@ -88,6 +113,7 @@ export function GoogleLoginScreen() {
                     }
                 },
             });
+            buttonRef.current.replaceChildren();
             globalThis.google.accounts.id.renderButton(buttonRef.current, {
                 theme: 'outline',
                 size: 'large',
@@ -107,6 +133,9 @@ export function GoogleLoginScreen() {
             isMountedRef.current = false;
             exchangeAttemptRef.current += 1;
             clearInterval(interval);
+            if (nonceRefreshTimer) {
+                clearTimeout(nonceRefreshTimer);
+            }
         };
     }, [clientId, login]);
 

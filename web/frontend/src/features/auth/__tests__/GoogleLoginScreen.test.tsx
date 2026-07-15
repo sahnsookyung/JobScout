@@ -3,6 +3,8 @@ import { GoogleLoginScreen } from '../GoogleLoginScreen';
 import { useAuth } from '../useAuth';
 import { cloudAuthApi } from '@/services/cloudAuthApi';
 
+const NOW_SECONDS = 1_800_000_000;
+
 vi.mock('../useAuth', () => ({
     useAuth: vi.fn(() => ({
         login: vi.fn(),
@@ -35,17 +37,18 @@ function createDeferred<T>() {
 describe('GoogleLoginScreen', () => {
     beforeEach(() => {
         vi.useFakeTimers();
+        vi.setSystemTime(NOW_SECONDS * 1000);
         vi.clearAllMocks();
         vi.stubEnv('VITE_GOOGLE_CLIENT_ID', 'test-client-id-abc');
         vi.mocked(cloudAuthApi.createGoogleLoginNonce).mockResolvedValue({
-            data: { nonce: 'login-nonce-123', expires_at: 1_800_000_000 },
+            data: { nonce: 'login-nonce-123', expires_at: NOW_SECONDS + 300 },
         } as never);
         document.getElementById('google-gsi')?.remove();
         delete (globalThis as any).google;
     });
 
     afterEach(() => {
-        vi.runOnlyPendingTimers();
+        vi.clearAllTimers();
         vi.useRealTimers();
         vi.unstubAllEnvs();
         document.getElementById('google-gsi')?.remove();
@@ -143,6 +146,42 @@ describe('GoogleLoginScreen', () => {
 
             // initialize should only be called once even after multiple ticks
             expect(mockInitialize).toHaveBeenCalledTimes(1);
+        });
+
+        it('renews the Google nonce before it expires', async () => {
+            const mockInitialize = vi.fn();
+            const mockRenderButton = vi.fn();
+            vi.mocked(cloudAuthApi.createGoogleLoginNonce)
+                .mockResolvedValueOnce({
+                    data: { nonce: 'login-nonce-123', expires_at: NOW_SECONDS + 300 },
+                } as never)
+                .mockResolvedValueOnce({
+                    data: { nonce: 'login-nonce-456', expires_at: NOW_SECONDS + 600 },
+                } as never);
+            (globalThis as any).google = {
+                accounts: { id: { initialize: mockInitialize, renderButton: mockRenderButton } },
+            };
+
+            render(<GoogleLoginScreen />);
+            await act(async () => {
+                vi.advanceTimersByTime(200);
+                await Promise.resolve();
+            });
+            await act(async () => {
+                vi.advanceTimersByTime(239_999);
+                await Promise.resolve();
+            });
+            expect(cloudAuthApi.createGoogleLoginNonce).toHaveBeenCalledTimes(1);
+            await act(async () => {
+                vi.advanceTimersByTime(1);
+                await Promise.resolve();
+            });
+
+            expect(cloudAuthApi.createGoogleLoginNonce).toHaveBeenCalledTimes(2);
+            expect(mockInitialize).toHaveBeenLastCalledWith(
+                expect.objectContaining({ nonce: 'login-nonce-456' })
+            );
+            expect(mockRenderButton).toHaveBeenCalledTimes(2);
         });
 
         it('clears the polling interval on unmount', () => {
@@ -286,6 +325,20 @@ describe('GoogleLoginScreen', () => {
                 'Sign-in didn’t go through. Please try once more.'
             );
             expect(mockLogin).not.toHaveBeenCalled();
+        });
+
+        it('replaces a consumed nonce after an exchange failure', async () => {
+            const { fire } = await setupLoginCallback();
+            vi.mocked(cloudAuthApi.exchangeGoogleCredential).mockRejectedValueOnce(
+                new Error('exchange failed')
+            );
+
+            await act(async () => {
+                await fire('header.payload.sig');
+                await Promise.resolve();
+            });
+
+            expect(cloudAuthApi.createGoogleLoginNonce).toHaveBeenCalledTimes(2);
         });
 
         it('shows a pending message while the credential exchange is in flight', async () => {
