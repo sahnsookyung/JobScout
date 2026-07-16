@@ -61,32 +61,40 @@ function logCleanupFailure(message: string, error: unknown): void {
   console.error(message, toError(error, message));
 }
 
-async function deleteExpiredResume(hash: string, message: string): Promise<void> {
+async function deleteExpiredResume(
+  hash: string,
+  message: string,
+  owner: string
+): Promise<void> {
   try {
-    await deleteResume(hash);
+    await deleteResumeForOwner(hash, owner);
   } catch (error) {
     logCleanupFailure(message, error);
   }
 }
 
-async function getResumeEntry(db: IDBDatabase, hash: string): Promise<ResumeEntry | undefined> {
+async function getResumeEntry(
+  db: IDBDatabase,
+  hash: string,
+  owner: string
+): Promise<ResumeEntry | undefined> {
   const store = getStore(db, 'readonly');
   return requestToPromise(
-    store.get(resumeKey(hash)),
+    store.get(resumeKey(hash, owner)),
     `Failed to load resume entry for ${hash}`
   );
 }
 
-async function getFreshResumeEntry(hash: string): Promise<ResumeEntry | null> {
-  const db = await openDB();
-  const entry = await getResumeEntry(db, hash);
+async function getFreshResumeEntry(hash: string, owner: string): Promise<ResumeEntry | null> {
+  const db = await openDB(owner);
+  const entry = await getResumeEntry(db, hash, owner);
 
   if (!entry) {
     return null;
   }
 
   if (isExpiredEntry(entry)) {
-    void deleteExpiredResume(hash, 'Failed to delete expired resume:');
+    void deleteExpiredResume(hash, 'Failed to delete expired resume:', owner);
     return null;
   }
 
@@ -103,40 +111,45 @@ async function deleteHashesFromStore(store: IDBObjectStore, hashes: string[]): P
   );
 }
 
-function openDB(): Promise<IDBDatabase> {
-  if (dbPromise) return dbPromise;
+function openDB(cleanupOwner = ownerId()): Promise<IDBDatabase> {
+  if (!dbPromise) {
+    dbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-  dbPromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onerror = () => reject(toError(request.error, 'IndexedDB open failed'));
+      request.onsuccess = () => resolve(request.result);
+      request.onblocked = () => reject(new Error('IndexedDB open blocked'));
 
-    request.onerror = () => reject(toError(request.error, 'IndexedDB open failed'));
-    request.onsuccess = () => resolve(request.result);
-    request.onblocked = () => reject(new Error('IndexedDB open blocked'));
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME, { keyPath: 'key' });
+        } else if (event.oldVersion < DB_VERSION) {
+          db.deleteObjectStore(STORE_NAME);
+          db.createObjectStore(STORE_NAME, { keyPath: 'key' });
+        }
+      };
+    });
 
-    request.onupgradeneeded = (event) => {
-      const db = (event.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: 'key' });
-      } else if (event.oldVersion < DB_VERSION) {
-        db.deleteObjectStore(STORE_NAME);
-        db.createObjectStore(STORE_NAME, { keyPath: 'key' });
-      }
-    };
+    dbPromise.catch(() => {
+      dbPromise = null;
+    });
+  }
+
+  return dbPromise.then(async (db) => {
+    await cleanupOldEntries(db, cleanupOwner);
+    return db;
   });
-
-  dbPromise.catch(() => {
-    dbPromise = null;
-  });
-
-  return dbPromise;
 }
 
 export async function saveResume(file: Blob, hash: string, filename?: string): Promise<void> {
-  const db = await openDB();
+  const owner = ownerId();
+  await deleteOwnerResumes(owner);
+  const db = await openDB(owner);
   const store = getStore(db, 'readwrite');
   const entry: ResumeEntry = {
-    key: resumeKey(hash),
-    owner_id: ownerId(),
+    key: resumeKey(hash, owner),
+    owner_id: owner,
     file,
     timestamp: Date.now(),
     hash,
@@ -144,56 +157,70 @@ export async function saveResume(file: Blob, hash: string, filename?: string): P
   };
 
   await requestToPromise(store.put(entry), `Failed to save resume ${hash}`);
-  await cleanupOldEntries(db);
+  await cleanupOldEntries(db, owner);
 }
 
 export async function getResume(hash: string): Promise<Blob | null> {
-  const entry = await getFreshResumeEntry(hash);
+  const owner = ownerId();
+  const entry = await getFreshResumeEntry(hash, owner);
   return entry?.file ?? null;
 }
 
-export async function getResumeHash(): Promise<string | null> {
-  const db = await openDB();
+async function getResumeHashForOwner(owner: string): Promise<string | null> {
+  const db = await openDB(owner);
   const store = getStore(db, 'readonly');
   const keys = (await requestToPromise(
     store.getAll(),
     'Failed to load resume entries'
   )) as ResumeEntry[];
-  const hash = keys.find((entry) => entry.owner_id === ownerId())?.hash;
+  const hash = keys.find((entry) => entry.owner_id === owner)?.hash;
 
   if (!hash) {
     return null;
   }
 
-  const entry = await getResumeEntry(db, hash);
+  const entry = await getResumeEntry(db, hash, owner);
   if (!entry) {
     return null;
   }
 
   if (isExpiredEntry(entry)) {
-    void deleteExpiredResume(hash, 'Failed to delete expired resume:');
+    void deleteExpiredResume(hash, 'Failed to delete expired resume:', owner);
     return null;
   }
 
   return hash;
 }
 
+export async function getResumeHash(): Promise<string | null> {
+  return getResumeHashForOwner(ownerId());
+}
+
 export async function getResumeFilename(): Promise<string | null> {
-  const hash = await getResumeHash();
+  const owner = ownerId();
+  const hash = await getResumeHashForOwner(owner);
   if (!hash) return null;
 
-  const entry = await getFreshResumeEntry(hash);
+  const entry = await getFreshResumeEntry(hash, owner);
   return entry?.filename ?? null;
 }
 
-export async function deleteResume(hash: string): Promise<void> {
-  const db = await openDB();
+async function deleteResumeForOwner(hash: string, owner: string): Promise<void> {
+  const db = await openDB(owner);
   const store = getStore(db, 'readwrite');
-  await requestToPromise(store.delete(resumeKey(hash)), `Failed to delete resume ${hash}`);
+  await requestToPromise(
+    store.delete(resumeKey(hash, owner)),
+    `Failed to delete resume ${hash}`
+  );
+}
+
+export async function deleteResume(hash: string): Promise<void> {
+  const owner = ownerId();
+  await deleteResumeForOwner(hash, owner);
 }
 
 export async function deleteOwnerResumes(owner = ownerId()): Promise<void> {
-  const db = await openDB();
+  const db = await openDB(owner);
   const store = getStore(db, 'readwrite');
   const entries = (await requestToPromise(
     store.getAll(),
@@ -205,30 +232,34 @@ export async function deleteOwnerResumes(owner = ownerId()): Promise<void> {
   );
 }
 
-async function cleanupOldEntries(db: IDBDatabase): Promise<void> {
+async function cleanupOldEntries(db: IDBDatabase, owner: string): Promise<void> {
   const store = getStore(db, 'readwrite');
   const entries = (await requestToPromise(
     store.getAll(),
     'Failed to load saved resumes for cleanup'
   )) as ResumeEntry[];
-  const hashesToDelete = entries
-    .filter((entry) => entry.owner_id === ownerId())
+  const expiredKeys = entries
+    .filter(isExpiredEntry)
+    .map((entry) => entry.key);
+  const ownerKeysOverLimit = entries
+    .filter((entry) => entry.owner_id === owner && !isExpiredEntry(entry))
     .map((entry) => ({
-      hash: entry.key,
+      key: entry.key,
       age: Date.now() - entry.timestamp,
     }))
     .sort((a, b) => a.age - b.age)
     .slice(MAX_ENTRIES)
-    .map((entry) => entry.hash);
+    .map((entry) => entry.key);
+  const keysToDelete = [...new Set([...expiredKeys, ...ownerKeysOverLimit])];
 
-  if (hashesToDelete.length === 0) {
+  if (keysToDelete.length === 0) {
     return;
   }
 
-  await deleteHashesFromStore(store, hashesToDelete);
+  await deleteHashesFromStore(store, keysToDelete);
 }
 
 export async function hasResume(): Promise<boolean> {
-  const hash = await getResumeHash();
+  const hash = await getResumeHashForOwner(ownerId());
   return hash !== null;
 }

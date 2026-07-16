@@ -81,6 +81,12 @@ class User(Base):
             "NOT is_platform_admin OR retention_exempt",
             name="ck_users_platform_admin_retention_exempt",
         ),
+        CheckConstraint(
+            "NOT retention_exempt "
+            "OR is_platform_admin "
+            "OR id = '00000000-0000-0000-0000-000000000001'::uuid",
+            name="ck_users_retention_exempt_protected",
+        ),
     )
 
 

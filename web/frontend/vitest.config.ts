@@ -34,8 +34,6 @@ export default defineConfig({
             'src/**/*.d.ts',
             'src/main.tsx',
             'src/App.tsx',
-            // indexedDB tests require actual browser IndexedDB implementation
-            'src/utils/__tests__/indexedDB.test.ts',
         ],
         testTimeout: 10000,
         coverage: {
@@ -48,10 +46,6 @@ export default defineConfig({
                 'src/**/*.d.ts',
                 'src/main.tsx',
                 'src/App.tsx',
-                // indexedDB tests require actual browser IndexedDB implementation
-                'src/utils/__tests__/indexedDB.test.ts',
-                // Browser-only API — not testable in jsdom
-                'src/utils/indexedDB.ts',
                 // Pure TypeScript interfaces — no runtime code to cover
                 'src/types/**',
                 // Test helper utilities — not application code

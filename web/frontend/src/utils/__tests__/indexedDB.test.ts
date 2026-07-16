@@ -4,9 +4,20 @@
  * Run with: npm run test (Vitest)
  */
 
+import { Blob as NodeBlob } from 'node:buffer';
 import { webcrypto } from 'node:crypto';
+import { IDBKeyRange, indexedDB as fakeIndexedDB } from 'fake-indexeddb';
 
-import { saveResume, getResume, getResumeHash, deleteResume, hasResume } from '../indexedDB';
+import {
+    deleteOwnerResumes,
+    deleteResume,
+    getResume,
+    getResumeFilename,
+    getResumeHash,
+    hasResume,
+    saveResume,
+    setResumeOwnerContext,
+} from '../indexedDB';
 import { computeFileHash, validateFileSize } from '../fileUtils';
 import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '@shared/constants';
 
@@ -14,16 +25,22 @@ import { RESUME_MAX_SIZE, RESUME_MAX_SIZE_MB } from '@shared/constants';
 if (globalThis.crypto?.subtle === undefined) {
     Object.defineProperty(globalThis, 'crypto', { value: webcrypto });
 }
+vi.stubGlobal('indexedDB', fakeIndexedDB);
+vi.stubGlobal('IDBKeyRange', IDBKeyRange);
 
 describe('IndexedDB Resume Storage', () => {
-    const testBlob = new Blob(['test content'], { type: 'application/pdf' });
+    const testBlob = new NodeBlob(['test content'], {
+        type: 'application/pdf',
+    }) as unknown as Blob;
     const testHash = 'abc123def4567890';
 
     beforeEach(async () => {
-        // Clean up before each test by deleting the test hash
-        await deleteResume(testHash);
-        await deleteResume('hash1111111111111111');
-        await deleteResume('hash2222222222222222');
+        setResumeOwnerContext('test-owner');
+        await deleteOwnerResumes();
+    });
+
+    afterEach(() => {
+        setResumeOwnerContext(null);
     });
 
     describe('saveResume', () => {
@@ -36,7 +53,9 @@ describe('IndexedDB Resume Storage', () => {
         });
 
         it('should overwrite existing resume with same hash', async () => {
-            const newBlob = new Blob(['new content'], { type: 'application/pdf' });
+            const newBlob = new NodeBlob(['new content'], {
+                type: 'application/pdf',
+            }) as unknown as Blob;
 
             await saveResume(testBlob, testHash);
             await saveResume(newBlob, testHash);
@@ -48,8 +67,12 @@ describe('IndexedDB Resume Storage', () => {
         });
 
         it('should maintain only 1 entry (max entries)', async () => {
-            const blob1 = new Blob(['content 1'], { type: 'application/pdf' });
-            const blob2 = new Blob(['content 2'], { type: 'application/pdf' });
+            const blob1 = new NodeBlob(['content 1'], {
+                type: 'application/pdf',
+            }) as unknown as Blob;
+            const blob2 = new NodeBlob(['content 2'], {
+                type: 'application/pdf',
+            }) as unknown as Blob;
             const hash1 = 'hash1111111111111111';
             const hash2 = 'hash2222222222222222';
 
@@ -63,6 +86,22 @@ describe('IndexedDB Resume Storage', () => {
             // Verify old entry was evicted
             const oldEntry = await getResume(hash1);
             expect(oldEntry).toBeNull();
+        });
+
+        it('isolates identical resume hashes between owners', async () => {
+            await saveResume(testBlob, testHash, 'owner-a.pdf');
+
+            setResumeOwnerContext('other-owner');
+            expect(await getResume(testHash)).toBeNull();
+            await saveResume(
+                new NodeBlob(['other content']) as unknown as Blob,
+                testHash,
+                'owner-b.pdf'
+            );
+
+            expect(await getResumeFilename()).toBe('owner-b.pdf');
+            setResumeOwnerContext('test-owner');
+            expect(await getResumeFilename()).toBe('owner-a.pdf');
         });
     });
 
@@ -80,7 +119,15 @@ describe('IndexedDB Resume Storage', () => {
             expect(retrieved).toBeNull();
         });
 
-        it.todo('should return null for expired entries (>30 days) - requires timestamp manipulation');
+        it('returns null for entries at least four hours old', async () => {
+            const now = Date.now();
+            const dateNow = vi.spyOn(Date, 'now').mockReturnValue(now - 4 * 60 * 60 * 1000);
+            await saveResume(testBlob, testHash);
+
+            dateNow.mockReturnValue(now);
+
+            expect(await getResume(testHash)).toBeNull();
+        });
     });
 
     describe('getResumeHash', () => {

@@ -11,7 +11,7 @@ class _ComposeLoader(yaml.SafeLoader):
 
 
 def _construct_reset_tag(loader: yaml.SafeLoader, node: yaml.Node) -> None:
-    loader.construct_scalar(node)
+    del loader, node
     return None
 
 
@@ -92,6 +92,31 @@ def test_e2e_services_share_one_bounded_runtime_build() -> None:
         assert service["build"] is None
         assert service["pull_policy"] == "never"
         assert service["command"]
+
+
+def test_e2e_app_context_services_declare_mock_embedding_client_configuration() -> None:
+    compose = _load_compose("docker-compose.e2e.yml")
+
+    for service_name in ("extraction", "orchestrator"):
+        environment = compose["services"][service_name]["environment"]
+        assert "ETL_EMBEDDING_BASE_URL=http://mock-llm:8090/v1" in environment
+        assert "ETL_EMBEDDING_API_KEY=mock-key" in environment
+
+
+def test_e2e_services_do_not_inherit_local_env_files() -> None:
+    compose = _load_compose("docker-compose.e2e.yml")
+
+    for service_name in (
+        "db-migrate",
+        "web-backend",
+        "extraction",
+        "embeddings",
+        "scorer-matcher",
+        "scorer-model-bootstrap",
+        "notification-worker",
+        "orchestrator",
+    ):
+        assert compose["services"][service_name]["env_file"] is None
 
 
 def test_web_services_support_web_profile() -> None:

@@ -106,7 +106,7 @@ function hostedAuthRequired(): boolean {
 }
 
 function emitHostedAuthFailure(error: NormalizedApiError): void {
-    if (!hostedAuthRequired() || (error.status !== 401 && error.status !== 403)) {
+    if (!hostedAuthRequired() || error.status !== 401) {
         return;
     }
     if (globalThis.window === undefined || typeof globalThis.CustomEvent !== 'function') {

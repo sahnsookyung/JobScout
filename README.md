@@ -236,12 +236,15 @@ retention database roles, sole platform admin, public tenant, retention worker,
 Turnstile, and activation migration.
 
 Private records carry an `owner_id`; hosted SQLAlchemy transactions reinstall
-the user and tenant context after every transaction boundary. Missing context
-must return no protected rows. Shared job rows and job-requirement vectors are
-not user-owned and survive temporary-account deletion, while resumes, user
-vectors, matches, evaluations, variants, preferences, notifications, and
-user-owned pipeline runs cascade with the user. See the private deployment
-README/runbook for the staged public-mode and two-account verification process.
+the user and tenant context after every transaction boundary. When forced RLS
+is active, each context is HMAC-signed with `JOBSCOUT_DB_CONTEXT_SECRET`; raw
+custom PostgreSQL settings are therefore not sufficient to impersonate another
+owner. Missing or invalid context returns no protected rows. Shared job rows and
+job-requirement vectors are not user-owned and survive temporary-account
+deletion, while resumes, user vectors, matches, evaluations, variants,
+preferences, notifications, and user-owned pipeline runs cascade with the user.
+See the private deployment README/runbook for the staged public-mode and
+two-account verification process.
 
 ## Testing
 
