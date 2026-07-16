@@ -94,6 +94,14 @@ def test_e2e_services_share_one_bounded_runtime_build() -> None:
         assert service["command"]
 
 
+def test_e2e_extraction_declares_mock_embedding_client_configuration() -> None:
+    compose = _load_compose("docker-compose.e2e.yml")
+    environment = compose["services"]["extraction"]["environment"]
+
+    assert "ETL_EMBEDDING_BASE_URL=http://mock-llm:8090/v1" in environment
+    assert "ETL_EMBEDDING_API_KEY=mock-key" in environment
+
+
 def test_web_services_support_web_profile() -> None:
     compose = _load_compose("docker-compose.web.yml")
     services = compose["services"]

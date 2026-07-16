@@ -76,6 +76,8 @@ services:
       - ETL_LLM_EXTRACTION_API_KEY=mock-key
       - ETL_LLM_BASE_URL=http://mock-llm:8090/v1
       - ETL_LLM_API_KEY=mock-key
+      - ETL_EMBEDDING_BASE_URL=http://mock-llm:8090/v1
+      - ETL_EMBEDDING_API_KEY=mock-key
 
   embeddings:
     <<: *e2e-runtime
