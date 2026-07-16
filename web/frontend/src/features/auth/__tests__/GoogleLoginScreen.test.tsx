@@ -38,7 +38,10 @@ describe('GoogleLoginScreen', () => {
     beforeEach(() => {
         vi.useFakeTimers();
         vi.setSystemTime(NOW_SECONDS * 1000);
-        vi.spyOn(Math, 'random').mockReturnValue(0);
+        vi.spyOn(globalThis.crypto, 'getRandomValues').mockImplementation((array) => {
+            (array as Uint32Array)[0] = 0;
+            return array;
+        });
         vi.clearAllMocks();
         vi.stubEnv('VITE_GOOGLE_CLIENT_ID', 'test-client-id-abc');
         vi.mocked(cloudAuthApi.createGoogleLoginNonce).mockResolvedValue({

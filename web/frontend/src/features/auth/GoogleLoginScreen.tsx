@@ -71,9 +71,11 @@ export function GoogleLoginScreen() {
                         NONCE_RETRY_MAX_DELAY_MS,
                         NONCE_RETRY_BASE_DELAY_MS * 2 ** Math.min(nonceRetryAttempt, 5)
                     );
+                    const jitter = new Uint32Array(1);
+                    globalThis.crypto.getRandomValues(jitter);
                     const retryDelay = Math.min(
                         NONCE_RETRY_MAX_DELAY_MS,
-                        exponentialDelay + Math.floor(Math.random() * NONCE_RETRY_JITTER_MS)
+                        exponentialDelay + (jitter[0] % NONCE_RETRY_JITTER_MS)
                     );
                     nonceRetryAttempt += 1;
                     if (nonceRefreshTimer) {

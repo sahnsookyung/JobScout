@@ -144,6 +144,7 @@ function openDB(cleanupOwner = ownerId()): Promise<IDBDatabase> {
 
 export async function saveResume(file: Blob, hash: string, filename?: string): Promise<void> {
   const owner = ownerId();
+  await deleteOwnerResumes(owner);
   const db = await openDB(owner);
   const store = getStore(db, 'readwrite');
   const entry: ResumeEntry = {
