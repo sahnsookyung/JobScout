@@ -38,6 +38,7 @@ describe('GoogleLoginScreen', () => {
     beforeEach(() => {
         vi.useFakeTimers();
         vi.setSystemTime(NOW_SECONDS * 1000);
+        vi.spyOn(Math, 'random').mockReturnValue(0);
         vi.clearAllMocks();
         vi.stubEnv('VITE_GOOGLE_CLIENT_ID', 'test-client-id-abc');
         vi.mocked(cloudAuthApi.createGoogleLoginNonce).mockResolvedValue({
@@ -50,6 +51,7 @@ describe('GoogleLoginScreen', () => {
     afterEach(() => {
         vi.clearAllTimers();
         vi.useRealTimers();
+        vi.restoreAllMocks();
         vi.unstubAllEnvs();
         document.getElementById('google-gsi')?.remove();
         delete (globalThis as any).google;
@@ -182,6 +184,76 @@ describe('GoogleLoginScreen', () => {
                 expect.objectContaining({ nonce: 'login-nonce-456' })
             );
             expect(mockRenderButton).toHaveBeenCalledTimes(2);
+        });
+
+        it('retries a failed nonce renewal with backoff', async () => {
+            const mockInitialize = vi.fn();
+            const mockRenderButton = vi.fn();
+            vi.mocked(cloudAuthApi.createGoogleLoginNonce)
+                .mockResolvedValueOnce({
+                    data: { nonce: 'login-nonce-123', expires_at: NOW_SECONDS + 300 },
+                } as never)
+                .mockRejectedValueOnce(new Error('temporary nonce failure'))
+                .mockResolvedValueOnce({
+                    data: { nonce: 'login-nonce-456', expires_at: NOW_SECONDS + 600 },
+                } as never);
+            (globalThis as any).google = {
+                accounts: { id: { initialize: mockInitialize, renderButton: mockRenderButton } },
+            };
+
+            render(<GoogleLoginScreen />);
+            await act(async () => {
+                vi.advanceTimersByTime(200);
+                await Promise.resolve();
+            });
+            await act(async () => {
+                vi.advanceTimersByTime(240_000);
+                await Promise.resolve();
+            });
+
+            expect(screen.getByRole('alert')).toHaveTextContent(
+                'Secure sign-in is temporarily unavailable. Please try again.'
+            );
+            expect(cloudAuthApi.createGoogleLoginNonce).toHaveBeenCalledTimes(2);
+
+            await act(async () => {
+                vi.advanceTimersByTime(1_000);
+                await Promise.resolve();
+            });
+
+            expect(cloudAuthApi.createGoogleLoginNonce).toHaveBeenCalledTimes(3);
+            expect(mockInitialize).toHaveBeenLastCalledWith(
+                expect.objectContaining({ nonce: 'login-nonce-456' })
+            );
+            expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+        });
+
+        it('removes the Google button when its nonce expires during renewal failures', async () => {
+            const mockRenderButton = vi.fn((element: HTMLElement) => {
+                element.appendChild(document.createElement('button'));
+            });
+            vi.mocked(cloudAuthApi.createGoogleLoginNonce)
+                .mockResolvedValueOnce({
+                    data: { nonce: 'login-nonce-123', expires_at: NOW_SECONDS + 300 },
+                } as never)
+                .mockRejectedValue(new Error('persistent nonce failure'));
+            (globalThis as any).google = {
+                accounts: { id: { initialize: vi.fn(), renderButton: mockRenderButton } },
+            };
+
+            render(<GoogleLoginScreen />);
+            await act(async () => {
+                vi.advanceTimersByTime(200);
+                await Promise.resolve();
+            });
+            expect(document.querySelector('button')).not.toBeNull();
+
+            await act(async () => {
+                vi.advanceTimersByTime(300_000);
+                await Promise.resolve();
+            });
+
+            expect(document.querySelector('button')).toBeNull();
         });
 
         it('clears the polling interval on unmount', () => {

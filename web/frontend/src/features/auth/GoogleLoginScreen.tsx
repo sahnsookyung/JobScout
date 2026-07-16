@@ -20,6 +20,10 @@ interface GoogleCredentialResponse {
 const NONCE_REFRESH_SKEW_MS = 30_000;
 const MIN_NONCE_REFRESH_DELAY_MS = 30_000;
 const MAX_NONCE_REFRESH_DELAY_MS = 4 * 60_000;
+const NONCE_RETRY_BASE_DELAY_MS = 1_000;
+const NONCE_RETRY_MAX_DELAY_MS = 30_000;
+const NONCE_RETRY_JITTER_MS = 500;
+const SECURE_SIGN_IN_ERROR = 'Secure sign-in is temporarily unavailable. Please try again.';
 
 export function GoogleLoginScreen() {
     const { login } = useAuth();
@@ -33,6 +37,9 @@ export function GoogleLoginScreen() {
     useEffect(() => {
         isMountedRef.current = true;
         let nonceRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+        let nonceExpiryTimer: ReturnType<typeof setTimeout> | null = null;
+        let activeNonceExpiresAtMs: number | null = null;
+        let nonceRetryAttempt = 0;
         const scriptId = 'google-gsi';
         if (!document.getElementById(scriptId)) {
             const script = document.createElement('script');
@@ -53,25 +60,60 @@ export function GoogleLoginScreen() {
                 expiresAt = response.data.expires_at;
             } catch {
                 if (isMountedRef.current) {
-                    setAuthError('Secure sign-in is temporarily unavailable. Please try again.');
+                    setAuthError(SECURE_SIGN_IN_ERROR);
+                    if (
+                        activeNonceExpiresAtMs === null ||
+                        activeNonceExpiresAtMs <= Date.now()
+                    ) {
+                        buttonRef.current?.replaceChildren();
+                    }
+                    const exponentialDelay = Math.min(
+                        NONCE_RETRY_MAX_DELAY_MS,
+                        NONCE_RETRY_BASE_DELAY_MS * 2 ** Math.min(nonceRetryAttempt, 5)
+                    );
+                    const retryDelay = Math.min(
+                        NONCE_RETRY_MAX_DELAY_MS,
+                        exponentialDelay + Math.floor(Math.random() * NONCE_RETRY_JITTER_MS)
+                    );
+                    nonceRetryAttempt += 1;
+                    if (nonceRefreshTimer) {
+                        clearTimeout(nonceRefreshTimer);
+                    }
+                    nonceRefreshTimer = setTimeout(() => {
+                        nonceRefreshTimer = null;
+                        void initButton();
+                    }, retryDelay);
                 }
                 return;
             }
             if (!isMountedRef.current) return;
+            nonceRetryAttempt = 0;
+            activeNonceExpiresAtMs = expiresAt * 1000;
+            setAuthError((currentError) =>
+                currentError === SECURE_SIGN_IN_ERROR ? null : currentError
+            );
             if (nonceRefreshTimer) {
                 clearTimeout(nonceRefreshTimer);
+            }
+            if (nonceExpiryTimer) {
+                clearTimeout(nonceExpiryTimer);
             }
             const refreshDelay = Math.min(
                 MAX_NONCE_REFRESH_DELAY_MS,
                 Math.max(
                     MIN_NONCE_REFRESH_DELAY_MS,
-                    expiresAt * 1000 - Date.now() - NONCE_REFRESH_SKEW_MS
+                    activeNonceExpiresAtMs - Date.now() - NONCE_REFRESH_SKEW_MS
                 )
             );
             nonceRefreshTimer = setTimeout(() => {
                 nonceRefreshTimer = null;
                 void initButton();
             }, refreshDelay);
+            nonceExpiryTimer = setTimeout(() => {
+                activeNonceExpiresAtMs = null;
+                nonceExpiryTimer = null;
+                buttonRef.current?.replaceChildren();
+            }, Math.max(activeNonceExpiresAtMs - Date.now(), 0));
             // GSI keeps the most recent initialization, so renewing it also replaces
             // the callback closure that carries the expiring server-side nonce.
             globalThis.google.accounts.id.initialize({
@@ -135,6 +177,9 @@ export function GoogleLoginScreen() {
             clearInterval(interval);
             if (nonceRefreshTimer) {
                 clearTimeout(nonceRefreshTimer);
+            }
+            if (nonceExpiryTimer) {
+                clearTimeout(nonceExpiryTimer);
             }
         };
     }, [clientId, login]);
