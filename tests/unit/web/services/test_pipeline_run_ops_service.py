@@ -149,7 +149,9 @@ def test_requeue_run_enqueues_matching_with_durable_correlation():
         return_value=repo,
     ), patch(
         "web.backend.services.pipeline_run_ops_service.enqueue_job",
-    ) as enqueue_job:
+    ) as enqueue_job, patch(
+        "web.backend.services.pipeline_run_ops_service.consume_ephemeral_quota",
+    ) as consume_quota:
         summary, task_id = service.requeue_run(
             db,
             owner_id=None,
@@ -165,6 +167,7 @@ def test_requeue_run_enqueues_matching_with_durable_correlation():
     assert payload["pipeline_run_id"] == str(retry_run.id)
     assert payload["pipeline_stage_id"] == str(stage_row.id)
     assert summary.id == str(retry_run.id)
+    consume_quota.assert_called_once_with(None, "matching_runs", default_limit=2)
     db.commit.assert_called_once()
 
 

@@ -5,6 +5,7 @@ import { cloudAuthApi } from '@/services/cloudAuthApi';
 import { clearPrivateQueryCache, setPrivateQueryScope } from '@/services/queryClient';
 import type { CloudTenant } from '@/types/api';
 import { deleteOwnerResumes, setResumeOwnerContext } from '@/utils/indexedDB';
+import { clearTurnstileVerification } from '@/utils/turnstile';
 
 export interface AuthUser {
     id?: string;
@@ -166,9 +167,7 @@ function clearOwnerClientState(ownerId?: string): void {
         localStorage.removeItem('jobscout_show_hidden');
         localStorage.removeItem('jobscout_llm_ordering');
     }
-    if (typeof sessionStorage !== 'undefined') {
-        sessionStorage.removeItem('jobscout_turnstile_token');
-    }
+    clearTurnstileVerification();
 }
 
 function clearBootstrapRetryTimer(): void {

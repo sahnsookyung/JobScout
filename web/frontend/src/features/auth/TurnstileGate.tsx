@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 
-const TOKEN_KEY = 'jobscout_turnstile_token';
+import {
+    clearTurnstileVerification,
+    hasTurnstileVerification,
+    storeTurnstileVerification,
+    TURNSTILE_RESET_EVENT,
+} from '@/utils/turnstile';
 
 declare global {
     interface Window {
@@ -14,9 +19,13 @@ declare global {
 export function TurnstileGate() {
     const siteKey = String(import.meta.env.VITE_TURNSTILE_SITE_KEY ?? '').trim();
     const containerRef = useRef<HTMLDivElement>(null);
-    const [verified, setVerified] = useState(
-        () => typeof sessionStorage !== 'undefined' && Boolean(sessionStorage.getItem(TOKEN_KEY))
-    );
+    const [verified, setVerified] = useState(hasTurnstileVerification);
+
+    useEffect(() => {
+        const reset = () => setVerified(false);
+        window.addEventListener(TURNSTILE_RESET_EVENT, reset);
+        return () => window.removeEventListener(TURNSTILE_RESET_EVENT, reset);
+    }, []);
 
     useEffect(() => {
         if (!siteKey || verified) return undefined;
@@ -38,15 +47,15 @@ export function TurnstileGate() {
                 sitekey: siteKey,
                 action: 'jobscout-expensive-operation',
                 callback: (token: string) => {
-                    sessionStorage.setItem(TOKEN_KEY, token);
+                    storeTurnstileVerification(token);
                     setVerified(true);
                 },
                 'expired-callback': () => {
-                    sessionStorage.removeItem(TOKEN_KEY);
+                    clearTurnstileVerification();
                     setVerified(false);
                 },
                 'error-callback': () => {
-                    sessionStorage.removeItem(TOKEN_KEY);
+                    clearTurnstileVerification();
                     setVerified(false);
                 },
             });

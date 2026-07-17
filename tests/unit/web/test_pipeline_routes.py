@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Unit tests for pipeline router lifecycle edge cases."""
 
+import asyncio
 import json
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -726,6 +728,29 @@ class TestPipelineRoutes(unittest.TestCase):
         self.assertTrue(data["success"])
         self.assertEqual(data["task_id"], "task-1")
 
+    def test_resume_content_validation_runs_off_the_event_loop(self):
+        from fastapi import UploadFile
+        from web.backend.routers.pipeline import (
+            _validate_resume_file,
+            validate_resume_content_safely,
+        )
+
+        content = b'{"name":"Test User"}'
+        upload = UploadFile(filename="resume.json", file=BytesIO(content))
+
+        with patch(
+            "web.backend.routers.pipeline.run_in_threadpool",
+            new_callable=AsyncMock,
+        ) as mock_run_in_threadpool:
+            validated = asyncio.run(_validate_resume_file(upload))
+
+        self.assertEqual(validated, content)
+        mock_run_in_threadpool.assert_awaited_once_with(
+            validate_resume_content_safely,
+            "resume.json",
+            content,
+        )
+
     @patch("web.backend.routers.pipeline.set_task_state")
     @patch("web.backend.routers.pipeline.get_task_state")
     def test_upload_resume_reconciles_stale_in_progress_upload(
@@ -913,3 +938,35 @@ class TestPipelineRoutes(unittest.TestCase):
         repo.create_resume_upload.assert_called_once()
         self.assertGreaterEqual(repo.update_resume_upload.call_count, 1)
         mock_set_task_state.assert_called_once()
+
+    def test_retry_resume_fails_before_creating_attempt_when_quota_is_exhausted(self):
+        from core.ephemeral_quota import EphemeralQuotaExceeded
+
+        with patch("web.backend.routers.pipeline.job_uow") as mock_uow, patch(
+            "web.backend.routers.pipeline.consume_ephemeral_quota",
+            side_effect=EphemeralQuotaExceeded("resume_uploads quota exceeded"),
+        ):
+            source_upload = SimpleNamespace(
+                id="upload-old",
+                status="failed_retryable",
+                resume_hash="hash-1",
+                resume_fingerprint="fp-1",
+                original_filename="resume.pdf",
+            )
+            repo = MagicMock()
+            repo.get_resume_upload.return_value = source_upload
+            repo.get_structured_resume_by_fingerprint.return_value = object()
+            mock_uow.return_value.__enter__ = MagicMock(return_value=repo)
+            mock_uow.return_value.__exit__ = MagicMock(return_value=False)
+
+            response = self.client.post(
+                "/api/pipeline/retry-resume",
+                json={"upload_id": "upload-old"},
+            )
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(
+            response.json()["code"],
+            "public_testing.resume_upload_quota_exceeded",
+        )
+        repo.create_resume_upload.assert_not_called()

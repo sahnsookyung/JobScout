@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from core.ephemeral_quota import consume_ephemeral_quota
 from core.llm.provider_health import (
     configured_llm_provider_status,
     reset_llm_provider_circuit,
@@ -144,6 +145,11 @@ class PipelineRunOpsService:
             raise ValueError("Pipeline run does not have a requeueable current stage.")
         if stage == "matching" and not source.resume_fingerprint:
             raise ValueError("Matching requeue requires a resume fingerprint.")
+
+        if stage == "matching":
+            consume_ephemeral_quota(owner_id, "matching_runs", default_limit=2)
+        else:
+            consume_ephemeral_quota(owner_id, "resume_uploads", default_limit=3)
 
         repo = PipelineRunRepository(db)
         new_task_id = f"{source.task_id}-{action}-{uuid.uuid4().hex[:8]}"

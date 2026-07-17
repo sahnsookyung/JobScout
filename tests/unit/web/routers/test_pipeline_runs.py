@@ -351,3 +351,31 @@ def test_retry_pipeline_run_rejects_disallowed_action():
 
     assert response.status_code == 400
     assert "cannot be retried" in response.json()["detail"]
+
+
+def test_requeue_pipeline_run_maps_public_quota_exhaustion_to_429():
+    from core.ephemeral_quota import EphemeralQuotaExceeded
+
+    client = _client()
+    with patch(
+        "web.backend.routers.pipeline_runs.pipeline_run_ops_service.requeue_run",
+        side_effect=EphemeralQuotaExceeded("matching_runs quota exceeded"),
+    ):
+        response = client.post("/api/pipeline-runs/run-1/requeue")
+
+    assert response.status_code == 429
+    assert "quota exceeded" in response.json()["detail"]
+
+
+def test_retry_pipeline_run_maps_quota_backend_failure_to_503():
+    from core.ephemeral_quota import EphemeralQuotaUnavailable
+
+    client = _client()
+    with patch(
+        "web.backend.routers.pipeline_runs.pipeline_run_ops_service.retry_run",
+        side_effect=EphemeralQuotaUnavailable("quota backend unavailable"),
+    ):
+        response = client.post("/api/pipeline-runs/run-1/retry")
+
+    assert response.status_code == 503
+    assert "quota backend unavailable" in response.json()["detail"]

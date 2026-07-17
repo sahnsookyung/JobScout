@@ -23,6 +23,7 @@ from tenacity import (
     wait_exponential,
 )
 from tenacity import RetryCallState
+from core.llm.global_budget import consume_global_llm_request
 from core.llm.interfaces import LLMProvider
 from core.llm.system_prompts import (
     DEFAULT_EXTRACTION_SYSTEM_PROMPT,
@@ -465,6 +466,7 @@ class OpenAIService(LLMProvider):
             kwargs["response_format"] = response_format
         if self.max_output_tokens is not None:
             kwargs["max_tokens"] = self.max_output_tokens
+        consume_global_llm_request()
         return self.client.chat.completions.create(
             model=self.extraction_model,
             messages=messages,
@@ -544,6 +546,7 @@ class OpenAIService(LLMProvider):
     def generate_embedding(self, text: str) -> List[float]:
         """Generate embedding vector for text."""
         client = self.embedding_client if self.embedding_client else self.client
+        consume_global_llm_request()
         response = client.embeddings.create(
             input=text, model=self.embedding_model, dimensions=self.embedding_dimensions
         )
@@ -570,6 +573,7 @@ class OpenAIService(LLMProvider):
 
             @_llm_retry()
             def _call(chunk=chunk):
+                consume_global_llm_request()
                 return client.embeddings.create(
                     input=chunk, model=self.embedding_model, dimensions=self.embedding_dimensions
                 )

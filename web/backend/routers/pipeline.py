@@ -23,6 +23,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from starlette.concurrency import run_in_threadpool
 
 from core.resume_selection import (
     build_resume_fingerprint,
@@ -103,7 +104,7 @@ from etl.external_seed_fetcher import (
     get_external_seed_fetcher_status,
 )
 from etl.resume import ResumeParser
-from etl.resume.file_safety import ResumeFileSafetyError, validate_resume_content
+from etl.resume.file_safety import ResumeFileSafetyError, validate_resume_content_safely
 from web.backend.services.clients import (
     INTERNAL_ORCHESTRATOR_URL_ENV,
     ORCHESTRATOR_URL_ENV,
@@ -2279,6 +2280,21 @@ async def retry_resume(
                     message="Retry requires re-upload because extracted artifacts are missing.",
                 )
 
+            try:
+                consume_ephemeral_quota(owner_id, "resume_uploads", default_limit=3)
+            except EphemeralQuotaExceeded as exc:
+                _raise_pipeline_error(
+                    status_code=429,
+                    code="public_testing.resume_upload_quota_exceeded",
+                    message=str(exc),
+                )
+            except EphemeralQuotaUnavailable as exc:
+                _raise_pipeline_error(
+                    status_code=503,
+                    code="public_testing.quota_unavailable",
+                    message=str(exc),
+                )
+
             source_resume_hash = source_upload.resume_hash
             source_resume_fingerprint = source_upload.resume_fingerprint
             task_id = str(_uuid.uuid4())
@@ -2872,7 +2888,7 @@ async def _validate_resume_file(file: UploadFile) -> bytes:
         )
 
     try:
-        validate_resume_content(file.filename, content)
+        await run_in_threadpool(validate_resume_content_safely, file.filename, content)
     except ResumeFileSafetyError as exc:
         _raise_pipeline_error(
             status_code=exc.status_code,

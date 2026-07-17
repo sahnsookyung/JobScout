@@ -8,9 +8,10 @@ Tests verify:
 """
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import json
 
+import httpx
 import openai
 
 from core.llm.openai_service import (
@@ -794,9 +795,26 @@ class TestGenerateEmbeddingsBatch:
             self._make_response(second_vecs),
         ]
 
-        result = service.generate_embeddings_batch(texts)
+        with patch("core.llm.openai_service.consume_global_llm_request") as consume_request:
+            result = service.generate_embeddings_batch(texts)
         assert len(result) == n
         assert service.client.embeddings.create.call_count == 2
+        assert consume_request.call_count == 2
+
+    def test_retry_attempts_each_consume_request_budget(self, service, monkeypatch):
+        timeout = openai.APITimeoutError(request=httpx.Request("POST", "https://example.test"))
+        service.client.embeddings.create.side_effect = [
+            timeout,
+            self._make_response([[0.1, 0.2]]),
+        ]
+        monkeypatch.setattr("core.llm.openai_service._wait_respecting_retry_after", lambda _state: 0)
+
+        with patch("core.llm.openai_service.consume_global_llm_request") as consume_request:
+            result = service.generate_embeddings_batch(["text"])
+
+        assert result == [[0.1, 0.2]]
+        assert service.client.embeddings.create.call_count == 2
+        assert consume_request.call_count == 2
 
     def test_preserves_embedding_order(self, service):
         """Embeddings should be returned in the same order as input texts."""

@@ -7,6 +7,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from core.ephemeral_quota import EphemeralQuotaExceeded, EphemeralQuotaUnavailable
+
 from ..dependencies import (
     TenantContext,
     get_current_user,
@@ -274,6 +276,8 @@ def cancel_pipeline_run(
     responses={
         400: {"description": "Invalid tenant header or action not allowed"},
         404: {"description": "Pipeline run not found"},
+        429: {"description": "Public-testing quota exhausted"},
+        503: {"description": "Public-testing quota unavailable"},
     },
 )
 def requeue_pipeline_run(
@@ -293,6 +297,10 @@ def requeue_pipeline_run(
         raise HTTPException(status_code=404, detail="Pipeline run not found") from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except EphemeralQuotaExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except EphemeralQuotaUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return PipelineRunOperationResponse(
         success=True,
         action="requeue",
@@ -309,6 +317,8 @@ def requeue_pipeline_run(
     responses={
         400: {"description": "Invalid tenant header or action not allowed"},
         404: {"description": "Pipeline run not found"},
+        429: {"description": "Public-testing quota exhausted"},
+        503: {"description": "Public-testing quota unavailable"},
     },
 )
 def retry_pipeline_run(
@@ -328,6 +338,10 @@ def retry_pipeline_run(
         raise HTTPException(status_code=404, detail="Pipeline run not found") from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except EphemeralQuotaExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except EphemeralQuotaUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return PipelineRunOperationResponse(
         success=True,
         action="retry",

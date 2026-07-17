@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from core.llm.interfaces import LLMProvider
 from core.metrics import record_public_security_event
@@ -28,6 +29,17 @@ tokens = redis.call('INCRBY', KEYS[2], reserve_tokens)
 redis.call('EXPIRE', KEYS[1], tonumber(ARGV[4]))
 redis.call('EXPIRE', KEYS[2], tonumber(ARGV[4]))
 return {1, 'ok', requests, tokens}
+"""
+
+_RESERVE_ADDITIONAL_REQUEST_SCRIPT = """
+local requests = tonumber(redis.call('GET', KEYS[1]) or '0')
+local request_limit = tonumber(ARGV[1])
+if requests + 1 > request_limit then
+  return {0, requests}
+end
+requests = redis.call('INCR', KEYS[1])
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
+return {1, requests}
 """
 
 _RECONCILE_SCRIPT = """
@@ -53,6 +65,12 @@ class GlobalLlmBudgetReservation:
     client: Any
     tokens_key: str
     reserved_tokens: int
+
+
+_PREPAID_REQUEST_UNITS: ContextVar[int] = ContextVar(
+    "jobscout_global_llm_prepaid_request_units",
+    default=0,
+)
 
 
 def global_llm_budget_enabled() -> bool:
@@ -119,6 +137,35 @@ def reserve_global_llm_budget(
     )
 
 
+def consume_global_llm_request(*, client: Any | None = None) -> None:
+    """Count one actual provider attempt, including retries and batch chunks."""
+    if not global_llm_budget_enabled():
+        return
+
+    prepaid = _PREPAID_REQUEST_UNITS.get()
+    if prepaid > 0:
+        _PREPAID_REQUEST_UNITS.set(prepaid - 1)
+        return
+
+    request_limit = _positive_env("JOBSCOUT_CLOUD_GLOBAL_LLM_REQUESTS_PER_DAY")
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    requests_key = f"jobscout-cloud:llm-budget:{day}:requests"
+    resolved_client = client or get_redis_client()
+    try:
+        raw = resolved_client.eval(
+            _RESERVE_ADDITIONAL_REQUEST_SCRIPT,
+            1,
+            requests_key,
+            request_limit,
+            _seconds_until_next_utc_day(),
+        )
+    except Exception as exc:
+        raise GlobalLlmBudgetUnavailable("Global LLM budget backend is unavailable.") from exc
+    if int(raw[0]) != 1:
+        record_public_security_event("global_budget_exhausted")
+        raise GlobalLlmBudgetExceeded("Global daily LLM requests budget exhausted.")
+
+
 def _provider_actual_tokens(provider: LLMProvider) -> int | None:
     usage = getattr(provider, "last_usage", None)
     if usage is None:
@@ -172,6 +219,16 @@ class BudgetedLLMProvider(LLMProvider):
     def __getattr__(self, name: str) -> Any:
         return getattr(self.provider, name)
 
+    def _run_with_budget(self, estimated_tokens: int, operation: Callable[[], Any]) -> Any:
+        reservation = reserve_global_llm_budget(estimated_tokens)
+        context_token = _PREPAID_REQUEST_UNITS.set(1 if reservation is not None else 0)
+        try:
+            result = operation()
+        finally:
+            _PREPAID_REQUEST_UNITS.reset(context_token)
+        reconcile_global_llm_budget(reservation, self.provider)
+        return result
+
     def extract_structured_data(
         self,
         text: str,
@@ -179,44 +236,43 @@ class BudgetedLLMProvider(LLMProvider):
         system_prompt: Optional[str] = None,
         user_message: Optional[str] = None,
     ) -> Dict[str, Any]:
-        reservation = reserve_global_llm_budget(
-            _estimate_tokens(
-                text,
-                schema_spec,
-                system_prompt,
-                user_message,
-                output_reserve=4096,
-            )
-        )
-        result = self.provider.extract_structured_data(
+        estimated_tokens = _estimate_tokens(
             text,
             schema_spec,
-            system_prompt=system_prompt,
-            user_message=user_message,
+            system_prompt,
+            user_message,
+            output_reserve=4096,
         )
-        reconcile_global_llm_budget(reservation, self.provider)
-        return result
+        return self._run_with_budget(
+            estimated_tokens,
+            lambda: self.provider.extract_structured_data(
+                text,
+                schema_spec,
+                system_prompt=system_prompt,
+                user_message=user_message,
+            ),
+        )
 
     def extract_resume_data(self, text: str) -> Dict[str, Any]:
-        reservation = reserve_global_llm_budget(_estimate_tokens(text, output_reserve=4096))
-        result = self.provider.extract_resume_data(text)
-        reconcile_global_llm_budget(reservation, self.provider)
-        return result
+        return self._run_with_budget(
+            _estimate_tokens(text, output_reserve=4096),
+            lambda: self.provider.extract_resume_data(text),
+        )
 
     def extract_requirements_data(self, text: str) -> Dict[str, Any]:
-        reservation = reserve_global_llm_budget(_estimate_tokens(text, output_reserve=4096))
-        result = self.provider.extract_requirements_data(text)
-        reconcile_global_llm_budget(reservation, self.provider)
-        return result
+        return self._run_with_budget(
+            _estimate_tokens(text, output_reserve=4096),
+            lambda: self.provider.extract_requirements_data(text),
+        )
 
     def generate_embedding(self, text: str) -> List[float]:
-        reservation = reserve_global_llm_budget(_estimate_tokens(text))
-        result = self.provider.generate_embedding(text)
-        reconcile_global_llm_budget(reservation, self.provider)
-        return result
+        return self._run_with_budget(
+            _estimate_tokens(text),
+            lambda: self.provider.generate_embedding(text),
+        )
 
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
-        reservation = reserve_global_llm_budget(_estimate_tokens(*texts))
-        result = self.provider.generate_embeddings_batch(texts)
-        reconcile_global_llm_budget(reservation, self.provider)
-        return result
+        return self._run_with_budget(
+            _estimate_tokens(*texts),
+            lambda: self.provider.generate_embeddings_batch(texts),
+        )

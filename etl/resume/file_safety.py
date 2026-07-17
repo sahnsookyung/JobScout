@@ -138,17 +138,35 @@ def parser_isolation_enabled() -> bool:
     }
 
 
+def _apply_child_resource_limits() -> None:
+    try:
+        import resource
+
+        resource.setrlimit(
+            resource.RLIMIT_CPU,
+            (PARSER_TIMEOUT_SECONDS, PARSER_TIMEOUT_SECONDS),
+        )
+        memory_limit = 512 * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (memory_limit, memory_limit))
+        resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
+    except (ImportError, OSError, ValueError):
+        pass
+
+
+def _validate_child(filename: str, content: bytes, result_queue: Any) -> None:
+    try:
+        _apply_child_resource_limits()
+        validate_resume_content(filename, content)
+        result_queue.put((True, None, None))
+    except ResumeFileSafetyError as exc:
+        result_queue.put((False, str(exc), exc.status_code))
+    except BaseException as exc:
+        result_queue.put((False, f"{exc.__class__.__name__}: {exc}", 415))
+
+
 def _parse_child(file_path: str, result_queue: Any) -> None:
     try:
-        try:
-            import resource
-
-            resource.setrlimit(resource.RLIMIT_CPU, (PARSER_TIMEOUT_SECONDS, PARSER_TIMEOUT_SECONDS))
-            memory_limit = 512 * 1024 * 1024
-            resource.setrlimit(resource.RLIMIT_AS, (memory_limit, memory_limit))
-            resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
-        except (ImportError, OSError, ValueError):
-            pass
+        _apply_child_resource_limits()
         from etl.resume.parser import ResumeParser
 
         result_queue.put((True, ResumeParser().parse(file_path)))
@@ -165,6 +183,42 @@ def _stop_parser_process(process: Any) -> None:
     if process.is_alive():
         process.kill()
         process.join(1)
+
+
+def validate_resume_content_safely(filename: str, content: bytes) -> None:
+    """Validate untrusted document structure in a killable child when enabled."""
+    if not parser_isolation_enabled():
+        validate_resume_content(filename, content)
+        return
+
+    context = multiprocessing.get_context("spawn")
+    result_queue = context.Queue(maxsize=1)
+    process = context.Process(
+        target=_validate_child,
+        args=(filename, content, result_queue),
+        daemon=True,
+    )
+    process.start()
+    try:
+        success, value, status_code = result_queue.get(timeout=PARSER_TIMEOUT_SECONDS)
+    except queue.Empty as exc:
+        was_running = process.is_alive()
+        _stop_parser_process(process)
+        record_public_security_event("parser_failed")
+        if was_running:
+            raise ResumeFileSafetyError(
+                "Resume validation exceeded the 15-second limit.",
+                status_code=413,
+            ) from exc
+        raise ResumeFileSafetyError("Resume validator exited without a result.") from exc
+    finally:
+        result_queue.close()
+    process.join(2)
+    if process.is_alive():
+        _stop_parser_process(process)
+    if not success:
+        record_public_security_event("parser_failed")
+        raise ResumeFileSafetyError(str(value), status_code=int(status_code or 415))
 
 
 def parse_resume_file(parser: Any, file_path: str):

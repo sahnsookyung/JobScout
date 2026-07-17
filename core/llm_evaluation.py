@@ -580,6 +580,8 @@ class MatchLlmEvaluationService:
         if evaluation.status != LLM_EVALUATION_FAILED or not bool(evaluation.retryable):
             raise LlmJudgeConflictError("Only retryable failed LLM evaluations can be retried.")
 
+        self._check_daily_quota(owner_id)
+
         analysis = evaluation.analysis if isinstance(evaluation.analysis, dict) else {}
         queue_metadata = analysis.get("queue")
         if not isinstance(queue_metadata, dict):

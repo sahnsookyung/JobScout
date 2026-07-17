@@ -490,6 +490,8 @@ describe('useAuth', () => {
             localStorage.setItem('jobscout_show_hidden', 'true');
             localStorage.setItem('jobscout_llm_ordering', 'score');
             sessionStorage.setItem('jobscout_turnstile_token', 'owner-a-token');
+            sessionStorage.setItem('jobscout_turnstile_token_issued_at', String(Date.now()));
+            sessionStorage.setItem('jobscout_turnstile_verified', '1');
 
             act(() => {
                 result.current.login(
@@ -503,6 +505,8 @@ describe('useAuth', () => {
             expect(localStorage.getItem('jobscout_show_hidden')).toBeNull();
             expect(localStorage.getItem('jobscout_llm_ordering')).toBeNull();
             expect(sessionStorage.getItem('jobscout_turnstile_token')).toBeNull();
+            expect(sessionStorage.getItem('jobscout_turnstile_token_issued_at')).toBeNull();
+            expect(sessionStorage.getItem('jobscout_turnstile_verified')).toBeNull();
         });
 
         it('falls back to a conservative expiry for opaque login tokens', () => {

@@ -2,13 +2,19 @@ import axios, { type AxiosError } from 'axios';
 
 import { withAppBasePath } from '@/config/publicPath';
 import type { ApiErrorResponse, ApiFieldError } from '@/types/api';
+import { readFreshTurnstileToken, requestTurnstileReset } from '@/utils/turnstile';
 
 const TENANT_STORAGE_KEY = 'jobscout_tenant_id';
 const AUTH_STORAGE_KEY = 'jobscout_auth';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CSRF_COOKIE_NAME = '__Host-jobscout_csrf';
 const MUTATION_METHODS = new Set(['post', 'put', 'patch', 'delete']);
-const TURNSTILE_TOKEN_KEY = 'jobscout_turnstile_token';
+const TERMINAL_AUTH_FAILURE_CODES = new Set([
+    'cloud.auth.account_disabled',
+    'cloud.auth.account_deleting',
+    'cloud.auth.access_closed',
+    'cloud.auth.access_revoked',
+]);
 
 let verifiedTenantId: string | null = null;
 
@@ -106,7 +112,11 @@ function hostedAuthRequired(): boolean {
 }
 
 function emitHostedAuthFailure(error: NormalizedApiError): void {
-    if (!hostedAuthRequired() || error.status !== 401) {
+    const authCode = error.originalError.response?.headers?.['x-jobscout-auth-code'];
+    const terminalForbidden = error.status === 403
+        && typeof authCode === 'string'
+        && TERMINAL_AUTH_FAILURE_CODES.has(authCode);
+    if (!hostedAuthRequired() || (error.status !== 401 && !terminalForbidden)) {
         return;
     }
     if (globalThis.window === undefined || typeof globalThis.CustomEvent !== 'function') {
@@ -116,7 +126,7 @@ function emitHostedAuthFailure(error: NormalizedApiError): void {
     globalThis.window.dispatchEvent(
         new CustomEvent(API_AUTH_FAILURE_EVENT, {
             detail: {
-                code: error.code,
+                code: terminalForbidden ? authCode : error.code,
                 status: error.status,
             },
         })
@@ -146,16 +156,8 @@ apiClient.interceptors.request.use(
                 config.headers['X-CSRF-Token'] = csrfToken;
             }
         }
-        const path = String(config.url ?? '').split('?')[0].replace(/\/$/, '');
-        const expensiveOperation =
-            method === 'post'
-            && (
-                path === '/pipeline/upload-resume'
-                || path === '/pipeline/run-matching'
-                || /^\/matches\/[^/]+\/(resume-variants|llm-evaluations)$/.test(path)
-            );
-        if (expensiveOperation && typeof sessionStorage !== 'undefined') {
-            const turnstileToken = sessionStorage.getItem(TURNSTILE_TOKEN_KEY);
+        if (MUTATION_METHODS.has(method)) {
+            const turnstileToken = readFreshTurnstileToken();
             if (turnstileToken) {
                 config.headers = config.headers ?? {};
                 config.headers['X-Turnstile-Token'] = turnstileToken;
@@ -269,6 +271,12 @@ apiClient.interceptors.response.use(
     (error: AxiosError) => {
         const normalised = normalizeApiError(error);
         emitHostedAuthFailure(normalised);
+        if (
+            normalised.status === 403
+            && /turnstile verification/i.test(`${normalised.message} ${normalised.detail ?? ''}`)
+        ) {
+            requestTurnstileReset();
+        }
         if (!isProductionLike()) {
             console.error(`[API Error] ${normalised.status ?? 'network'}: ${normalised.message}`);
         }

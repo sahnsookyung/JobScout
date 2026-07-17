@@ -453,6 +453,7 @@ def test_retry_evaluation_resets_retryable_failed_row_without_tombstoning():
     failed.analysis = {"queue": {"enqueue_reason": "auto_top_n"}}
     service._get_match_for_owner = Mock(return_value=match)
     service._get_evaluation_for_owner = Mock(return_value=failed)
+    service._check_daily_quota = Mock()
 
     result = service.retry_evaluation(
         match.id,
@@ -467,7 +468,28 @@ def test_retry_evaluation_resets_retryable_failed_row_without_tombstoning():
     assert failed.error_code is None
     assert failed.analysis["enqueue_reason"] == "retry_now"
     assert failed.analysis["queue"]["queue_state"] == "pending"
+    service._check_daily_quota.assert_called_once_with("owner-1")
     db.commit.assert_called_once()
+
+
+def test_retry_evaluation_does_not_mutate_row_when_quota_is_exhausted():
+    db = Mock()
+    service = _service(db=db)
+    match = _match()
+    failed = _evaluation(status=LLM_EVALUATION_FAILED)
+    failed.retryable = True
+    service._get_match_for_owner = Mock(return_value=match)
+    service._get_evaluation_for_owner = Mock(return_value=failed)
+    service._check_daily_quota = Mock(
+        side_effect=LlmJudgeQuotaExceededError("quota exhausted")
+    )
+
+    with pytest.raises(LlmJudgeQuotaExceededError, match="quota exhausted"):
+        service.retry_evaluation(match.id, failed.id, owner_id="owner-1")
+
+    assert failed.status == LLM_EVALUATION_FAILED
+    assert failed.retryable is True
+    db.commit.assert_not_called()
 
 def test_retry_evaluation_rejects_terminal_failed_row():
     service = _service(db=Mock())

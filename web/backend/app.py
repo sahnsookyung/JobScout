@@ -63,9 +63,10 @@ config = get_config()
 
 WEB_CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
-    "script-src 'self' https://accounts.google.com https://accounts.gstatic.com; "
-    "frame-src https://accounts.google.com; "
-    "connect-src 'self' https://oauth2.googleapis.com; "
+    "script-src 'self' https://accounts.google.com https://accounts.gstatic.com "
+    "https://challenges.cloudflare.com; "
+    "frame-src https://accounts.google.com https://challenges.cloudflare.com; "
+    "connect-src 'self' https://oauth2.googleapis.com https://challenges.cloudflare.com; "
     "img-src 'self' data: https:; "
     "font-src 'self' data: https://frontend-cdn.perplexity.ai; "
     "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style; "

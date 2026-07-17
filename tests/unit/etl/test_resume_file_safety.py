@@ -120,6 +120,50 @@ def test_isolated_parser_reads_result_before_join(monkeypatch):
     result_queue.close.assert_called_once()
 
 
+def test_isolated_validation_runs_in_child(monkeypatch):
+    monkeypatch.setenv("RESUME_PARSER_ISOLATION_ENABLED", "true")
+    result_queue = MagicMock()
+    result_queue.get.return_value = (True, None, None)
+    process = MagicMock()
+    process.is_alive.return_value = False
+    context = MagicMock()
+    context.Queue.return_value = result_queue
+    context.Process.return_value = process
+
+    with patch("etl.resume.file_safety.multiprocessing.get_context", return_value=context):
+        file_safety.validate_resume_content_safely("resume.pdf", b"%PDF-safe")
+
+    context.Process.assert_called_once_with(
+        target=file_safety._validate_child,
+        args=("resume.pdf", b"%PDF-safe", result_queue),
+        daemon=True,
+    )
+    process.start.assert_called_once()
+    result_queue.get.assert_called_once_with(timeout=file_safety.PARSER_TIMEOUT_SECONDS)
+    result_queue.close.assert_called_once()
+
+
+def test_isolated_validation_preserves_child_error_status(monkeypatch):
+    monkeypatch.setenv("RESUME_PARSER_ISOLATION_ENABLED", "true")
+    result_queue = MagicMock()
+    result_queue.get.return_value = (False, "PDF files are limited to 20 pages.", 413)
+    process = MagicMock()
+    process.is_alive.return_value = False
+    context = MagicMock()
+    context.Queue.return_value = result_queue
+    context.Process.return_value = process
+
+    with (
+        patch("etl.resume.file_safety.multiprocessing.get_context", return_value=context),
+        patch("etl.resume.file_safety.record_public_security_event") as record_event,
+    ):
+        with pytest.raises(file_safety.ResumeFileSafetyError) as exc_info:
+            file_safety.validate_resume_content_safely("resume.pdf", b"%PDF-unsafe")
+
+    assert exc_info.value.status_code == 413
+    record_event.assert_called_once_with("parser_failed")
+
+
 def test_isolated_parser_timeout_terminates_child(monkeypatch):
     monkeypatch.setenv("RESUME_PARSER_ISOLATION_ENABLED", "true")
     result_queue = MagicMock()

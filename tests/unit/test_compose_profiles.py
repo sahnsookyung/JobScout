@@ -85,6 +85,7 @@ def test_e2e_services_share_one_bounded_runtime_build() -> None:
         "scorer-matcher",
         "scorer-model-bootstrap",
         "notification-worker",
+        "llm-evaluation-worker",
         "orchestrator",
     ):
         service = services[service_name]
@@ -103,6 +104,16 @@ def test_e2e_app_context_services_declare_mock_embedding_client_configuration() 
         assert "ETL_EMBEDDING_API_KEY=mock-key" in environment
 
 
+def test_e2e_llm_evaluation_worker_uses_mock_judge_configuration() -> None:
+    compose = _load_compose("docker-compose.e2e.yml")
+    service = compose["services"]["llm-evaluation-worker"]
+
+    assert "PREFERENCES_LLM_JUDGE_PROVIDER=openai_compatible" in service["environment"]
+    assert "PREFERENCES_LLM_JUDGE_BASE_URL=http://mock-llm:8090/v1" in service["environment"]
+    assert "PREFERENCES_LLM_JUDGE_API_KEY=mock-key" in service["environment"]
+    assert service["depends_on"]["mock-llm"]["condition"] == "service_healthy"
+
+
 def test_e2e_services_do_not_inherit_local_env_files() -> None:
     compose = _load_compose("docker-compose.e2e.yml")
 
@@ -114,6 +125,7 @@ def test_e2e_services_do_not_inherit_local_env_files() -> None:
         "scorer-matcher",
         "scorer-model-bootstrap",
         "notification-worker",
+        "llm-evaluation-worker",
         "orchestrator",
     ):
         assert compose["services"][service_name]["env_file"] is None

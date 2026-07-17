@@ -164,6 +164,20 @@ services:
       - DEV_BYPASS_EMAIL=dev-user@jobscout.local
       - DEV_BYPASS_NAME=JobScout Dev User
 
+  llm-evaluation-worker:
+    <<: *e2e-runtime
+    build: !reset null
+    env_file: !reset []
+    command: ["python", "-m", "core.llm_evaluation_worker"]
+    depends_on:
+      mock-llm:
+        condition: service_healthy
+    environment:
+      - JOBSCOUT_ENV=test
+      - PREFERENCES_LLM_JUDGE_PROVIDER=openai_compatible
+      - PREFERENCES_LLM_JUDGE_BASE_URL=http://mock-llm:8090/v1
+      - PREFERENCES_LLM_JUDGE_API_KEY=mock-key
+
   orchestrator:
     <<: *e2e-runtime
     build: !reset null

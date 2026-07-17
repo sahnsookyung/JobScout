@@ -530,6 +530,7 @@ def generate_match_llm_evaluation(
         400: {"description": "Invalid match/evaluation ID"},
         404: {"description": "Evaluation not found"},
         409: {"description": "Evaluation is not retryable"},
+        429: {"description": "LLM judge quota exhausted"},
         503: {"description": "LLM judge unavailable"},
     },
 )
@@ -555,6 +556,8 @@ def retry_match_llm_evaluation(
         raise HTTPException(status_code=404, detail="Evaluation not found") from exc
     except LlmJudgeConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LlmJudgeQuotaExceededError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except LlmJudgeUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

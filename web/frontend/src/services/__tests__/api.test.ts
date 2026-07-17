@@ -64,6 +64,11 @@ vi.mock('axios', () => {
 });
 
 import { API_AUTH_FAILURE_EVENT, apiClient, readRequestedTenantId, setVerifiedTenantId } from '../api';
+import {
+    hasTurnstileVerification,
+    storeTurnstileVerification,
+    TURNSTILE_RESET_EVENT,
+} from '@/utils/turnstile';
 
 describe('apiClient', () => {
     const originalWindow = globalThis.window;
@@ -72,6 +77,7 @@ describe('apiClient', () => {
     beforeEach(() => {
         vi.unstubAllEnvs();
         vi.clearAllMocks();
+        sessionStorage.clear();
         setVerifiedTenantId(null);
         Object.defineProperty(globalThis, 'window', {
             value: originalWindow,
@@ -246,6 +252,38 @@ describe('apiClient', () => {
             const result = requestHandler.fulfilled(mockConfig);
 
             expect(result.headers['X-CSRF-Token']).toBeUndefined();
+        });
+
+        it.each([
+            '/pipeline/retry-resume',
+            '/matches/match-1/llm-evaluations/evaluation-1/retry',
+            '/pipeline-runs/run-1/requeue',
+        ])('should attach a fresh Turnstile token to mutation %s', (url) => {
+            storeTurnstileVerification('turnstile-token');
+            const mockConfig = {
+                method: 'post',
+                url,
+                headers: {} as Record<string, string>,
+            };
+
+            const { requestHandler } = getMockHandlers();
+            const result = requestHandler.fulfilled(mockConfig);
+
+            expect(result.headers['X-Turnstile-Token']).toBe('turnstile-token');
+        });
+
+        it('should not attach an expired Turnstile token', () => {
+            storeTurnstileVerification('expired-token', Date.now() - 5 * 60 * 1000);
+            const mockConfig = {
+                method: 'post',
+                url: '/pipeline/run-matching',
+                headers: {} as Record<string, string>,
+            };
+
+            const { requestHandler } = getMockHandlers();
+            const result = requestHandler.fulfilled(mockConfig);
+
+            expect(result.headers['X-Turnstile-Token']).toBeUndefined();
         });
 
         it('should remove persisted tenant id when clearing verified tenant state', () => {
@@ -425,6 +463,26 @@ describe('apiClient', () => {
             });
         });
 
+        it('should clear client verification when the backend rejects Turnstile', async () => {
+            storeTurnstileVerification('rejected-token');
+            const resetListener = vi.fn();
+            window.addEventListener(TURNSTILE_RESET_EVENT, resetListener);
+            const mockError = createMockError({
+                message: 'Error',
+                status: 403,
+                data: { detail: 'Turnstile verification failed.' },
+            });
+            const { responseHandler } = getMockHandlers();
+
+            await expect(responseHandler.rejected(mockError)).rejects.toMatchObject({
+                status: 403,
+            });
+
+            expect(hasTurnstileVerification()).toBe(false);
+            expect(resetListener).toHaveBeenCalledOnce();
+            window.removeEventListener(TURNSTILE_RESET_EVENT, resetListener);
+        });
+
         it('should extract legacy error field from error response', () => {
             const mockError = createMockError({
                 message: 'Error',
@@ -569,6 +627,42 @@ describe('apiClient', () => {
             });
 
             expect(listener).not.toHaveBeenCalled();
+            window.removeEventListener(API_AUTH_FAILURE_EVENT, listener);
+            consoleSpy.mockRestore();
+        });
+
+        it.each([
+            'cloud.auth.account_disabled',
+            'cloud.auth.account_deleting',
+            'cloud.auth.access_closed',
+            'cloud.auth.access_revoked',
+        ])('should emit a hosted auth failure event for terminal forbidden response %s', async (authCode) => {
+            vi.stubEnv('VITE_AUTH_REQUIRED', 'true');
+            const listener = vi.fn();
+            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            window.addEventListener(API_AUTH_FAILURE_EVENT, listener);
+            const mockError = createMockError({
+                message: 'Forbidden',
+                status: 403,
+                data: { error: 'User account is disabled.' },
+            });
+            if (mockError.response) {
+                mockError.response.headers = {
+                    'x-jobscout-auth-code': authCode,
+                };
+            }
+
+            const { responseHandler } = getMockHandlers();
+            await expect(responseHandler.rejected(mockError)).rejects.toMatchObject({
+                status: 403,
+                code: 'common.http.403',
+            });
+
+            expect(listener).toHaveBeenCalledTimes(1);
+            expect((listener.mock.calls[0]?.[0] as CustomEvent).detail).toEqual({
+                code: authCode,
+                status: 403,
+            });
             window.removeEventListener(API_AUTH_FAILURE_EVENT, listener);
             consoleSpy.mockRestore();
         });

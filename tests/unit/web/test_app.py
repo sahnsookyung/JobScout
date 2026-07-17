@@ -211,6 +211,20 @@ class TestReadRootEndpoint:
             "https://accounts.google.com/gsi/style"
             in resp.headers["content-security-policy"]
         )
+        assert (
+            "script-src 'self' https://accounts.google.com https://accounts.gstatic.com "
+            "https://challenges.cloudflare.com;"
+            in resp.headers["content-security-policy"]
+        )
+        assert (
+            "frame-src https://accounts.google.com https://challenges.cloudflare.com;"
+            in resp.headers["content-security-policy"]
+        )
+        assert (
+            "connect-src 'self' https://oauth2.googleapis.com "
+            "https://challenges.cloudflare.com;"
+            in resp.headers["content-security-policy"]
+        )
 
     def test_returns_full_html_content(self, tmp_path):
         html = '<html><head><title>JobScout</title></head><body><div id="root"></div></body></html>'

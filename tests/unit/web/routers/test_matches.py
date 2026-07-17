@@ -886,6 +886,22 @@ class TestMatchesRouter:
 
         assert response.status_code == 409
 
+    def test_retry_llm_evaluation_quota_exhaustion_maps_to_429(
+        self,
+        client,
+        mock_llm_evaluation_service,
+    ):
+        match_id = str(uuid.uuid4())
+        evaluation_id = str(uuid.uuid4())
+        mock_llm_evaluation_service.retry_evaluation.side_effect = (
+            LlmJudgeQuotaExceededError("llm_evaluations quota exceeded")
+        )
+
+        response = client.post(f"/api/matches/{match_id}/llm-evaluations/{evaluation_id}/retry")
+
+        assert response.status_code == 429
+        assert "quota exceeded" in response.json()["detail"]
+
 
 class TestMatchesRouterIntegration:
     """Integration tests for matches router with mocked dependencies."""
