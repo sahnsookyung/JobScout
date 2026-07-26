@@ -11,9 +11,20 @@ import asyncio
 import pytest
 import threading
 from types import SimpleNamespace
+from typing import Generator
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 
 from fastapi.testclient import TestClient
+
+
+@pytest.fixture
+def stub_job_preparation_stats() -> Generator[None, None, None]:
+    """Keep consumer unit tests isolated from database-backed status metadata."""
+    with patch(
+        "services.scorer_matcher.main._job_preparation_stats",
+        return_value={},
+    ):
+        yield
 
 
 class TestMatcherState:
@@ -501,7 +512,7 @@ class TestMatcherConsumer:
         ]
 
     @pytest.mark.asyncio
-    async def test_do_process_no_result(self):
+    async def test_do_process_no_result(self, stub_job_preparation_stats):
         """_do_process handles no result."""
         from services.scorer_matcher.main import MatcherConsumer
 
@@ -556,7 +567,10 @@ class TestMatcherConsumer:
         assert failed_state["updated_at"]
 
     @pytest.mark.asyncio
-    async def test_do_process_persists_matching_steps(self):
+    async def test_do_process_persists_matching_steps(
+        self,
+        stub_job_preparation_stats,
+    ):
         """_do_process writes each matching stage to Redis as the runner advances."""
         from services.scorer_matcher.main import MatcherConsumer
 
@@ -602,7 +616,10 @@ class TestMatcherConsumer:
         ]
 
     @pytest.mark.asyncio
-    async def test_do_process_includes_stale_result_metadata(self):
+    async def test_do_process_includes_stale_result_metadata(
+        self,
+        stub_job_preparation_stats,
+    ):
         """_do_process preserves stale-result metadata in terminal task state."""
         from services.scorer_matcher.main import MatcherConsumer
 
@@ -647,7 +664,10 @@ class TestMatcherConsumer:
         assert mock_set_state.call_args_list[-1].args[1]["latest_upload_id"] == "upload-new"
 
     @pytest.mark.asyncio
-    async def test_do_process_marks_cancellation_requested_before_save_boundary(self):
+    async def test_do_process_marks_cancellation_requested_before_save_boundary(
+        self,
+        stub_job_preparation_stats,
+    ):
         """Cancellation before saving uses cancellation_requested state."""
         from services.scorer_matcher.main import MatcherConsumer
 
@@ -683,7 +703,10 @@ class TestMatcherConsumer:
         assert any(state["status"] == "cancellation_requested" for state in running_states)
 
     @pytest.mark.asyncio
-    async def test_do_process_marks_persisting_after_save_boundary(self):
+    async def test_do_process_marks_persisting_after_save_boundary(
+        self,
+        stub_job_preparation_stats,
+    ):
         """Cancellation after save boundary uses persisting state."""
         from services.scorer_matcher.main import MatcherConsumer
 
@@ -719,7 +742,10 @@ class TestMatcherConsumer:
         assert any(state["status"] == "persisting" for state in running_states)
 
     @pytest.mark.asyncio
-    async def test_do_process_ignores_cancellation_lookup_failures(self):
+    async def test_do_process_ignores_cancellation_lookup_failures(
+        self,
+        stub_job_preparation_stats,
+    ):
         from services.scorer_matcher.main import MatcherConsumer
 
         consumer = MatcherConsumer(Mock())
@@ -747,7 +773,10 @@ class TestMatcherConsumer:
         assert mock_set_state.call_args_list[0].args[1]["status"] == "running"
 
     @pytest.mark.asyncio
-    async def test_do_process_logs_when_completed_state_write_fails(self):
+    async def test_do_process_logs_when_completed_state_write_fails(
+        self,
+        stub_job_preparation_stats,
+    ):
         from services.scorer_matcher.main import MatcherConsumer
 
         consumer = MatcherConsumer(Mock())
@@ -778,7 +807,10 @@ class TestMatcherConsumer:
         mock_warning.assert_called()
 
     @pytest.mark.asyncio
-    async def test_do_process_logs_when_failed_state_write_fails(self):
+    async def test_do_process_logs_when_failed_state_write_fails(
+        self,
+        stub_job_preparation_stats,
+    ):
         from services.scorer_matcher.main import MatcherConsumer
 
         consumer = MatcherConsumer(Mock())
@@ -799,7 +831,10 @@ class TestMatcherConsumer:
         mock_warning.assert_called()
 
     @pytest.mark.asyncio
-    async def test_do_process_forwards_owner_context_when_present(self):
+    async def test_do_process_forwards_owner_context_when_present(
+        self,
+        stub_job_preparation_stats,
+    ):
         from services.scorer_matcher.main import MatcherConsumer
 
         consumer = MatcherConsumer(Mock())

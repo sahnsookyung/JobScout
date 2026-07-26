@@ -25,19 +25,19 @@ def clean_env():
     os.environ.update(env_backup)
 
 
-@pytest.fixture(autouse=True)
-def _block_production_db(clean_env):  # noqa: PT004  (runs after clean_env saves backup)
+@pytest.fixture(scope="session", autouse=True)
+def _block_production_db():
     """Block production database access during tests.
 
     Removes DATABASE_URL so tests cannot accidentally write to the production DB.
     Tests that need a database must use the ``test_database`` fixture, which
-    provides an isolated container.  ``clean_env`` (a dependency here) has
-    already saved the env backup before this fixture removes the variable,
-    so the original value is automatically restored after each test.
+    provides an isolated container. The original value is restored after the
+    complete test session.
     """
     current_db_url = os.environ.get("DATABASE_URL")
     test_db_url = os.environ.get("TEST_DATABASE_URL")
-    if current_db_url and current_db_url != test_db_url:
+    blocked_production_url = bool(current_db_url and current_db_url != test_db_url)
+    if blocked_production_url:
         os.environ.pop("DATABASE_URL", None)
         import warnings
         warnings.warn(
@@ -46,6 +46,8 @@ def _block_production_db(clean_env):  # noqa: PT004  (runs after clean_env saves
             stacklevel=2,
         )
     yield
+    if blocked_production_url and current_db_url is not None:
+        os.environ["DATABASE_URL"] = current_db_url
 
 
 # Test database credentials (not production credentials)
@@ -160,9 +162,9 @@ def test_database():
         
     except Exception as e:
         import traceback
-        print(f"\n⚠ Failed to start test database container:")
+        print("\n⚠ Failed to start test database container:")
         print(f"   {e}")
-        print(f"\n   Full traceback:")
+        print("\n   Full traceback:")
         traceback.print_exc()
         pytest.skip(f"Could not start test database container: {e}")
     finally:
@@ -226,9 +228,9 @@ def redis_container():
 
     except Exception as e:
         import traceback
-        print(f"\n⚠ Failed to start test Redis container:")
+        print("\n⚠ Failed to start test Redis container:")
         print(f"   {e}")
-        print(f"\n   Full traceback:")
+        print("\n   Full traceback:")
         traceback.print_exc()
         pytest.skip(f"Could not start test Redis container: {e}")
     finally:
@@ -245,17 +247,14 @@ def redis_url(redis_container):
     return redis_container["url"]
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def _reset_prometheus_metrics():
-    """Zero Prometheus counter/histogram children between tests.
+    """Zero Prometheus counter/histogram children around metrics tests.
 
     Module-scope Counter/Histogram singletons in ``core.metrics`` would
-    otherwise leak counts across tests. Walks the default REGISTRY and
-    resets every child sample value. O(metrics × children) per test — tiny.
+    otherwise leak counts across tests.
     """
     from prometheus_client import REGISTRY
-
-    yield
 
     def _reset_child(child) -> None:
         value = getattr(child, "_value", None)
@@ -271,70 +270,18 @@ def _reset_prometheus_metrics():
         if bucket_sum is not None and hasattr(bucket_sum, "set"):
             bucket_sum.set(0)
 
-    for collector in list(REGISTRY._collector_to_names):
-        children = getattr(collector, "_metrics", None)
-        if not children:
-            # Unlabeled metrics store their single child directly on the
-            # collector (no ``_metrics`` map).
-            _reset_child(collector)
-            continue
-        iterable = children.values() if isinstance(children, dict) else children
-        for child in iterable:
-            _reset_child(child)
+    def _reset_registry() -> None:
+        for collector in list(REGISTRY._collector_to_names):
+            children = getattr(collector, "_metrics", None)
+            if not children:
+                # Unlabeled metrics store their single child directly on the
+                # collector (no ``_metrics`` map).
+                _reset_child(collector)
+                continue
+            iterable = children.values() if isinstance(children, dict) else children
+            for child in iterable:
+                _reset_child(child)
 
-
-@pytest.fixture(autouse=True)
-def reset_redis_module_state():
-    """Reset Redis module state between tests to prevent pollution.
-
-    This fixture resets the connection pool in redis_streams
-    to ensure tests don't share state.
-    """
-    from core import redis_streams
-    # Backup original state
-    original_connection_pool = redis_streams._connection_pool
-
+    _reset_registry()
     yield
-
-    # Reset connection pool to force recreation
-    redis_streams._connection_pool = original_connection_pool
-    if original_connection_pool is not None:
-        try:
-            original_connection_pool.disconnect()
-        except Exception:
-            pass  # Ignore errors on disconnect
-
-
-@pytest.fixture(autouse=True)
-def redirect_resume_files(monkeypatch, tmp_path):
-    """Redirect resume file writes from project root to temp directory during tests.
-
-    This fixture ensures tests don't pollute the project root directory with resume files.
-    Intercepts writes to:
-    - Relative paths that resolve to project root
-    - Absolute paths to project root (after config resolution)
-
-    Note: Uses closure over tmp_path to ensure each test/worker gets isolated temp directory.
-    """
-    import os
-    from pathlib import Path
-
-    _original_open = open
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    tests_dir = os.path.join(project_root, 'tests')
-
-    def patched_open(filename, mode='r', *args, **kwargs):
-        """Patch open() to redirect resume file writes from project root to temp."""
-        if mode.startswith('w') or mode.startswith('a') or mode.startswith('x'):
-            filename_str = str(filename) if isinstance(filename, (str, Path)) else None
-            if filename_str:
-                abs_path = os.path.abspath(filename_str)
-                in_project_root = abs_path.startswith(project_root) and not abs_path.startswith(tests_dir)
-
-                if in_project_root:
-                    new_path = str(tmp_path / os.path.basename(filename_str))
-                    return _original_open(new_path, mode, *args, **kwargs)
-
-        return _original_open(filename, mode, *args, **kwargs)
-
-    monkeypatch.setattr('builtins.open', patched_open)
+    _reset_registry()

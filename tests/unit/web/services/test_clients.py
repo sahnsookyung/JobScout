@@ -4,11 +4,13 @@ Tests for Service Clients
 Covers: web/backend/services/clients.py
 """
 
-import pytest
 import os
-import httpx
 from unittest.mock import Mock, patch
 
+import httpx
+import pytest
+
+from web.backend.services import clients as clients_module
 from web.backend.services.clients import (
     ServiceClient,
     ExtractionClient,
@@ -412,6 +414,21 @@ class TestScorerMatcherClient:
 class TestOrchestratorClient:
     """Test OrchestratorClient."""
 
+    @pytest.fixture(autouse=True)
+    def _use_fake_poll_clock(self, monkeypatch):
+        """Advance polling deadlines without wall-clock sleeps."""
+        clock = {"now": 0.0}
+
+        def monotonic() -> float:
+            return clock["now"]
+
+        def sleep(seconds: float) -> None:
+            clock["now"] += seconds
+
+        monkeypatch.setattr(clients_module, "_poll_clock", monotonic)
+        monkeypatch.setattr(clients_module, "_poll_sleep", sleep)
+        yield clock
+
     def test_init_default_url(self):
         """Test initialization with default URL."""
         with patch.dict(
@@ -574,18 +591,19 @@ class TestOrchestratorClient:
             assert result["success"] is True
             assert result["status"] == "cancelled"
 
-    def test_wait_for_completion_timeout(self):
+    def test_wait_for_completion_timeout(self, _use_fake_poll_clock):
         """Test wait_for_completion with timeout."""
         client = OrchestratorClient("http://orchestrator:8084")
 
         with patch.object(client, 'get') as mock_get:
             mock_get.return_value = {"status": "running"}
 
-            result = client.wait_for_completion("match-abc123", timeout=0.2, poll_interval=0.1)
+            result = client.wait_for_completion("match-abc123", timeout=0.2, poll_interval=1.0)
 
             assert result["success"] is False
             assert result["status"] == "timeout"
             assert "Timeout" in result["error"]
+            assert _use_fake_poll_clock["now"] == pytest.approx(0.2)
 
     def test_wait_for_completion_http_404_continues(self, caplog):
         """Test wait_for_completion handles 404 by continuing."""

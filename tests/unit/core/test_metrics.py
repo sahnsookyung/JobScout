@@ -1,15 +1,17 @@
 """Unit tests for ``core.metrics``.
 
 Verify metric shapes, the `_safe` cardinality bound, and the degrade-reason
-classifier. The autouse ``_reset_prometheus_metrics`` fixture in
-``tests/conftest.py`` zeros children between tests.
+classifier.
 """
 
 from __future__ import annotations
 
+import pytest
 from prometheus_client import REGISTRY
 
 from core import metrics as m
+
+pytestmark = pytest.mark.usefixtures("_reset_prometheus_metrics")
 
 
 class TestMetricDeclarations:
