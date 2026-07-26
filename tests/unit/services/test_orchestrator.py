@@ -2111,8 +2111,10 @@ class TestOrchestratorSubscriptionOrder:
         from services.orchestrator.main import orchestrate_match
 
         mock_client, mock_pubsub = mock_redis_async
+        task_id = f"test-{uuid.uuid4().hex[:8]}"
 
         mock_state = AsyncMock()
+        mock_state.task_id = task_id
         mock_state.status = "pending"
         mock_state.notify = AsyncMock()
         mock_state._save_to_redis = AsyncMock()
@@ -2122,9 +2124,6 @@ class TestOrchestratorSubscriptionOrder:
 
         async def empty_gen():
             yield {"type": "ping"}  # Non-message type
-            # Prevent infinite loop
-            while True:
-                await asyncio.sleep(10)
 
         mock_pubsub.listen = MagicMock(return_value=empty_gen())
 
@@ -2138,16 +2137,9 @@ class TestOrchestratorSubscriptionOrder:
             ):
                 with patch("services.orchestrator.main.enqueue_job"):
                     with patch("services.orchestrator.main.OrchestrationState"):
-                        task_id = f"test-{uuid.uuid4().hex[:8]}"
-                        
-                        # Use asyncio.timeout instead of wait_for with try/except
-                        try:
-                            async with asyncio.timeout(0.1):
-                                await orchestrate_match(
-                                    task_id, mock_registry, resume_fingerprint=None
-                                )
-                        except asyncio.TimeoutError:
-                            pass  # Expected - we just want to verify setup
+                        await orchestrate_match(
+                            task_id, mock_registry, resume_fingerprint=None
+                        )
 
         # Verify subscribe was called (robust: check behavior, not call count)
         assert mock_pubsub.subscribe.called, "Should subscribe to channel"
@@ -2159,8 +2151,10 @@ class TestOrchestratorSubscriptionOrder:
         from services.orchestrator.main import orchestrate_match
 
         mock_client, mock_pubsub = mock_redis_async
+        task_id = f"test-{uuid.uuid4().hex[:8]}"
 
         mock_state = AsyncMock()
+        mock_state.task_id = task_id
         mock_state.status = "pending"
         mock_state.notify = AsyncMock()
         mock_state._save_to_redis = AsyncMock()
@@ -2169,11 +2163,11 @@ class TestOrchestratorSubscriptionOrder:
         async def extraction_gen():
             yield {
                 "type": "message",
-                "data": '{"task_id": "test-123", "status": "completed", "resume_fingerprint": "abc123"}',
+                "data": (
+                    f'{{"task_id": "{task_id}", "status": "completed", '
+                    '"resume_fingerprint": "abc123"}'
+                ),
             }
-            # Prevent infinite loop
-            while True:
-                await asyncio.sleep(10)
 
         mock_pubsub.listen = MagicMock(return_value=extraction_gen())
 
@@ -2190,14 +2184,9 @@ class TestOrchestratorSubscriptionOrder:
             ):
                 with patch("services.orchestrator.main.enqueue_job"):
                     with patch("services.orchestrator.main.OrchestrationState"):
-                        task_id = f"test-{uuid.uuid4().hex[:8]}"
-                        try:
-                            async with asyncio.timeout(0.1):
-                                await orchestrate_match(
-                                    task_id, mock_registry, resume_fingerprint=None
-                                )
-                        except asyncio.TimeoutError:
-                            pass  # Expected
+                        await orchestrate_match(
+                            task_id, mock_registry, resume_fingerprint=None
+                        )
 
         # Robust: verify subscribe was called
         assert mock_pubsub.subscribe.called, "Should subscribe to channel"
@@ -2414,6 +2403,7 @@ class TestOrchestratorErrorHandling:
         from services.orchestrator.main import orchestrate_match
 
         mock_state = AsyncMock()
+        mock_state.task_id = "test-123"
         mock_state.status = "extracting"
         mock_state.error = None
         mock_state.notify = AsyncMock()
@@ -2430,9 +2420,6 @@ class TestOrchestratorErrorHandling:
                 "type": "message",
                 "data": '{"task_id": "test-123", "status": "failed", "error": "Test error"}',
             }
-            # Stop after first message
-            while True:
-                await asyncio.sleep(10)
         
         mock_pubsub.listen = MagicMock(return_value=failed_gen())
 
@@ -2453,14 +2440,9 @@ class TestOrchestratorErrorHandling:
             ):
                 with patch("services.orchestrator.main.enqueue_job"):
                     with patch("services.orchestrator.main.OrchestrationState"):
-                        # Use timeout to prevent infinite loop
-                        try:
-                            async with asyncio.timeout(0.1):
-                                await orchestrate_match(
-                                    "test-123", mock_registry, resume_fingerprint=None
-                                )
-                        except asyncio.TimeoutError:
-                            pass  # Expected - just need to verify some setup happened
+                        await orchestrate_match(
+                            "test-123", mock_registry, resume_fingerprint=None
+                        )
 
         # Robust: verify notification was attempted
         assert mock_state.notify.called or mock_state._save_to_redis.called, "Should attempt to handle error"
@@ -2471,6 +2453,7 @@ class TestOrchestratorErrorHandling:
         from services.orchestrator.main import orchestrate_match
 
         mock_state = AsyncMock()
+        mock_state.task_id = "test-123"
         mock_state.status = "extracting"
         mock_state.error = None
         mock_state.resume_fingerprint = None
@@ -2488,9 +2471,6 @@ class TestOrchestratorErrorHandling:
                 "type": "message",
                 "data": '{"task_id": "test-123", "status": "completed"}',
             }
-            # Stop after first message
-            while True:
-                await asyncio.sleep(10)
         
         mock_pubsub.listen = MagicMock(return_value=completed_no_fp_gen())
 
@@ -2511,14 +2491,9 @@ class TestOrchestratorErrorHandling:
             ):
                 with patch("services.orchestrator.main.enqueue_job"):
                     with patch("services.orchestrator.main.OrchestrationState"):
-                        # Use timeout to prevent infinite loop
-                        try:
-                            async with asyncio.timeout(0.1):
-                                await orchestrate_match(
-                                    "test-123", mock_registry, resume_fingerprint=None
-                                )
-                        except asyncio.TimeoutError:
-                            pass  # Expected
+                        await orchestrate_match(
+                            "test-123", mock_registry, resume_fingerprint=None
+                        )
 
         # Robust: verify state was saved (indicates error handling path was taken)
         assert mock_state._save_to_redis.called, "Should attempt to save state"
@@ -2533,6 +2508,7 @@ class TestFullPipelinePaths:
         from services.orchestrator.main import orchestrate_match
 
         mock_state = AsyncMock()
+        mock_state.task_id = "test-123"
         mock_state.status = "pending"
         mock_state.notify = AsyncMock()
         mock_state._save_to_redis = AsyncMock()
@@ -2548,8 +2524,6 @@ class TestFullPipelinePaths:
                 "type": "message",
                 "data": '{"task_id": "test-123", "status": "completed", "matches_count": 5}',
             }
-            while True:
-                await asyncio.sleep(10)
 
         mock_pubsub.listen = MagicMock(return_value=matching_gen())
 
@@ -2570,15 +2544,11 @@ class TestFullPipelinePaths:
             ):
                 with patch("services.orchestrator.main.enqueue_job") as mock_enqueue:
                     with patch("services.orchestrator.main.OrchestrationState"):
-                        try:
-                            async with asyncio.timeout(0.1):
-                                await orchestrate_match(
-                                    "test-123", 
-                                    mock_registry, 
-                                    resume_fingerprint="existing-fp-123"
-                                )
-                        except asyncio.TimeoutError:
-                            pass  # Expected: timeout exits the coroutine under test
+                        await orchestrate_match(
+                            "test-123",
+                            mock_registry,
+                            resume_fingerprint="existing-fp-123",
+                        )
 
         # Verify: matching was enqueued (extraction/embedding should be skipped)
         assert mock_enqueue.called, "Should enqueue matching job"
@@ -2589,6 +2559,7 @@ class TestFullPipelinePaths:
         from services.orchestrator.main import orchestrate_match
 
         mock_state = AsyncMock()
+        mock_state.task_id = "test-123"
         mock_state.status = "pending"
         mock_state.notify = AsyncMock()
         mock_state._save_to_redis = AsyncMock()
@@ -2604,8 +2575,6 @@ class TestFullPipelinePaths:
                 "type": "message",
                 "data": '{"task_id": "test-123", "status": "completed", "matches_count": 10}',
             }
-            while True:
-                await asyncio.sleep(10)
 
         mock_pubsub.listen = MagicMock(return_value=matching_gen())
 
@@ -2626,13 +2595,9 @@ class TestFullPipelinePaths:
             ):
                 with patch("services.orchestrator.main.enqueue_job"):
                     with patch("services.orchestrator.main.OrchestrationState"):
-                        try:
-                            async with asyncio.timeout(0.1):
-                                await orchestrate_match(
-                                    "test-123", mock_registry, resume_fingerprint="fp-123"
-                                )
-                        except asyncio.TimeoutError:
-                            pass  # Expected: timeout exits the coroutine under test
+                        await orchestrate_match(
+                            "test-123", mock_registry, resume_fingerprint="fp-123"
+                        )
 
         # Verify: state was updated with matches count
         assert mock_state._save_to_redis.called or mock_state.notify.called
@@ -3182,17 +3147,20 @@ class TestLogStreamBacklogs:
         from core import redis_streams
 
         stop_event = asyncio.Event()
-        
-        with patch.object(redis_streams, "log_stream_backlogs"):
-            try:
-                async with asyncio.timeout(0.1):
-                    await _log_stream_backlogs_periodically(stop_event)
-            except asyncio.TimeoutError:
-                pass  # Expected: timeout exits the coroutine under test
-            except Exception:
-                pass  # codeql[py/empty-except] intentional: testing error paths
-        
-        stop_event.set()
+
+        async def stop_after_first_interval(_seconds: float) -> None:
+            stop_event.set()
+
+        with (
+            patch.object(redis_streams, "log_stream_backlogs") as mock_log,
+            patch(
+                "services.orchestrator.main.asyncio.sleep",
+                new=AsyncMock(side_effect=stop_after_first_interval),
+            ),
+        ):
+            await _log_stream_backlogs_periodically(stop_event)
+
+        mock_log.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_log_stream_backlogs_stops(self):
@@ -3438,6 +3406,7 @@ class TestFullPipelinePragmas:
         from services.orchestrator.main import orchestrate_match
 
         mock_state = AsyncMock()
+        mock_state.task_id = "test-123"
         mock_state.status = "pending"
         mock_state.notify = AsyncMock()
         mock_state._save_to_redis = AsyncMock()
@@ -3452,8 +3421,6 @@ class TestFullPipelinePragmas:
                 "type": "message",
                 "data": '{"task_id": "test-123", "status": "failed", "error": "Matching failed"}',
             }
-            while True:
-                await asyncio.sleep(10)
 
         mock_pubsub.listen = MagicMock(return_value=matching_fail_gen())
 
@@ -3474,15 +3441,11 @@ class TestFullPipelinePragmas:
             ):
                 with patch("services.orchestrator.main.enqueue_job"):
                     with patch("services.orchestrator.main.OrchestrationState"):
-                        try:
-                            async with asyncio.timeout(0.1):
-                                await orchestrate_match(
-                                    "test-123",
-                                    mock_registry,
-                                    resume_fingerprint="existing-fp",
-                                )
-                        except asyncio.TimeoutError:
-                            pass  # Expected: timeout exits the coroutine under test
+                        await orchestrate_match(
+                            "test-123",
+                            mock_registry,
+                            resume_fingerprint="existing-fp",
+                        )
 
     @pytest.mark.asyncio
     async def test_full_pipeline_embeddings_failure(self):
@@ -3490,6 +3453,7 @@ class TestFullPipelinePragmas:
         from services.orchestrator.main import orchestrate_match
 
         mock_state = AsyncMock()
+        mock_state.task_id = "test-123"
         mock_state.status = "pending"
         mock_state.notify = AsyncMock()
         mock_state._save_to_redis = AsyncMock()
@@ -3505,8 +3469,6 @@ class TestFullPipelinePragmas:
                 "type": "message",
                 "data": '{"task_id": "test-123", "status": "completed", "resume_fingerprint": "fp123"}',
             }
-            while True:
-                await asyncio.sleep(10)
 
         mock_pubsub.listen = MagicMock(return_value=extraction_gen())
 
@@ -3531,15 +3493,11 @@ class TestFullPipelinePragmas:
                         return_value=False,
                     ):
                         with patch("services.orchestrator.main.OrchestrationState"):
-                            try:
-                                async with asyncio.timeout(0.1):
-                                    await orchestrate_match(
-                                        "test-123",
-                                        mock_registry,
-                                        resume_fingerprint=None,
-                                    )
-                            except asyncio.TimeoutError:
-                                pass  # Expected: timeout exits the coroutine under test
+                            await orchestrate_match(
+                                "test-123",
+                                mock_registry,
+                                resume_fingerprint=None,
+                            )
 
         assert mock_enqueue.called
 

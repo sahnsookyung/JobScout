@@ -2,8 +2,6 @@
 
 Each test invokes a code path that should fire exactly one of the
 typed ``record_*`` helpers, then asserts the Prometheus sample delta.
-The autouse ``_reset_prometheus_metrics`` fixture in
-``tests/conftest.py`` zeros children between tests.
 """
 
 from __future__ import annotations
@@ -13,6 +11,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from prometheus_client import REGISTRY
+
+pytestmark = pytest.mark.usefixtures("_reset_prometheus_metrics")
 
 
 def _sample(name: str, labels: dict[str, str]) -> float:

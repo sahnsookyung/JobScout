@@ -13,6 +13,7 @@ Tests cover:
 """
 
 import os
+import socket
 from datetime import datetime, timezone
 from unittest.mock import Mock, patch, MagicMock
 import pytest
@@ -130,6 +131,24 @@ class TestRateLimitParsing:
 class TestURLValidation:
     """Test webhook URL validation and SSRF protection."""
 
+    @pytest.fixture(autouse=True)
+    def _stub_dns(self):
+        """Resolve test hosts deterministically without external DNS."""
+        private_hosts = {
+            "127.0.0.1": "127.0.0.1",
+            "localhost": "127.0.0.1",
+            "192.168.1.1": "192.168.1.1",
+            "10.0.0.1": "10.0.0.1",
+            "172.16.0.1": "172.16.0.1",
+        }
+
+        def resolve(hostname, *_args, **_kwargs):
+            address = private_hosts.get(hostname, "93.184.216.34")
+            return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (address, 0))]
+
+        with patch("notification.channels.socket.getaddrinfo", side_effect=resolve):
+            yield
+
     def test_validate_webhook_url_valid_https(self):
         """Test valid HTTPS URL passes validation."""
         assert _validate_webhook_url('https://example.com/webhook') is True
@@ -173,7 +192,8 @@ class TestURLValidation:
 
     def test_validate_webhook_url_invalid_hostname(self, caplog):
         """Test unresolvable hostnames are rejected."""
-        result = _validate_webhook_url('https://invalid-hostname-that-does-not-exist.com/webhook')
+        with patch("notification.channels.socket.getaddrinfo", side_effect=socket.gaierror):
+            result = _validate_webhook_url("https://unresolvable.example/webhook")
         assert result is False
         assert "Could not resolve webhook URL hostname" in caplog.text
 

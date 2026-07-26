@@ -5,11 +5,15 @@ Service client for calling internal microservices.
 import os
 import logging
 import threading
+import time
 from urllib.parse import urlparse
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+_poll_clock = time.monotonic
+_poll_sleep = time.sleep
 
 # Health endpoint constant (avoids string duplication S1192)
 HEALTH_ENDPOINT = "/health"
@@ -216,30 +220,32 @@ class OrchestratorClient(ServiceClient):
         """Stop the currently active task."""
         return self.post("/orchestrate/stop", json={})
 
-    def wait_for_completion(self, task_id: str, timeout: float = 600.0, poll_interval: float = 2.0) -> dict:
+    def wait_for_completion(
+        self,
+        task_id: str,
+        timeout: float = 600.0,
+        poll_interval: float = 2.0,
+    ) -> dict:
         """Poll for task completion.
-        
+
         Args:
             task_id: Task ID to wait for
             timeout: Maximum time to wait in seconds (default 10 minutes)
             poll_interval: Time between polls in seconds (default 2s)
-            
+
         Returns:
             Final status dict with 'status' key ('completed', 'failed', 'cancelled', 'timeout')
         """
-        import time
-        import httpx
-        
-        start_time = time.time()
-        
-        while time.time() - start_time < timeout:
+        deadline = _poll_clock() + timeout
+
+        while _poll_clock() < deadline:
             try:
                 result = self.get(f"/orchestrate/tasks/{task_id}")
                 status = result.get("status", "unknown")
-                
+
                 if status in ("completed", "failed", "cancelled"):
                     return {"success": True, "status": status, "result": result}
-                    
+
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 404:
                     # Task not found - may not exist yet or was cleaned up
@@ -250,10 +256,17 @@ class OrchestratorClient(ServiceClient):
             except httpx.RequestError as e:
                 # Connection errors - log and continue polling
                 logger.warning(f"Connection error polling task {task_id}: {e}")
-            
-            time.sleep(poll_interval)
-        
-        return {"success": False, "status": "timeout", "error": f"Timeout waiting for task {task_id}"}
+
+            remaining = deadline - _poll_clock()
+            if remaining <= 0:
+                break
+            _poll_sleep(min(poll_interval, remaining))
+
+        return {
+            "success": False,
+            "status": "timeout",
+            "error": f"Timeout waiting for task {task_id}",
+        }
 
     def process_resume(
         self,
