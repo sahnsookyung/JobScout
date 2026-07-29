@@ -174,6 +174,60 @@ describe('LlmEvaluationPanel', () => {
         expect(toast.success).toHaveBeenCalledWith('Queued LLM evaluation retry');
     });
 
+    it('shows one actionable message for terminal input-limit failures', async () => {
+        vi.mocked(matchesApi.getLlmEvaluations).mockResolvedValue({
+            data: {
+                success: true,
+                count: 1,
+                evaluations: [
+                    {
+                        id: 'eval-input-too-large',
+                        match_id: 'match-1',
+                        job_id: 'job-1',
+                        status: 'failed',
+                        llm_score: null,
+                        confidence: null,
+                        verdict: null,
+                        summary: null,
+                        reason_codes: [],
+                        requirement_verdicts: [],
+                        analysis: {
+                            score_quality: {
+                                status: 'invalid',
+                                reason: 'missing_llm_score',
+                                normalized_score: null,
+                                verdict: null,
+                            },
+                        },
+                        score_quality: {
+                            status: 'invalid',
+                            reason: 'missing_llm_score',
+                            normalized_score: null,
+                            verdict: null,
+                        },
+                        effective_for_rerank: false,
+                        ignored_for_rerank_reason: 'status_failed',
+                        stale_status: 'ignored',
+                        provider: 'groq',
+                        model: 'openai/gpt-oss-120b',
+                        prompt_version: 'match-judge-v1',
+                        schema_version: '1',
+                        error_code: 'llm_judge_input_too_large',
+                        retryable: false,
+                        provider_status_message: 'llm judge input too large',
+                    },
+                ],
+            },
+        } as never);
+
+        renderPanel();
+
+        expect(await screen.findByText(/exceeded one provider’s input limit/i)).toBeInTheDocument();
+        expect(screen.queryByText(/Waiting for the review to finish/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/provider returned an invalid numeric score/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/Not used for ordering: status failed/i)).not.toBeInTheDocument();
+    });
+
     it('shows stale successful analysis with ordered evidence fallback strengths', async () => {
         vi.mocked(matchesApi.getLlmEvaluations).mockResolvedValue({
             data: {
