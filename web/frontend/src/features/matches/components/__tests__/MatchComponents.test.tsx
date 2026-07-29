@@ -313,6 +313,45 @@ describe('MatchCard', () => {
         expect(screen.queryByText(/stale config hash/i)).not.toBeInTheDocument();
     });
 
+    it.each([
+        'stale_input_hash',
+        'stale_evidence_hash',
+        'stale_job_content',
+    ])('maps %s to the refresh label', (reason) => {
+        render(
+            <MatchCard
+                match={makeMatch({
+                    llm_evaluation_status: 'succeeded',
+                    llm_ignored_for_rerank_reason: reason,
+                })}
+                onSelect={vi.fn()}
+            />,
+            { wrapper: makeQueryWrapper() }
+        );
+
+        expect(screen.getByText('LLM review needs refresh')).toBeInTheDocument();
+    });
+
+    it.each([
+        ['status_failed', 'LLM review failed'],
+        ['invalid_llm_score', 'LLM review unavailable for ordering'],
+        ['missing_llm_score', 'LLM review unavailable for ordering'],
+        ['provider_not_configured', 'LLM not applied: provider not configured'],
+    ])('maps %s to actionable card copy', (reason, expected) => {
+        render(
+            <MatchCard
+                match={makeMatch({
+                    llm_evaluation_status: 'failed',
+                    llm_ignored_for_rerank_reason: reason,
+                })}
+                onSelect={vi.fn()}
+            />,
+            { wrapper: makeQueryWrapper() }
+        );
+
+        expect(screen.getByText(expected)).toBeInTheDocument();
+    });
+
     it('shows the LLM second-pass score under the main fit score', () => {
         render(
             <MatchCard
@@ -565,6 +604,27 @@ describe('MatchList', () => {
 
         expect(screen.getByText('LLM reviews need refresh')).toBeInTheDocument();
         expect(screen.queryByText(/stale config hash/i)).not.toBeInTheDocument();
+    });
+
+    it.each([
+        ['status_failed', 'LLM review failed'],
+        ['invalid_llm_score', 'LLM reviews unavailable for ordering'],
+        ['missing_llm_score', 'LLM reviews unavailable for ordering'],
+        ['provider_not_configured', 'LLM not applied: provider not configured'],
+    ])('maps aggregate reason %s to actionable copy', (reason, expected) => {
+        mockUseMatches.mockReturnValue({
+            data: {
+                matches: [makeMatch()],
+                llm_rerank: { enabled: true, reason },
+            },
+            isLoading: false,
+            error: null,
+            refetch: vi.fn(),
+        });
+
+        render(<MatchList onMatchSelect={vi.fn()} />, { wrapper: makeQueryWrapper() });
+
+        expect(screen.getByText(expected)).toBeInTheDocument();
     });
 
     it('loads all matched candidates in pages after the user opts in', async () => {
