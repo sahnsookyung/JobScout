@@ -32,7 +32,20 @@ function llmRerankSummary(rerank: any): string | null {
         return `LLM-applied top ${rerank.window_size}`;
     }
     if (rerank.enabled && rerank.reason) {
-        return `LLM not applied: ${String(rerank.reason).replace(/_/g, ' ')}`;
+        const reason = String(rerank.reason);
+        if (
+            reason === 'stale_config_hash'
+            || reason === 'stale_input_hash'
+            || reason === 'stale_evidence_hash'
+            || reason === 'stale_job_content'
+        ) {
+            return 'LLM reviews need refresh';
+        }
+        if (reason === 'status_failed') return 'LLM review failed';
+        if (reason === 'invalid_llm_score' || reason === 'missing_llm_score') {
+            return 'LLM reviews unavailable for ordering';
+        }
+        return `LLM not applied: ${reason.replace(/_/g, ' ')}`;
     }
     if (rerank.available === false && rerank.reason) {
         return `LLM unavailable: ${String(rerank.reason).replace(/_/g, ' ')}`;

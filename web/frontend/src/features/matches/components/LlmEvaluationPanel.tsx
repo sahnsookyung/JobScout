@@ -76,8 +76,25 @@ function progressMessage(evaluation?: MatchLlmEvaluation | null, status?: string
         if (evaluation.retry_after_seconds != null) return `Retryable failure. Retry available after ${formatDuration(evaluation.retry_after_seconds)}.`;
         return 'Retryable failure. Queue this review again when the provider is available.';
     }
-    if (evaluation?.provider_status_message) return evaluation.provider_status_message;
     return '';
+}
+
+function failureMessage(evaluation?: MatchLlmEvaluation | null): string {
+    if (evaluation?.status !== 'failed') return '';
+    if (evaluation.error_code === 'llm_judge_input_too_large') {
+        return 'This review exceeded one provider’s input limit. Regenerate it to try the next available provider.';
+    }
+    if (evaluation.error_code === 'llm_judge_token_quota_exceeded') {
+        return 'The provider rate limit stopped this review. Regenerate it when capacity is available.';
+    }
+    if (
+        evaluation.error_code === 'llm_judge_provider_timeout'
+        || evaluation.error_code === 'llm_judge_provider_connection_error'
+        || evaluation.error_code === 'llm_judge_provider_unavailable'
+    ) {
+        return 'The LLM providers were temporarily unavailable. Regenerate this review to try again.';
+    }
+    return evaluation.provider_status_message || 'The LLM review failed. Regenerate it to try again.';
 }
 
 function cleanLabel(value?: string | null): string {
@@ -154,6 +171,7 @@ function fallbackEvidenceGaps(verdicts: Array<Record<string, any>>): string[] {
 }
 
 function scoreQualityMessage(evaluation?: MatchLlmEvaluation | null): string {
+    if (evaluation?.status !== 'succeeded') return '';
     const analysis = evaluation?.analysis ?? {};
     const scoreQuality = evaluation?.score_quality ?? analysis.score_quality;
     if (!scoreQuality || scoreQuality.status !== 'invalid') return '';
@@ -274,6 +292,7 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
     const activeStatus = evaluation?.status ?? markerStatus ?? null;
     const evaluationInFlight = isEvaluationInFlight(activeStatus);
     const currentProgressMessage = progressMessage(evaluation, activeStatus);
+    const currentFailureMessage = failureMessage(evaluation);
 
     const invalidate = () => {
         queryClient.invalidateQueries({ queryKey });
@@ -497,6 +516,15 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                 </p>
             )}
 
+            {currentFailureMessage && (
+                <p
+                    className="mt-4 border-l-2 border-warn/60 pl-3 text-[13px] leading-relaxed text-ink-soft"
+                    role="alert"
+                >
+                    {currentFailureMessage}
+                </p>
+            )}
+
             {isLoading && !evaluation ? (
                 <p className="mt-4 text-[13px] text-ink-muted">Loading evaluation status.</p>
             ) : evaluation?.summary ? (
@@ -505,13 +533,16 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                 <p className="mt-4 text-[13px] text-ink-muted">
                     Waiting for the review to finish.
                 </p>
-            ) : (
+            ) : currentFailureMessage ? null : (
                 <p className="mt-4 text-[13px] text-ink-muted">
                     Generate an LLM review for this job to add a second-pass relevance explanation.
                 </p>
             )}
 
-            {ignoredReason && (
+            {ignoredReason
+                && evaluation?.status === 'succeeded'
+                && staleStatus !== 'stale'
+                && !currentScoreQualityMessage && (
                 <p className="mt-4 border-l-2 border-warn/60 pl-3 text-[13px] leading-relaxed text-ink-soft">
                     Not used for ordering: {cleanLabel(ignoredReason)}.
                 </p>

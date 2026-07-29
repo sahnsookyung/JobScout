@@ -64,6 +64,39 @@ function renderPanel() {
     );
 }
 
+function mockFailedEvaluation(errorCode: string, providerStatusMessage: string) {
+    vi.mocked(matchesApi.getLlmEvaluations).mockResolvedValue({
+        data: {
+            success: true,
+            count: 1,
+            evaluations: [
+                {
+                    id: `eval-${errorCode}`,
+                    match_id: 'match-1',
+                    job_id: 'job-1',
+                    status: 'failed',
+                    llm_score: null,
+                    confidence: null,
+                    verdict: null,
+                    summary: null,
+                    reason_codes: [],
+                    requirement_verdicts: [],
+                    effective_for_rerank: false,
+                    ignored_for_rerank_reason: 'status_failed',
+                    stale_status: 'ignored',
+                    provider: 'groq',
+                    model: 'openai/gpt-oss-120b',
+                    prompt_version: 'match-judge-v1',
+                    schema_version: '1',
+                    error_code: errorCode,
+                    retryable: false,
+                    provider_status_message: providerStatusMessage,
+                },
+            ],
+        },
+    } as never);
+}
+
 describe('LlmEvaluationPanel', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -172,6 +205,81 @@ describe('LlmEvaluationPanel', () => {
             expect(matchesApi.retryLlmEvaluation).toHaveBeenCalledWith('match-1', 'eval-retryable');
         });
         expect(toast.success).toHaveBeenCalledWith('Queued LLM evaluation retry');
+    });
+
+    it('shows one actionable message for terminal input-limit failures', async () => {
+        vi.mocked(matchesApi.getLlmEvaluations).mockResolvedValue({
+            data: {
+                success: true,
+                count: 1,
+                evaluations: [
+                    {
+                        id: 'eval-input-too-large',
+                        match_id: 'match-1',
+                        job_id: 'job-1',
+                        status: 'failed',
+                        llm_score: null,
+                        confidence: null,
+                        verdict: null,
+                        summary: null,
+                        reason_codes: [],
+                        requirement_verdicts: [],
+                        analysis: {
+                            score_quality: {
+                                status: 'invalid',
+                                reason: 'missing_llm_score',
+                                normalized_score: null,
+                                verdict: null,
+                            },
+                        },
+                        score_quality: {
+                            status: 'invalid',
+                            reason: 'missing_llm_score',
+                            normalized_score: null,
+                            verdict: null,
+                        },
+                        effective_for_rerank: false,
+                        ignored_for_rerank_reason: 'status_failed',
+                        stale_status: 'ignored',
+                        provider: 'groq',
+                        model: 'openai/gpt-oss-120b',
+                        prompt_version: 'match-judge-v1',
+                        schema_version: '1',
+                        error_code: 'llm_judge_input_too_large',
+                        retryable: false,
+                        provider_status_message: 'llm judge input too large',
+                    },
+                ],
+            },
+        } as never);
+
+        renderPanel();
+
+        expect(await screen.findByText(/exceeded one provider’s input limit/i)).toBeInTheDocument();
+        expect(screen.queryByText(/Waiting for the review to finish/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/provider returned an invalid numeric score/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/Not used for ordering: status failed/i)).not.toBeInTheDocument();
+    });
+
+    it.each([
+        [
+            'llm_judge_token_quota_exceeded',
+            'provider rate limit',
+            /provider rate limit stopped this review/i,
+        ],
+        [
+            'llm_judge_provider_timeout',
+            'provider timed out',
+            /providers were temporarily unavailable/i,
+        ],
+    ])('shows actionable copy for %s', async (errorCode, providerMessage, expectedMessage) => {
+        mockFailedEvaluation(errorCode, providerMessage);
+
+        renderPanel();
+
+        expect(await screen.findByText(expectedMessage)).toBeInTheDocument();
+        expect(screen.queryByText(providerMessage)).not.toBeInTheDocument();
+        expect(screen.queryByText(/Waiting for the review to finish/i)).not.toBeInTheDocument();
     });
 
     it('shows stale successful analysis with ordered evidence fallback strengths', async () => {

@@ -329,8 +329,11 @@ class LLMProviderChain(LLMProvider):
                     retryable=llm_error_is_retryable(last_category),
                 )
                 should_fallback = (
-                    llm_error_is_transient(last_category)
-                    and index < len(self._candidates) - 1
+                    index < len(self._candidates) - 1
+                    and (
+                        llm_error_is_transient(last_category)
+                        or last_category == "input_too_large"
+                    )
                     and (last_category != "rate_limit" or candidate.fallback_on_rate_limit)
                 )
                 if should_fallback:

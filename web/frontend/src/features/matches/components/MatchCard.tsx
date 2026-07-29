@@ -56,7 +56,20 @@ function llmOrderingLabel(match: MatchSummary): string | null {
         return 'LLM-applied ordering';
     }
     if (match.llm_ignored_for_rerank_reason) {
-        return `LLM not applied: ${match.llm_ignored_for_rerank_reason.replace(/_/g, ' ')}`;
+        const reason = match.llm_ignored_for_rerank_reason;
+        if (
+            reason === 'stale_config_hash'
+            || reason === 'stale_input_hash'
+            || reason === 'stale_evidence_hash'
+            || reason === 'stale_job_content'
+        ) {
+            return 'LLM review needs refresh';
+        }
+        if (reason === 'status_failed') return 'LLM review failed';
+        if (reason === 'invalid_llm_score' || reason === 'missing_llm_score') {
+            return 'LLM review unavailable for ordering';
+        }
+        return `LLM not applied: ${reason.replace(/_/g, ' ')}`;
     }
     if (match.llm_evaluation_status === 'pending' || match.llm_evaluation_status === 'running') {
         return 'LLM pending';

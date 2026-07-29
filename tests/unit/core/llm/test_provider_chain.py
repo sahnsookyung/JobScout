@@ -124,6 +124,28 @@ def test_provider_chain_falls_back_after_transient_failure() -> None:
     assert circuit.successes == [("groq", "groq-model")]
 
 
+def test_provider_chain_falls_back_after_provider_specific_input_limit() -> None:
+    error = RuntimeError("request too large for this provider")
+    error.status_code = 413
+    primary = _Provider(error=error)
+    fallback = _Provider(response={"score": 90})
+    circuit = _Circuit()
+    chain = LLMProviderChain(
+        [_candidate("groq", primary), _candidate("cerebras", fallback)],
+        circuit_breaker=circuit,
+    )
+
+    result = chain.extract_structured_data("SAFE PAYLOAD", {})
+
+    assert result == {"score": 90}
+    assert primary.calls == 1
+    assert fallback.calls == 1
+    assert [attempt["status"] for attempt in chain.last_attempts] == ["failed", "succeeded"]
+    assert chain.last_attempts[0]["error_category"] == "input_too_large"
+    assert circuit.failures == []
+    assert circuit.successes == [("cerebras", "cerebras-model")]
+
+
 def test_provider_chain_does_not_fallback_after_terminal_auth_failure() -> None:
     error = RuntimeError("invalid api key")
     error.status_code = 401
