@@ -883,6 +883,16 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(nvidia.rate_limit_max_wait_seconds, 90)
         self.assertFalse(nvidia.fallback_on_rate_limit)
 
+    def test_default_config_caps_match_llm_judge_provider_outputs(self):
+        with patch.dict(os.environ, {}, clear=True):
+            config = load_config("config.yaml")
+
+        providers = config.matching.llm_judge.runtime.providers
+        self.assertEqual(
+            {provider.name: provider.max_output_tokens for provider in providers},
+            {"nvidia": 4096, "groq": 4096, "cerebras": 4096},
+        )
+
     def test_resume_generation_defaults_to_nvidia_mistral(self):
         with patch.dict(os.environ, {"NVIDIA_API_KEY": "nvidia-key"}, clear=True):
             config = ResumeGenerationConfig()

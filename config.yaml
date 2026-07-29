@@ -191,6 +191,7 @@ matching:
           structured_output_mode: "json_schema"
           timeout_seconds: 60
           max_input_tokens: 262144
+          max_output_tokens: 4096
           requests_per_minute: 40
           rate_limit_max_wait_seconds: 90
           fallback_on_rate_limit: false
@@ -202,6 +203,7 @@ matching:
           structured_output_mode: "auto"
           timeout_seconds: 60
           max_input_tokens: 24000
+          max_output_tokens: 4096
         - name: "cerebras"
           provider: "cerebras"
           base_url: "https://api.cerebras.ai/v1"
@@ -210,6 +212,7 @@ matching:
           structured_output_mode: "json_object"
           timeout_seconds: 60
           max_input_tokens: 24000
+          max_output_tokens: 4096
     top_n_default: 5
     top_n_max: 10
     max_per_run: 10
