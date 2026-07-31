@@ -5,9 +5,10 @@ from unittest.mock import Mock, patch
 
 import pytest
 from rq.job import Job
+from sqlalchemy.orm.attributes import set_committed_value
 
 from core import llm_evaluation_queue
-from database.models import LLM_EVALUATION_FAILED
+from database.models import LLM_EVALUATION_FAILED, LlmMatchEvaluation
 
 
 class _ExistingJob:
@@ -496,6 +497,40 @@ def test_enqueue_llm_evaluation_normalizes_inputs():
         owner_id=None,
         tenant_id=None,
     )
+
+
+def test_update_queue_metadata_replaces_json_objects_for_dirty_tracking():
+    evaluation = LlmMatchEvaluation()
+    original_analysis = {
+        "queue": {"previous": "kept"},
+        "summary": "keep",
+    }
+    set_committed_value(evaluation, "analysis", original_analysis)
+    db = Mock()
+    db.get.return_value = evaluation
+
+    with patch("core.llm_evaluation_queue.SessionLocal", return_value=db):
+        llm_evaluation_queue._update_evaluation_queue_metadata(
+            "11111111-1111-1111-1111-111111111111",
+            enqueue_reason="retry_now",
+            queue_job_id="llm-evaluation-1",
+            queue_state="queued",
+        )
+
+    assert evaluation.analysis is not original_analysis
+    assert evaluation.analysis["queue"] is not original_analysis["queue"]
+    assert original_analysis == {
+        "queue": {"previous": "kept"},
+        "summary": "keep",
+    }
+    assert evaluation.analysis["queue"] == {
+        "previous": "kept",
+        "enqueue_reason": "retry_now",
+        "queue_job_id": "llm-evaluation-1",
+        "queue_state": "queued",
+        "queued_at": evaluation.analysis["queue"]["queued_at"],
+    }
+    db.commit.assert_called_once_with()
 
 
 def test_check_readiness_pings_redis_and_reports_queue_status():

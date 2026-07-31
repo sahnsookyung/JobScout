@@ -582,10 +582,11 @@ class MatchLlmEvaluationService:
 
         self._check_daily_quota(owner_id)
 
-        analysis = evaluation.analysis if isinstance(evaluation.analysis, dict) else {}
-        queue_metadata = analysis.get("queue")
-        if not isinstance(queue_metadata, dict):
-            queue_metadata = {}
+        analysis = dict(evaluation.analysis) if isinstance(evaluation.analysis, dict) else {}
+        existing_queue_metadata = analysis.get("queue")
+        queue_metadata = (
+            dict(existing_queue_metadata) if isinstance(existing_queue_metadata, dict) else {}
+        )
         queue_metadata.update(
             {
                 "enqueue_reason": "retry_now",
