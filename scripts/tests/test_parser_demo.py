@@ -23,7 +23,7 @@ def main():
     file_path = sys.argv[1]
 
     print(f"\n{'='*60}")
-    print(f"Resume Parser Demo")
+    print("Resume Parser Demo")
     print(f"{'='*60}")
     print(f"File: {file_path}")
 
@@ -32,7 +32,7 @@ def main():
     # Check if format is supported
     if not parser.is_supported(file_path):
         supported = ', '.join(ResumeParser.get_supported_formats())
-        print(f"\n❌ Unsupported format!")
+        print("\n❌ Unsupported format!")
         print(f"Supported formats: {supported}")
         sys.exit(1)
 
@@ -40,22 +40,22 @@ def main():
     try:
         result = parser.parse(file_path)
 
-        print(f"\n✅ Successfully parsed!")
+        print("\n✅ Successfully parsed!")
         print(f"Format detected: {result.format}")
         print(f"Source: {result.source_path}")
 
         if result.data is not None:
-            print(f"\n📊 Structured data available: YES")
+            print("\n📊 Structured data available: YES")
             print(f"   Data keys: {list(result.data.keys())}")
             if 'name' in result.data:
                 print(f"   Name: {result.data.get('name')}")
             if 'title' in result.data:
                 print(f"   Title: {result.data.get('title')}")
         else:
-            print(f"\n📄 Structured data available: NO (text-only format)")
-            print(f"   Text will be processed by LLM for extraction")
+            print("\n📄 Structured data available: NO (text-only format)")
+            print("   Text will be processed by LLM for extraction")
 
-        print(f"\n📝 Extracted text preview:")
+        print("\n📝 Extracted text preview:")
         print(f"{'-'*60}")
         preview = result.text[:500] if len(result.text) > 500 else result.text
         print(preview)
