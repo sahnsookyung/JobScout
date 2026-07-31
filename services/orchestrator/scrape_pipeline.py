@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import threading
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TypeVar
 
 import redis.asyncio as redis_async
 
@@ -32,6 +33,32 @@ PostScrapePipeline = Callable[..., Awaitable[Dict[str, Any]]]
 StateGetter = Callable[..., Awaitable[Any]]
 WaitForTaskMessage = Callable[[Any, str], Awaitable[dict]]
 CleanupPubsub = Callable[[Any, Any], Awaitable[None]]
+SyncResult = TypeVar("SyncResult")
+
+
+async def _run_sync_call(
+    func: Callable[..., SyncResult],
+    /,
+    *args: Any,
+    cancellation_event: Optional[threading.Event] = None,
+    **kwargs: Any,
+) -> SyncResult:
+    """Run blocking work off-loop and let it finish before shutdown continues."""
+    task = asyncio.create_task(asyncio.to_thread(func, *args, **kwargs))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        if cancellation_event is not None:
+            cancellation_event.set()
+        await asyncio.gather(task, return_exceptions=True)
+        raise
+
+
+def _ingest_scraped_job(ctx: AppContext, job: Dict[str, Any], scraper_id: str) -> None:
+    from database.uow import job_uow
+
+    with job_uow() as repo:
+        ctx.job_etl_service.ingest_one(repo, job, scraper_id)
 
 
 class ScrapePipelineService:
@@ -126,9 +153,13 @@ class ScrapePipelineService:
         for attempt in range(max_retries):
             try:
                 request_timeout = getattr(scraper_cfg, "request_timeout", None)
-                result = jobspy_client.wait_for_result(
+                poll_stop_event = threading.Event()
+                result = await _run_sync_call(
+                    jobspy_client.wait_for_result,
                     task_id,
                     request_timeout_s=request_timeout,
+                    stop_event=poll_stop_event,
+                    cancellation_event=poll_stop_event,
                 )
                 if result is not None:
                     return result
@@ -185,7 +216,7 @@ class ScrapePipelineService:
 
         try:
             await self.update_scraper_status(redis_client, scraper_id, "running")
-            task_id = ctx.jobspy_client.submit_scrape(scraper_cfg)
+            task_id = await _run_sync_call(ctx.jobspy_client.submit_scrape, scraper_cfg)
             if not task_id:
                 self.logger.warning("No task_id from scraper %s", scraper_id)
                 return {
@@ -205,12 +236,9 @@ class ScrapePipelineService:
             jobs_imported = 0
             ingest_errors: List[str] = []
             if jobs:
-                from database.uow import job_uow
-
                 for index, job in enumerate(jobs, start=1):
                     try:
-                        with job_uow() as repo:
-                            ctx.job_etl_service.ingest_one(repo, job, scraper_id)
+                        await _run_sync_call(_ingest_scraped_job, ctx, job, scraper_id)
                         jobs_imported += 1
                     except Exception as exc:
                         ingest_errors.append(f"job {index}: {exc}")
