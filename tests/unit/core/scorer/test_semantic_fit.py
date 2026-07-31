@@ -1361,7 +1361,6 @@ class TestFilterSupportedKwargs:
     def test_returns_kwargs_when_signature_unintrospectable(self):
         # Force inspect.signature to raise — covers the except-branch.
         from unittest.mock import patch
-        from inspect import signature
         def factory(a, b):  # pragma: no cover — only used as identity
             pass
         with patch("inspect.signature", side_effect=ValueError("no sig")):

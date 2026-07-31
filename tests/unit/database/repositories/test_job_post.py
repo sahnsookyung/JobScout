@@ -761,11 +761,10 @@ class TestComputeNextRetryAt:
         assert abs((result - now).total_seconds() - expected_delta.total_seconds()) < 2
 
     def test_excess_attempts_uses_last_delay(self):
-        from database.repositories.job_post import EXTRACTION_RETRY_DELAYS_SECONDS
         schedule = [10, 20, 30]
         result = JobPostRepository._compute_next_retry_at(100, schedule)
         # Should use last delay (30s)
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timezone
         now = datetime.now(timezone.utc)
         assert abs((result - now).total_seconds() - 30) < 2
 

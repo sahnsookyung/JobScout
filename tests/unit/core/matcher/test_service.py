@@ -114,7 +114,7 @@ class TestMultiEmbeddingMatching:
     def test_02_requirement_section_similarity(self, sample_job_requirement, sample_resume_sections):
         """Test similarity calculation between requirement and resume sections."""
         from core.matcher.explainability import calculate_requirement_similarity_with_resume_sections
-        from unittest.mock import Mock, MagicMock
+        from unittest.mock import Mock
         
         # Create proper mock sections with cosine_distance method
         mock_sections = []

@@ -99,7 +99,7 @@ scrapers: []
             self.assertEqual(config.matching.matcher.similarity_threshold, 0.6)
             self.assertEqual(config.matching.scorer.weight_required, 0.8)
 
-            print(f"  ✓ Config loaded successfully")
+            print("  ✓ Config loaded successfully")
             print(f"  ✓ Matching enabled: {config.matching.enabled}")
 
         finally:
@@ -116,7 +116,7 @@ scrapers: []
         self.assertIsNotNone(self.matcher.repo)
         self.assertIsNotNone(self.matcher.ai)
 
-        print(f"  ✓ Mock matcher initialized successfully")
+        print("  ✓ Mock matcher initialized successfully")
         print(f"  ✓ Similarity threshold: {self.matcher.similarity_threshold}")
 
     def test_03_mock_match_resume_two_stage(self):
@@ -124,7 +124,6 @@ scrapers: []
         print("\n🔍 UNIT Test 3: Mock Two-Stage Job Matching")
 
         # Add some mock jobs to the repository
-        from database.models import JobPost
         from unittest.mock import MagicMock
 
         mock_job = MagicMock()
@@ -139,7 +138,7 @@ scrapers: []
         self.assertIsInstance(matches, list)
 
         print(f"  ✓ Found {len(matches)} mock matches")
-        print(f"  ✓ Two-stage matching works correctly")
+        print("  ✓ Two-stage matching works correctly")
 
     def test_04_resume_fingerprint_generation(self):
         """Test resume fingerprint generation."""
@@ -160,8 +159,8 @@ scrapers: []
         self.assertNotEqual(fp1, fp3)
 
         print(f"  ✓ Fingerprint: {fp1[:16]}...")
-        print(f"  ✓ Same data = same fingerprint")
-        print(f"  ✓ Different data = different fingerprint")
+        print("  ✓ Same data = same fingerprint")
+        print("  ✓ Different data = different fingerprint")
 
     def test_05_resume_profiler_requires_store_for_embedding_persistence(self):
         """Test that ResumeProfiler requires a store to persist embeddings.
@@ -178,7 +177,7 @@ scrapers: []
         
         # Verify store is None when not provided
         self.assertIsNone(profiler_without_store.store)
-        print(f"  ✓ ResumeProfiler without store: store is None")
+        print("  ✓ ResumeProfiler without store: store is None")
 
         # Test 2: ResumeProfiler with store properly sets it
         mock_repo = MagicMock()
@@ -191,7 +190,7 @@ scrapers: []
         # Verify store is set
         self.assertIsNotNone(profiler_with_store.store)
         self.assertIsInstance(profiler_with_store.store, JobRepositoryAdapter)
-        print(f"  ✓ ResumeProfiler with store: store is set to JobRepositoryAdapter")
+        print("  ✓ ResumeProfiler with store: store is set to JobRepositoryAdapter")
 
         # Test 3: MatcherService integration - requires store to work
         config = MatcherConfig(similarity_threshold=0.5, batch_size=10)
@@ -207,7 +206,7 @@ scrapers: []
         self.assertIsNotNone(matcher_without_store)
         self.assertIsNone(matcher_without_store.resume_profiler.store)
 
-        print(f"  ✓ MatcherService without store: store is None (will fail at runtime)")
+        print("  ✓ MatcherService without store: store is None (will fail at runtime)")
 
         # With store - proper setup
         matcher_with_store = MatcherService(
@@ -219,12 +218,12 @@ scrapers: []
         )
 
         self.assertIsNotNone(matcher_with_store.resume_profiler.store)
-        print(f"  ✓ MatcherService with store: properly configured")
+        print("  ✓ MatcherService with store: properly configured")
 
         # Test 4: Verify the save methods exist on the adapter
         self.assertTrue(hasattr(adapter, 'save_resume_section_embeddings'))
         self.assertTrue(hasattr(adapter, 'save_evidence_unit_embeddings'))
-        print(f"  ✓ JobRepositoryAdapter has required save methods")
+        print("  ✓ JobRepositoryAdapter has required save methods")
 
 
 if __name__ == '__main__':

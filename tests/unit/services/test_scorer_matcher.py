@@ -875,8 +875,7 @@ class TestMatcherAppLifespan:
 
     def test_startup_sets_state_and_logs(self):
         """App lifespan startup sets state."""
-        from services.scorer_matcher.main import app, MatcherState, MatcherConsumer
-        import logging
+        from services.scorer_matcher.main import MatcherState, MatcherConsumer
 
         # Simulate lifespan startup
         config_mock = Mock()

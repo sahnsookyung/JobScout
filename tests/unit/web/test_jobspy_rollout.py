@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 from core.config_loader import ScraperConfig
 from web.backend.models.responses import FetchSourceHealthResponse
 from web.backend.routers.pipeline import _build_fetch_source_response
