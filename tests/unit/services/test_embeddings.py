@@ -115,7 +115,6 @@ class TestEmbeddingsEndpoints:
         state.batch_consumer_task.done.return_value = False
         app.state.embeddings = state
 
-        from fastapi.testclient import TestClient
         return app, TestClient(app)
 
     def test_health_endpoint(self, app_with_state):
