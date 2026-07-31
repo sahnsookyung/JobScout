@@ -199,6 +199,7 @@ describe('LlmEvaluationPanel', () => {
         renderPanel();
 
         expect((await screen.findAllByText(/Retry available after 40s/i)).length).toBeGreaterThan(0);
+        expect(screen.queryByText(/Waiting for the review to finish/i)).not.toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: /retry llm evaluation/i }));
 
         await waitFor(() => {
