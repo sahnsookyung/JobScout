@@ -73,7 +73,7 @@ scrapers: []
             self.assertEqual(config.matching.scorer.weight_required, 0.8)
             self.assertEqual(config.matching.scorer.wants_remote, True)
 
-            print(f"  ✓ Scorer config loaded successfully")
+            print("  ✓ Scorer config loaded successfully")
             print(f"  ✓ Weight required: {config.matching.scorer.weight_required}")
 
         finally:
@@ -87,7 +87,7 @@ scrapers: []
         self.assertEqual(self.scorer.config.weight_required, 0.7)
         self.assertIsNotNone(self.scorer.repo)
 
-        print(f"  ✓ Scorer initialized successfully")
+        print("  ✓ Scorer initialized successfully")
         print(f"  ✓ Weight required: {self.scorer.config.weight_required}")
 
     def test_03_scorer_complete_scoring(self):
@@ -258,7 +258,7 @@ class TestBatchPrefetch(unittest.TestCase):
         mock_db.execute.assert_not_called()
         self.assertEqual(len(result), 0)
 
-        print(f"  ✓ No queries executed when no fingerprints present")
+        print("  ✓ No queries executed when no fingerprints present")
 
     def test_batch_scoring_eliminates_n_plus_one(self):
         """Verify batch scoring methods execute constant queries regardless of match count."""

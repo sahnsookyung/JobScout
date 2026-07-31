@@ -889,7 +889,8 @@ def test_resume_upload_completes_then_matching_completes(microservices_stack: Mi
     seeded_jobs = seed_matcher_ready_jobs(microservices_stack.database_url)
 
     upload_payload = _upload_resume(microservices_stack.base_url, VALID_RESUME_FIXTURE)
-    diagnostics = lambda: _stack_diagnostics(microservices_stack)
+    def diagnostics() -> str:
+        return _stack_diagnostics(microservices_stack)
     resume_state = wait_for_resume_terminal(
         microservices_stack.base_url,
         upload_payload["task_id"],
@@ -1011,7 +1012,8 @@ def test_matching_flow_triggers_email_notifications(microservices_stack: Microse
     assert updated_settings["channels"]["email"]["enabled"] is True
 
     upload_payload = _upload_resume(microservices_stack.base_url, VALID_RESUME_FIXTURE)
-    diagnostics = lambda: _stack_diagnostics(microservices_stack)
+    def diagnostics() -> str:
+        return _stack_diagnostics(microservices_stack)
     resume_state = wait_for_resume_terminal(
         microservices_stack.base_url,
         upload_payload["task_id"],
@@ -1160,7 +1162,8 @@ def test_candidate_preferences_round_trip_updates_matching_behavior(
     assert onsite_preferences["target_locations"] == ["On-site"]
     assert onsite_preferences["revision"] >= initial_preferences["revision"] + 1
 
-    diagnostics = lambda: _stack_diagnostics(microservices_stack)
+    def diagnostics() -> str:
+        return _stack_diagnostics(microservices_stack)
     upload_payload = _upload_resume(microservices_stack.base_url, VALID_RESUME_FIXTURE)
     resume_state = wait_for_resume_terminal(
         microservices_stack.base_url,
@@ -1294,7 +1297,8 @@ def test_preference_cross_encoder_reranking_emits_detail_codes(microservices_sta
         },
     )
 
-    diagnostics = lambda: _stack_diagnostics(microservices_stack)
+    def diagnostics() -> str:
+        return _stack_diagnostics(microservices_stack)
     upload_payload = _upload_resume(microservices_stack.base_url, VALID_RESUME_FIXTURE)
     resume_state = wait_for_resume_terminal(
         microservices_stack.base_url,
@@ -1364,7 +1368,8 @@ def test_resume_upload_failure_becomes_terminal_not_infinite_poll(microservices_
     reset_microservices_state(microservices_stack.database_url)
 
     upload_payload = _upload_resume(microservices_stack.base_url, FAIL_EMBEDDING_RESUME_FIXTURE)
-    diagnostics = lambda: _stack_diagnostics(microservices_stack)
+    def diagnostics() -> str:
+        return _stack_diagnostics(microservices_stack)
     resume_state = wait_for_resume_terminal(
         microservices_stack.base_url,
         upload_payload["task_id"],

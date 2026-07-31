@@ -45,7 +45,7 @@ def main():
     setup_logging(log_level)
 
     logger = logging.getLogger(__name__)
-    logger.info(f"Starting resume extraction test (no DB writes)")
+    logger.info("Starting resume extraction test (no DB writes)")
     logger.info(f"Resume file: {args.resume}")
 
     if not os.path.exists(args.resume):
@@ -75,17 +75,17 @@ def main():
     resume, evidence_units, persistence_payload = profiler.profile_resume(resume_data, resume_fingerprint=fingerprint)
 
     if resume:
-        logger.info(f"=== EXTRACTION COMPLETE ===")
+        logger.info("=== EXTRACTION COMPLETE ===")
         logger.info(f"Total experience: {resume.claimed_total_years} years")
         logger.info(f"Confidence: {resume.extraction.confidence if resume.extraction else 'N/A'}")
         
-        logger.info(f"\n=== PROFILE SUMMARY ===")
+        logger.info("\n=== PROFILE SUMMARY ===")
         logger.info(f"Summary: {resume.profile.summary.text[:200] if resume.profile.summary and resume.profile.summary.text else 'N/A'}...")
         logger.info(f"Experience entries: {len(resume.profile.experience)}")
         logger.info(f"Education entries: {len(resume.profile.education) if resume.profile.education else 0}")
         logger.info(f"Skills: {len(resume.profile.skills.all) if resume.profile.skills else 0}")
         
-        logger.info(f"\n=== EVIDENCE UNITS ===")
+        logger.info("\n=== EVIDENCE UNITS ===")
         logger.info(f"Total evidence units: {len(evidence_units)}")
         
         units_by_section = {}
@@ -99,10 +99,10 @@ def main():
         units_with_years = [u for u in evidence_units if u.years_value is not None]
         logger.info(f"Evidence units with years: {len(units_with_years)}")
         
-        logger.info(f"\n=== PERSISTENCE PAYLOAD ===")
+        logger.info("\n=== PERSISTENCE PAYLOAD ===")
         logger.info(f"Section embeddings generated: {len(persistence_payload)}")
         
-        logger.info(f"\n=== FULL EXTRACTED DATA ===")
+        logger.info("\n=== FULL EXTRACTED DATA ===")
         logger.info(json.dumps(resume.model_dump(), indent=2))
     else:
         logger.error("Failed to extract resume data")
