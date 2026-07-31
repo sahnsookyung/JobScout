@@ -15,6 +15,10 @@ Example usage:
     python scripts/generate_openai_schema.py --schema job --format markdown
     python scripts/generate_openai_schema.py --schema all --indent 4
 """
+
+# Direct-file execution adjusts sys.path before importing project modules.
+# ruff: noqa: E402
+
 import argparse
 import json
 import sys

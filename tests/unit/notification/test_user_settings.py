@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 from unittest.mock import Mock, patch
@@ -485,9 +485,6 @@ class TestUserNotificationSettingsService:
         assert snapshot.enabled is True
         assert snapshot.config_json == {"x": 1}
         assert snapshot.last_test_status == "sent"
-
-
-from datetime import timedelta
 
 
 class TestEmailOverrideStatus:

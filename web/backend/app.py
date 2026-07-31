@@ -13,6 +13,9 @@ Then open:
     - http://localhost:8080/redoc - Alternative API Documentation
 """
 
+# Direct-file execution adjusts sys.path before importing project modules.
+# ruff: noqa: E402
+
 import sys
 import logging
 from contextlib import asynccontextmanager

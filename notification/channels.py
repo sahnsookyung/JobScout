@@ -28,14 +28,6 @@ import html
 import requests
 import smtplib
 from email.mime.text import MIMEText
-
-
-class RateLimitException(Exception):
-    """Exception raised when a rate limit is encountered (e.g., HTTP 429)."""
-    
-    def __init__(self, message: str, retry_after: Optional[int] = None):
-        super().__init__(message)
-        self.retry_after = retry_after  # Seconds to wait before retrying
 from email.mime.multipart import MIMEMultipart
 import urllib.parse
 import ipaddress
@@ -46,6 +38,15 @@ from core.auth import _current_environment
 from notification.exceptions import NotificationConfigurationError, TerminalNotificationError, TransientNotificationError
 from notification.message_builder import NotificationMessageBuilder, JobNotificationContent
 from notification.runtime_config import get_notification_runtime_config
+
+
+class RateLimitException(Exception):
+    """Exception raised when a rate limit is encountered (e.g., HTTP 429)."""
+
+    def __init__(self, message: str, retry_after: Optional[int] = None):
+        super().__init__(message)
+        self.retry_after = retry_after  # Seconds to wait before retrying
+
 
 logger = logging.getLogger(__name__)
 
