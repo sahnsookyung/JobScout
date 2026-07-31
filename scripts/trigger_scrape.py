@@ -44,12 +44,12 @@ def trigger_scrape(url: str) -> int:
                 print(f"Response: {response.text}")
                 return 1
                 
-    except httpx.ConnectError as e:
+    except httpx.ConnectError:
         print(f"Connection error: Could not connect to {endpoint}")
-        print(f"Make sure the orchestrator service is running.")
+        print("Make sure the orchestrator service is running.")
         return 1
     except httpx.TimeoutException:
-        print(f"Timeout: Scrape request timed out")
+        print("Timeout: Scrape request timed out")
         return 1
     except Exception as e:
         print(f"Error: {e}")
