@@ -206,6 +206,83 @@ async def test_scrape_pipeline_scheduler_persists_cooldown_after_cycle():
 
 
 @pytest.mark.asyncio
+async def test_scrape_pipeline_scheduler_cooldown_expiry_allows_cycle():
+    redis_client = AsyncMock()
+    redis_client.ttl.return_value = 30
+    stop_event = asyncio.Event()
+    service = ScrapePipelineService(
+        redis_url="redis://example",
+        lock_ttl_seconds=60,
+        retry_intervals=[1],
+        extraction_limit=10,
+        embedding_limit=10,
+        embedding_max_batches=1,
+        batch_stage_timeout_seconds=1,
+        scraper_interval_hours=1,
+        release_lock_lua="return 1",
+        logger=Mock(),
+    )
+
+    async def expire_cooldown(waitable, *, timeout):
+        assert timeout == 30
+        waitable.close()
+        raise asyncio.TimeoutError
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            "services.orchestrator.scrape_pipeline.asyncio.wait_for",
+            expire_cooldown,
+        )
+        should_run = await service._wait_for_scheduler_cooldown(
+            redis_client,
+            stop_event,
+        )
+
+    assert should_run is True
+
+
+@pytest.mark.asyncio
+async def test_scrape_pipeline_scheduler_cooldown_redis_failures_are_nonfatal():
+    redis_client = AsyncMock()
+    redis_client.ttl.side_effect = ConnectionError("ttl unavailable")
+    redis_client.set.side_effect = ConnectionError("set unavailable")
+    stop_event = asyncio.Event()
+    logger = Mock()
+    service = ScrapePipelineService(
+        redis_url="redis://example",
+        lock_ttl_seconds=60,
+        retry_intervals=[1],
+        extraction_limit=10,
+        embedding_limit=10,
+        embedding_max_batches=1,
+        batch_stage_timeout_seconds=1,
+        scraper_interval_hours=1,
+        release_lock_lua="return 1",
+        logger=logger,
+    )
+
+    should_run = await service._wait_for_scheduler_cooldown(
+        redis_client,
+        stop_event,
+    )
+    await service._record_scheduler_cooldown(
+        redis_client,
+        interval_seconds=3600,
+    )
+
+    assert should_run is True
+    assert logger.warning.call_count == 2
+    logger.warning.assert_any_call(
+        "Could not read scraper scheduler cooldown; starting on schedule",
+        exc_info=True,
+    )
+    logger.warning.assert_any_call(
+        "Could not persist scraper scheduler cooldown",
+        exc_info=True,
+    )
+
+
+@pytest.mark.asyncio
 async def test_repair_scheduler_run_once_uses_limits_and_pipeline_runs():
     calls = []
     pipeline_runs = Mock()
