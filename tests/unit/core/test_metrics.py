@@ -35,6 +35,8 @@ class TestMetricDeclarations:
             "jobscout_oci_critical_log_bytes",
             "jobscout_oci_critical_log_dropped",
             "jobscout_oci_critical_log_budget_usage_ratio",
+            "jobscout_global_llm_budget_usage_ratio",
+            "jobscout_global_llm_budget_reset_unixtime",
             "jobscout_public_security_events",
         }
         exposed = set()
@@ -181,6 +183,37 @@ class TestRecordHelpers:
             {"event": "quota_exhausted"},
         )
         assert after - before == 1
+
+    def test_set_global_llm_budget_usage_bounds_ratio_and_bucket(self):
+        m.set_global_llm_budget_usage("requests", 150, 200, reset_at=1_800_000_000)
+        m.set_global_llm_budget_usage(
+            "tokens",
+            3_000_000,
+            2_000_000,
+            reset_at=1_800_000_000,
+        )
+        m.set_global_llm_budget_usage("unknown", -1, 0, reset_at=-1)
+
+        assert self._sample(
+            "jobscout_global_llm_budget_usage_ratio",
+            {"bucket": "requests"},
+        ) == 0.75
+        assert self._sample(
+            "jobscout_global_llm_budget_usage_ratio",
+            {"bucket": "tokens"},
+        ) == 1.0
+        assert self._sample(
+            "jobscout_global_llm_budget_usage_ratio",
+            {"bucket": "other"},
+        ) == 0.0
+        assert self._sample(
+            "jobscout_global_llm_budget_reset_unixtime",
+            {"bucket": "requests"},
+        ) == 1_800_000_000
+        assert self._sample(
+            "jobscout_global_llm_budget_reset_unixtime",
+            {"bucket": "other"},
+        ) == 0.0
 
     def test_record_worker_running(self):
         m.record_worker_running("mystery", "consumer", True)

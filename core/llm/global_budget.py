@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from core.llm.interfaces import LLMProvider
-from core.metrics import record_public_security_event
+from core.metrics import record_public_security_event, set_global_llm_budget_usage
 from core.redis_streams import get_redis_client
 
 _RESERVE_SCRIPT = """
@@ -65,6 +65,8 @@ class GlobalLlmBudgetReservation:
     client: Any
     tokens_key: str
     reserved_tokens: int
+    token_limit: int
+    reset_at: int
 
 
 _PREPAID_REQUEST_UNITS: ContextVar[int] = ContextVar(
@@ -99,6 +101,13 @@ def _seconds_until_next_utc_day() -> int:
     return max(int((reset - now).total_seconds()) + 300, 300)
 
 
+def _next_utc_day_timestamp() -> int:
+    now = datetime.now(timezone.utc)
+    tomorrow = (now + timedelta(days=1)).date()
+    reset = datetime.combine(tomorrow, datetime.min.time(), tzinfo=timezone.utc)
+    return int(reset.timestamp())
+
+
 def reserve_global_llm_budget(
     estimated_tokens: int,
     *,
@@ -113,6 +122,7 @@ def reserve_global_llm_budget(
     tokens_key = f"jobscout-cloud:llm-budget:{day}:tokens"
     resolved_client = client or get_redis_client()
     reserved_tokens = max(int(estimated_tokens), 1)
+    reset_at = _next_utc_day_timestamp()
     try:
         raw = resolved_client.eval(
             _RESERVE_SCRIPT,
@@ -126,6 +136,20 @@ def reserve_global_llm_budget(
         )
     except Exception as exc:
         raise GlobalLlmBudgetUnavailable("Global LLM budget backend is unavailable.") from exc
+    current_requests = int(raw[2])
+    current_tokens = int(raw[3])
+    set_global_llm_budget_usage(
+        "requests",
+        current_requests,
+        request_limit,
+        reset_at=reset_at,
+    )
+    set_global_llm_budget_usage(
+        "tokens",
+        current_tokens,
+        token_limit,
+        reset_at=reset_at,
+    )
     if int(raw[0]) != 1:
         bucket = raw[1].decode("utf-8") if isinstance(raw[1], bytes) else str(raw[1])
         record_public_security_event("global_budget_exhausted")
@@ -134,6 +158,8 @@ def reserve_global_llm_budget(
         client=resolved_client,
         tokens_key=tokens_key,
         reserved_tokens=reserved_tokens,
+        token_limit=token_limit,
+        reset_at=reset_at,
     )
 
 
@@ -151,6 +177,7 @@ def consume_global_llm_request(*, client: Any | None = None) -> None:
     day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     requests_key = f"jobscout-cloud:llm-budget:{day}:requests"
     resolved_client = client or get_redis_client()
+    reset_at = _next_utc_day_timestamp()
     try:
         raw = resolved_client.eval(
             _RESERVE_ADDITIONAL_REQUEST_SCRIPT,
@@ -161,6 +188,13 @@ def consume_global_llm_request(*, client: Any | None = None) -> None:
         )
     except Exception as exc:
         raise GlobalLlmBudgetUnavailable("Global LLM budget backend is unavailable.") from exc
+    current_requests = int(raw[1])
+    set_global_llm_budget_usage(
+        "requests",
+        current_requests,
+        request_limit,
+        reset_at=reset_at,
+    )
     if int(raw[0]) != 1:
         record_public_security_event("global_budget_exhausted")
         raise GlobalLlmBudgetExceeded("Global daily LLM requests budget exhausted.")
@@ -192,12 +226,18 @@ def reconcile_global_llm_budget(
     if actual_tokens is None:
         return
     try:
-        reservation.client.eval(
+        adjusted_tokens = reservation.client.eval(
             _RECONCILE_SCRIPT,
             1,
             reservation.tokens_key,
             reservation.reserved_tokens,
             actual_tokens,
+        )
+        set_global_llm_budget_usage(
+            "tokens",
+            int(adjusted_tokens),
+            reservation.token_limit,
+            reset_at=reservation.reset_at,
         )
     except Exception as exc:
         raise GlobalLlmBudgetUnavailable(
