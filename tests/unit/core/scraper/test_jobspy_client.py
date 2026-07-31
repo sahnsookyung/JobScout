@@ -1,5 +1,6 @@
 """Unit tests for core/scraper/jobspy_client.py"""
 
+import logging
 import threading
 import pytest
 from unittest.mock import MagicMock, patch
@@ -271,6 +272,65 @@ class TestPollStatus:
 
         result = client._poll_status.__wrapped__(client, "task-pending")
         assert result is None
+
+    def test_retryable_connection_error_logs_recovery_at_info(self, caplog):
+        client = JobSpyClient(base_url="http://jobspy:8000")
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"status": "completed", "data": []}
+        client.session = MagicMock()
+        client.session.get.side_effect = [
+            requests.ConnectionError("connection reset"),
+            mock_response,
+        ]
+
+        with (
+            caplog.at_level(logging.INFO, logger="core.scraper.jobspy_client"),
+            patch("time.sleep"),
+        ):
+            result = client._poll_status("task-recovered")
+
+        assert result == {"status": "completed", "data": []}
+        assert client.session.get.call_count == 2
+        retry_records = [
+            record for record in caplog.records if "Retrying" in record.message
+        ]
+        assert [record.levelno for record in retry_records] == [logging.INFO]
+        assert not [
+            record for record in caplog.records if record.levelno >= logging.WARNING
+        ]
+
+    def test_exhausted_connection_retries_log_terminal_failure_at_warning(
+        self,
+        caplog,
+    ):
+        client = JobSpyClient(
+            base_url="http://jobspy:8000",
+            poll_interval_seconds=1,
+            job_timeout_seconds=0,
+        )
+        client.session = MagicMock()
+        client.session.get.side_effect = requests.ConnectionError("connection reset")
+
+        with (
+            caplog.at_level(logging.INFO, logger="core.scraper.jobspy_client"),
+            patch("time.sleep"),
+        ):
+            result = client.wait_for_result("task-unavailable")
+
+        assert result is None
+        assert client.session.get.call_count == 3
+        retry_records = [
+            record for record in caplog.records if "Retrying" in record.message
+        ]
+        terminal_records = [
+            record for record in caplog.records if "Polling error" in record.message
+        ]
+        assert [record.levelno for record in retry_records] == [
+            logging.INFO,
+            logging.INFO,
+        ]
+        assert [record.levelno for record in terminal_records] == [logging.WARNING]
 
 
 # ---------------------------------------------------------------------------
