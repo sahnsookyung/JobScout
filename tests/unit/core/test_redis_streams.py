@@ -518,14 +518,16 @@ class TestPublishCompletion:
         assert "No subscribers received" in caplog.text
 
     def test_publish_no_subscribers_can_log_info(self, real_redis, caplog):
-        """Publishing can downgrade no-subscriber events to info."""
+        """Expected no-subscriber events use neutral info-level wording."""
         result = publish_completion(
             CHANNEL_MATCHING_DONE,
             {"task_id": "task-123", "status": "completed"},
             warn_on_no_subscribers=False,
         )
         assert result == 0
-        assert "No subscribers received" in caplog.text
+        assert "had no subscriber, as expected" in caplog.text
+        assert "⚠️" not in caplog.text
+        assert "No subscribers received" not in caplog.text
 
     def test_publish_invalid_payload(self):
         """Missing task_id raises ValueError before hitting Redis."""

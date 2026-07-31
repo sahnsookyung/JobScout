@@ -317,14 +317,16 @@ def publish_completion(
     msg = json.dumps(payload)
     result = client.publish(channel, msg)
     if result == 0:
-        log_message = (
-            f"⚠️ No subscribers received completion event on {channel}: "
-            f"task_id={payload.get('task_id')}, status={payload.get('status')}"
-        )
         if warn_on_no_subscribers:
-            logger.warning(log_message)
+            logger.warning(
+                f"⚠️ No subscribers received completion event on {channel}: "
+                f"task_id={payload.get('task_id')}, status={payload.get('status')}"
+            )
         else:
-            logger.info(log_message)
+            logger.info(
+                f"Completion event on {channel} had no subscriber, as expected: "
+                f"task_id={payload.get('task_id')}, status={payload.get('status')}"
+            )
     else:
         logger.info(f"📢 Published to {channel}: task_id={payload.get('task_id')}, status={payload.get('status')} (subscribers: {result})")
     return result
