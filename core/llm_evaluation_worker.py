@@ -78,18 +78,16 @@ def start_worker(*, burst: bool = False, queue_names: list[str] | None = None) -
 
 
 def check_readiness() -> None:
-    status = check_llm_evaluation_queue_readiness()
-    emit_oci_critical_event(
-        "readiness_check",
-        ready=bool(status.get("ready")),
-        queue=status.get("queue"),
-        queued=status.get("queued"),
-        started=status.get("started"),
-        failed=status.get("failed"),
-        db_pending=status.get("db_pending"),
-        db_retryable_failed=status.get("db_retryable_failed"),
-        paused=status.get("paused"),
-    )
+    try:
+        status = check_llm_evaluation_queue_readiness()
+    except Exception as exc:
+        emit_oci_critical_event(
+            "readiness_check",
+            severity="error",
+            ready=False,
+            error_type=type(exc).__name__,
+        )
+        raise
     logger.info("LLM evaluation worker readiness: %s", status)
 
 
