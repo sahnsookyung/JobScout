@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from core.llm.interfaces import LLMProvider
-from core.metrics import record_public_security_event
+from core.metrics import record_public_security_event, set_global_llm_budget_usage
 from core.redis_streams import get_redis_client
 
 _RESERVE_SCRIPT = """
@@ -65,6 +65,7 @@ class GlobalLlmBudgetReservation:
     client: Any
     tokens_key: str
     reserved_tokens: int
+    token_limit: int
 
 
 _PREPAID_REQUEST_UNITS: ContextVar[int] = ContextVar(
@@ -126,6 +127,10 @@ def reserve_global_llm_budget(
         )
     except Exception as exc:
         raise GlobalLlmBudgetUnavailable("Global LLM budget backend is unavailable.") from exc
+    current_requests = int(raw[2])
+    current_tokens = int(raw[3])
+    set_global_llm_budget_usage("requests", current_requests, request_limit)
+    set_global_llm_budget_usage("tokens", current_tokens, token_limit)
     if int(raw[0]) != 1:
         bucket = raw[1].decode("utf-8") if isinstance(raw[1], bytes) else str(raw[1])
         record_public_security_event("global_budget_exhausted")
@@ -134,6 +139,7 @@ def reserve_global_llm_budget(
         client=resolved_client,
         tokens_key=tokens_key,
         reserved_tokens=reserved_tokens,
+        token_limit=token_limit,
     )
 
 
@@ -161,6 +167,8 @@ def consume_global_llm_request(*, client: Any | None = None) -> None:
         )
     except Exception as exc:
         raise GlobalLlmBudgetUnavailable("Global LLM budget backend is unavailable.") from exc
+    current_requests = int(raw[1])
+    set_global_llm_budget_usage("requests", current_requests, request_limit)
     if int(raw[0]) != 1:
         record_public_security_event("global_budget_exhausted")
         raise GlobalLlmBudgetExceeded("Global daily LLM requests budget exhausted.")
@@ -192,12 +200,17 @@ def reconcile_global_llm_budget(
     if actual_tokens is None:
         return
     try:
-        reservation.client.eval(
+        adjusted_tokens = reservation.client.eval(
             _RECONCILE_SCRIPT,
             1,
             reservation.tokens_key,
             reservation.reserved_tokens,
             actual_tokens,
+        )
+        set_global_llm_budget_usage(
+            "tokens",
+            int(adjusted_tokens),
+            reservation.token_limit,
         )
     except Exception as exc:
         raise GlobalLlmBudgetUnavailable(

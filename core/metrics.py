@@ -5,7 +5,7 @@ import these singletons (or the typed ``record_*`` helpers) and call
 ``.inc()`` / ``.observe()``. Names, labels, buckets, and the safe-value
 enums all live here; do NOT redeclare a Counter at the emit site.
 
-Metric contract: ``v1`` (2026-04-20). Bump the version in this docstring
+Metric contract: ``v2`` (2026-08-01). Bump the version in this docstring
 when label sets or metric names change — that is a coordinated cross-repo
 break with ``jobscout-cloud`` dashboards.
 
@@ -100,6 +100,7 @@ _LLM_JUDGE_CIRCUIT_EVENTS = frozenset({"opened", "skip", "closed", "manual_reset
 _LLM_JUDGE_WAIT_OUTCOMES = frozenset({"waited", "retry_after", "unavailable"})
 _LLM_QUEUE_OPERATOR_ACTIONS = frozenset({"pause", "resume", "retry"})
 _LLM_PROVIDER_CANARY_STATUSES = frozenset({"succeeded", "failed", "rate_limited", "circuit_open"})
+_GLOBAL_LLM_BUDGET_BUCKETS = frozenset({"requests", "tokens"})
 _DESCRIPTION_RECOVERY_PROVIDERS = frozenset(
     {"greenhouse", "lever", "ashby", "unsupported", "prohibited", "unmapped"}
 )
@@ -347,6 +348,12 @@ llm_judge_provider_canaries_total = Counter(
     labelnames=("provider", "status", "error_category"),
 )
 
+global_llm_budget_usage_ratio = Gauge(
+    f"{NAMESPACE}_global_llm_budget_usage_ratio",
+    "Fraction of the configured daily global LLM budget already reserved or consumed.",
+    labelnames=("bucket",),
+)
+
 oci_critical_log_events_total = Counter(
     f"{NAMESPACE}_oci_critical_log_events_total",
     "OCI critical-only JSONL logging outcomes.",
@@ -497,6 +504,14 @@ def record_public_security_event(event: str) -> None:
     public_security_events_total.labels(
         event=_safe(event, _PUBLIC_SECURITY_EVENTS),
     ).inc()
+
+
+def set_global_llm_budget_usage(bucket: str, used: int | float, limit: int | float) -> None:
+    bounded_limit = max(float(limit or 0), 1.0)
+    ratio = max(min(float(used or 0) / bounded_limit, 1.0), 0.0)
+    global_llm_budget_usage_ratio.labels(
+        bucket=_safe(bucket, _GLOBAL_LLM_BUDGET_BUCKETS),
+    ).set(ratio)
 
 
 def record_worker_running(service: str, worker: str, running: bool) -> None:
