@@ -11,6 +11,7 @@ uv run pytest tests/unit/services/test_orchestrator.py -v
 """
 
 import asyncio
+import threading
 import time
 import uuid
 from types import SimpleNamespace
@@ -3790,6 +3791,66 @@ class TestWaitForScrapeWithRetry:
         assert result == [{"title": "Dev"}]
         mock_jobspy.wait_for_result.assert_called_once()
         mock_sleep.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_retry_wait_keeps_event_loop_responsive(self, mock_scraper_cfg) -> None:
+        """Blocking JobSpy polling runs in a worker thread."""
+        from services.orchestrator.main import _wait_for_scrape_with_retry
+
+        release = threading.Event()
+
+        def wait_for_result(*_args: object, **_kwargs: object) -> list[object]:
+            release.wait(timeout=1)
+            return []
+
+        mock_jobspy = MagicMock()
+        mock_jobspy.wait_for_result.side_effect = wait_for_result
+        asyncio.get_running_loop().call_later(0.01, release.set)
+
+        started = time.monotonic()
+        result = await _wait_for_scrape_with_retry(
+            mock_jobspy,
+            "task-responsive",
+            mock_scraper_cfg,
+        )
+
+        assert result == []
+        assert time.monotonic() - started < 0.5
+
+    @pytest.mark.asyncio
+    async def test_retry_cancellation_stops_poll_thread(self, mock_scraper_cfg) -> None:
+        """Scheduler shutdown signals and joins an in-flight JobSpy poll."""
+        from services.orchestrator.main import _wait_for_scrape_with_retry
+
+        started = threading.Event()
+        stopped = threading.Event()
+
+        def wait_for_result(
+            *_args: object,
+            stop_event: threading.Event,
+            **_kwargs: object,
+        ) -> None:
+            started.set()
+            stop_event.wait(timeout=1)
+            stopped.set()
+            return None
+
+        mock_jobspy = MagicMock()
+        mock_jobspy.wait_for_result.side_effect = wait_for_result
+        task = asyncio.create_task(
+            _wait_for_scrape_with_retry(
+                mock_jobspy,
+                "task-cancel",
+                mock_scraper_cfg,
+            )
+        )
+        await asyncio.to_thread(started.wait, 1)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert stopped.is_set()
 
     @pytest.mark.asyncio
     async def test_retry_success_after_failure(self, mock_scraper_cfg):
