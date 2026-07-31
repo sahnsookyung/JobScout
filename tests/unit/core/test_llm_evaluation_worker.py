@@ -2,6 +2,8 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
+
 from core import llm_evaluation_worker
 
 
@@ -47,11 +49,32 @@ def test_check_readiness_logs_queue_status(caplog):
     with patch(
         "core.llm_evaluation_worker.check_llm_evaluation_queue_readiness",
         return_value={"ready": True, "queued": 0},
-    ) as check:
+    ) as check, patch(
+        "core.llm_evaluation_worker.emit_oci_critical_event",
+    ) as emit:
         llm_evaluation_worker.check_readiness()
 
     check.assert_called_once_with()
+    emit.assert_not_called()
     assert "LLM evaluation worker readiness" in caplog.text
+
+
+def test_check_readiness_emits_only_failed_probe_and_reraises():
+    with patch(
+        "core.llm_evaluation_worker.check_llm_evaluation_queue_readiness",
+        side_effect=RuntimeError("redis unavailable"),
+    ), patch(
+        "core.llm_evaluation_worker.emit_oci_critical_event",
+    ) as emit:
+        with pytest.raises(RuntimeError, match="redis unavailable"):
+            llm_evaluation_worker.check_readiness()
+
+    emit.assert_called_once_with(
+        "readiness_check",
+        severity="error",
+        ready=False,
+        error_type="RuntimeError",
+    )
 
 
 def test_main_checks_readiness_and_exits(monkeypatch):
