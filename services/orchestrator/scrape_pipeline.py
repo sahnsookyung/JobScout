@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import random
 import threading
 import time
@@ -34,6 +35,7 @@ StateGetter = Callable[..., Awaitable[Any]]
 WaitForTaskMessage = Callable[[Any, str], Awaitable[dict]]
 CleanupPubsub = Callable[[Any, Any], Awaitable[None]]
 SyncResult = TypeVar("SyncResult")
+SCRAPER_SCHEDULER_COOLDOWN_KEY = "scraper:scheduler:cooldown"
 
 
 async def _run_sync_call(
@@ -567,9 +569,16 @@ class ScrapePipelineService:
         )
         run_all = run_all_scrapers_fn or self.run_all_scrapers
         run_post_scrape = run_post_scrape_pipeline_fn or self.run_post_scrape_job_pipeline
+        interval_seconds = self.scraper_interval_hours * 3600
+
+        if not await self._wait_for_scheduler_cooldown(
+            redis_client,
+            stop_event,
+        ):
+            self.logger.info("Scraper scheduler stopped")
+            return
 
         while not stop_event.is_set():
-            interval_seconds = self.scraper_interval_hours * 3600
             cycle_task_id = f"scheduled-scrape-{uuid.uuid4().hex[:8]}"
             try:
                 self.logger.info("Starting scheduled scrape cycle")
@@ -674,9 +683,63 @@ class ScrapePipelineService:
                         },
                     )
 
+            await self._record_scheduler_cooldown(
+                redis_client,
+                interval_seconds=interval_seconds,
+            )
             await asyncio.sleep(interval_seconds)
 
         self.logger.info("Scraper scheduler stopped")
+
+    async def _wait_for_scheduler_cooldown(
+        self,
+        redis_client: redis_async.Redis,
+        stop_event: asyncio.Event,
+    ) -> bool:
+        """Wait out a prior cycle's durable cooldown after a service restart."""
+        try:
+            remaining_seconds = await redis_client.ttl(SCRAPER_SCHEDULER_COOLDOWN_KEY)
+        except Exception:
+            self.logger.warning(
+                "Could not read scraper scheduler cooldown; starting on schedule",
+                exc_info=True,
+            )
+            return not stop_event.is_set()
+
+        if not isinstance(remaining_seconds, int) or remaining_seconds <= 0:
+            return not stop_event.is_set()
+
+        self.logger.info(
+            "Deferring scheduled scrape for %s seconds due to persisted cooldown",
+            remaining_seconds,
+        )
+        try:
+            await asyncio.wait_for(
+                stop_event.wait(),
+                timeout=remaining_seconds,
+            )
+        except asyncio.TimeoutError:
+            return not stop_event.is_set()
+        return False
+
+    async def _record_scheduler_cooldown(
+        self,
+        redis_client: redis_async.Redis,
+        *,
+        interval_seconds: float,
+    ) -> None:
+        """Persist when another scheduled scrape may run, without blocking the loop."""
+        try:
+            await redis_client.set(
+                SCRAPER_SCHEDULER_COOLDOWN_KEY,
+                "1",
+                ex=max(1, math.ceil(interval_seconds)),
+            )
+        except Exception:
+            self.logger.warning(
+                "Could not persist scraper scheduler cooldown",
+                exc_info=True,
+            )
 
     @staticmethod
     def _pipeline_stage_id(snapshot: Dict[str, Any], stage: str) -> Optional[str]:
