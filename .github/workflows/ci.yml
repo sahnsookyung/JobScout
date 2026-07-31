@@ -80,7 +80,7 @@ jobs:
             tests/unit/test_migrations.py
 
       - name: Reject undefined and ambiguous Python names
-        run: uv run ruff check . --select E402,E712,F405,F811,F821,F841
+        run: uv run ruff check . --select E402,E712,F401,F405,F811,F821,F841
 
       - name: Run Python unit tests
         run: |
