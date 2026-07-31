@@ -354,6 +354,12 @@ global_llm_budget_usage_ratio = Gauge(
     labelnames=("bucket",),
 )
 
+global_llm_budget_reset_unixtime = Gauge(
+    f"{NAMESPACE}_global_llm_budget_reset_unixtime",
+    "UTC reset time for the currently reported global LLM budget usage.",
+    labelnames=("bucket",),
+)
+
 oci_critical_log_events_total = Counter(
     f"{NAMESPACE}_oci_critical_log_events_total",
     "OCI critical-only JSONL logging outcomes.",
@@ -506,12 +512,22 @@ def record_public_security_event(event: str) -> None:
     ).inc()
 
 
-def set_global_llm_budget_usage(bucket: str, used: int | float, limit: int | float) -> None:
+def set_global_llm_budget_usage(
+    bucket: str,
+    used: int | float,
+    limit: int | float,
+    *,
+    reset_at: int | float,
+) -> None:
+    bounded_bucket = _safe(bucket, _GLOBAL_LLM_BUDGET_BUCKETS)
     bounded_limit = max(float(limit or 0), 1.0)
     ratio = max(min(float(used or 0) / bounded_limit, 1.0), 0.0)
     global_llm_budget_usage_ratio.labels(
-        bucket=_safe(bucket, _GLOBAL_LLM_BUDGET_BUCKETS),
+        bucket=bounded_bucket,
     ).set(ratio)
+    global_llm_budget_reset_unixtime.labels(
+        bucket=bounded_bucket,
+    ).set(max(float(reset_at or 0), 0.0))
 
 
 def record_worker_running(service: str, worker: str, running: bool) -> None:

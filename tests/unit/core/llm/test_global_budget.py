@@ -18,6 +18,7 @@ def test_reservation_is_reconciled_to_reported_provider_usage(monkeypatch) -> No
     monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_BUDGET_ENABLED", "true")
     monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_REQUESTS_PER_DAY", "100")
     monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_TOKENS_PER_DAY", "2000000")
+    monkeypatch.setattr("core.llm.global_budget._next_utc_day_timestamp", lambda: 1_800)
     client = Mock()
     client.eval.side_effect = ([1, "ok", 1, 5000], 1_250)
     set_budget_usage = Mock()
@@ -39,9 +40,9 @@ def test_reservation_is_reconciled_to_reported_provider_usage(monkeypatch) -> No
         1_250,
     )
     assert set_budget_usage.call_args_list == [
-        call("requests", 1, 100),
-        call("tokens", 5_000, 2_000_000),
-        call("tokens", 1_250, 2_000_000),
+        call("requests", 1, 100, reset_at=1_800),
+        call("tokens", 5_000, 2_000_000, reset_at=1_800),
+        call("tokens", 1_250, 2_000_000, reset_at=1_800),
     ]
 
 
@@ -69,6 +70,7 @@ def test_budgeted_provider_counts_every_actual_request_attempt(monkeypatch) -> N
     monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_BUDGET_ENABLED", "true")
     monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_REQUESTS_PER_DAY", "100")
     monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_TOKENS_PER_DAY", "2000000")
+    monkeypatch.setattr("core.llm.global_budget._next_utc_day_timestamp", lambda: 1_800)
     client = Mock()
     client.eval.side_effect = ([1, "ok", 1, 100], [1, 2], [1, 3])
     monkeypatch.setattr("core.llm.global_budget.get_redis_client", lambda: client)
@@ -92,10 +94,10 @@ def test_budgeted_provider_counts_every_actual_request_attempt(monkeypatch) -> N
     assert client.eval.call_count == 3
     assert client.eval.call_args_list[1].args[0] != client.eval.call_args_list[0].args[0]
     assert set_budget_usage.call_args_list == [
-        call("requests", 1, 100),
-        call("tokens", 100, 2_000_000),
-        call("requests", 2, 100),
-        call("requests", 3, 100),
+        call("requests", 1, 100, reset_at=1_800),
+        call("tokens", 100, 2_000_000, reset_at=1_800),
+        call("requests", 2, 100, reset_at=1_800),
+        call("requests", 3, 100, reset_at=1_800),
     ]
 
 
@@ -103,6 +105,7 @@ def test_budget_exhaustion_records_bounded_security_event(monkeypatch) -> None:
     monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_BUDGET_ENABLED", "true")
     monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_REQUESTS_PER_DAY", "100")
     monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_TOKENS_PER_DAY", "2000000")
+    monkeypatch.setattr("core.llm.global_budget._next_utc_day_timestamp", lambda: 1_800)
     client = Mock()
     client.eval.return_value = [0, "tokens", 1, 2_000_000]
     record_event = Mock()
@@ -121,6 +124,6 @@ def test_budget_exhaustion_records_bounded_security_event(monkeypatch) -> None:
 
     record_event.assert_called_once_with("global_budget_exhausted")
     assert set_budget_usage.call_args_list == [
-        call("requests", 1, 100),
-        call("tokens", 2_000_000, 2_000_000),
+        call("requests", 1, 100, reset_at=1_800),
+        call("tokens", 2_000_000, 2_000_000, reset_at=1_800),
     ]
