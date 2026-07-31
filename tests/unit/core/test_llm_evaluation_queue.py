@@ -94,7 +94,7 @@ def test_custom_job_ids_are_accepted_by_rq():
         ),
         llm_evaluation_queue.LLM_RECOVERY_SWEEP_JOB_ID,
     ]:
-        Job(connection=Mock()).set_id(job_id)
+        assert Job(id=job_id, connection=Mock()).id == job_id
 
 
 def test_enqueue_unique_reuses_active_job():
