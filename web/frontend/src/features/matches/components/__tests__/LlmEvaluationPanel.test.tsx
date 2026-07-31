@@ -260,6 +260,7 @@ describe('LlmEvaluationPanel', () => {
         expect(screen.queryByText(/Waiting for the review to finish/i)).not.toBeInTheDocument();
         expect(screen.queryByText(/provider returned an invalid numeric score/i)).not.toBeInTheDocument();
         expect(screen.queryByText(/Not used for ordering: status failed/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/^ignored$/i)).not.toBeInTheDocument();
     });
 
     it.each([

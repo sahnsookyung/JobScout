@@ -490,7 +490,7 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                     </span>
                 )}
                 {evaluation?.verdict && <span className="caption">{evaluation.verdict}</span>}
-                {staleStatus && staleStatus !== 'current' && (
+                {evaluation?.status === 'succeeded' && staleStatus && staleStatus !== 'current' && (
                     <span className="caption text-warn">{cleanLabel(staleStatus)}</span>
                 )}
                 {evaluation?.queued_reason ? (
