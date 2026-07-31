@@ -393,10 +393,12 @@ class ScrapePipelineService:
                 "task_id": extraction_task_id,
                 "limit": extraction_limit,
                 **(correlation or {}),
+                "warn_on_no_completion_subscribers": False,
                 "enqueue_embeddings_batch": {
                     "task_id": followup_embedding_task_id,
                     "limit": embedding_limit,
                     **(correlation or {}),
+                    "warn_on_no_completion_subscribers": False,
                 },
             },
         )

@@ -4179,6 +4179,42 @@ class TestRunPostScrapeJobPipeline:
     """Test post-scrape reconciliation pipeline."""
 
     @pytest.mark.asyncio
+    async def test_fire_and_forget_backfill_marks_completions_as_advisory(self):
+        """Listenerless backfill completions should not emit worker warnings."""
+        from services.orchestrator.main import enqueue_best_effort_extraction_backfill
+
+        with patch(
+            "services.orchestrator.scrape_pipeline.enqueue_job"
+        ) as mock_enqueue, patch(
+            "services.orchestrator.scrape_pipeline.record_jobs_extraction_queued"
+        ):
+            result = await enqueue_best_effort_extraction_backfill(
+                "scheduled-scrape-test",
+                extraction_limit=200,
+                embedding_limit=100,
+                correlation={
+                    "pipeline_run_id": "run-test",
+                    "warn_on_no_completion_subscribers": True,
+                },
+            )
+
+        payload = mock_enqueue.call_args.args[1]
+        assert payload["pipeline_run_id"] == "run-test"
+        assert payload["warn_on_no_completion_subscribers"] is False
+        assert (
+            payload["enqueue_embeddings_batch"][
+                "warn_on_no_completion_subscribers"
+            ]
+            is False
+        )
+        assert result == {
+            "extraction_task_id": "scheduled-scrape-test-extract",
+            "followup_embedding_task_id": (
+                "scheduled-scrape-test-post-extract-embed"
+            ),
+        }
+
+    @pytest.mark.asyncio
     async def test_embedding_stage_drains_until_empty_batch(self):
         """Test embedding backfill keeps running until no work remains."""
         from services.orchestrator.main import run_embedding_stage_until_drained
