@@ -185,7 +185,7 @@ class JobSpyClient:
         stop=stop_after_attempt(3),
         wait=wait_fixed(1),
         retry=retry_if_exception(_is_retryable_error),
-        before_sleep=before_sleep_log(logger, logging.WARNING)
+        before_sleep=before_sleep_log(logger, logging.INFO)
     )
     def _poll_status(
         self, 
