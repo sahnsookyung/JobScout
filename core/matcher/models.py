@@ -5,7 +5,7 @@ Matcher Models - Data structures for matching.
 from dataclasses import dataclass, field
 from typing import List, Any, Optional
 
-from database.models import JobRequirementUnit
+from database.models import JobPost, JobRequirementUnit
 from etl.resume.models import ResumeEvidenceUnit
 
 
@@ -31,7 +31,7 @@ class RequirementMatchResult:
 @dataclass
 class JobMatchPreliminary:
     """Preliminary match before scoring (output of MatcherService)."""
-    job: 'database.models.JobPost'
+    job: JobPost
     job_similarity: float
     requirement_matches: List[RequirementMatchResult]
     missing_requirements: List[RequirementMatchResult]

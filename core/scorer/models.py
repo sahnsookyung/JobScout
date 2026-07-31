@@ -5,6 +5,7 @@ Scoring Models - Data structures for scoring results.
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 
+from core.matcher.models import RequirementMatchResult
 from database.models import JobPost
 
 
@@ -32,8 +33,8 @@ class ScoredJobMatch:
     jd_preferred_requirement_coverage: float = 0.0
     job_similarity: float = 0.0
     penalty_details: List[Dict[str, Any]] = field(default_factory=list)
-    matched_requirements: List['RequirementMatchResult'] = field(default_factory=list)
-    missing_requirements: List['RequirementMatchResult'] = field(default_factory=list)
+    matched_requirements: List[RequirementMatchResult] = field(default_factory=list)
+    missing_requirements: List[RequirementMatchResult] = field(default_factory=list)
     resume_fingerprint: str = ""
     match_type: str = "requirements_only"
     policy_applied: Optional[Dict[str, Any]] = None
