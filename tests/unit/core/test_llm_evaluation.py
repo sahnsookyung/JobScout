@@ -450,7 +450,8 @@ def test_retry_evaluation_resets_retryable_failed_row_without_tombstoning():
     failed = _evaluation(status=LLM_EVALUATION_FAILED)
     failed.retryable = True
     failed.error_code = "llm_judge_provider_timeout"
-    failed.analysis = {"queue": {"enqueue_reason": "auto_top_n"}}
+    original_analysis = {"queue": {"enqueue_reason": "auto_top_n"}}
+    failed.analysis = original_analysis
     service._get_match_for_owner = Mock(return_value=match)
     service._get_evaluation_for_owner = Mock(return_value=failed)
     service._check_daily_quota = Mock()
@@ -468,6 +469,9 @@ def test_retry_evaluation_resets_retryable_failed_row_without_tombstoning():
     assert failed.error_code is None
     assert failed.analysis["enqueue_reason"] == "retry_now"
     assert failed.analysis["queue"]["queue_state"] == "pending"
+    assert failed.analysis is not original_analysis
+    assert failed.analysis["queue"] is not original_analysis["queue"]
+    assert original_analysis == {"queue": {"enqueue_reason": "auto_top_n"}}
     service._check_daily_quota.assert_called_once_with("owner-1")
     db.commit.assert_called_once()
 

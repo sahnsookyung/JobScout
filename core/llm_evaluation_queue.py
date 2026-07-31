@@ -244,10 +244,11 @@ def _update_evaluation_queue_metadata(
             evaluation = db.get(LlmMatchEvaluation, lookup_id)
             if evaluation is None or evaluation.deleted_at is not None:
                 return
-            analysis = evaluation.analysis if isinstance(evaluation.analysis, dict) else {}
-            queue_metadata = analysis.get("queue")
-            if not isinstance(queue_metadata, dict):
-                queue_metadata = {}
+            analysis = dict(evaluation.analysis) if isinstance(evaluation.analysis, dict) else {}
+            existing_queue_metadata = analysis.get("queue")
+            queue_metadata = (
+                dict(existing_queue_metadata) if isinstance(existing_queue_metadata, dict) else {}
+            )
             queue_metadata.update(updates)
             analysis["queue"] = queue_metadata
             if enqueue_reason is not None:
