@@ -1683,6 +1683,7 @@ class MatchLlmEvaluationService:
             evaluation.requirement_verdicts = []
             evaluation.analysis = self._failure_analysis_payload(
                 truncation or {},
+                provider_payload=payload,
                 provider_attempts=self._provider_attempts(self._llm_provider),
                 lifecycle_metadata=lifecycle_metadata,
             )
@@ -1950,12 +1951,50 @@ class MatchLlmEvaluationService:
     def _failure_analysis_payload(
         truncation: dict[str, Any],
         *,
+        provider_payload: dict[str, Any] | None = None,
         provider_attempts: list[dict[str, Any]] | None = None,
         lifecycle_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "input_truncation": truncation if isinstance(truncation, dict) else {},
         }
+        input_metadata = (
+            provider_payload.get("input_metadata")
+            if isinstance(provider_payload, dict)
+            else None
+        )
+        token_budget = (
+            input_metadata.get("token_budget")
+            if isinstance(input_metadata, dict)
+            else None
+        )
+        if isinstance(token_budget, dict):
+            bounded_budget: dict[str, Any] = {}
+            for key in (
+                "max_input_tokens",
+                "estimated_chars_per_token",
+                "initial_estimated_tokens",
+                "final_estimated_tokens",
+            ):
+                value = token_budget.get(key)
+                try:
+                    is_finite_number = (
+                        isinstance(value, (int, float))
+                        and not isinstance(value, bool)
+                        and math.isfinite(float(value))
+                    )
+                except (OverflowError, TypeError, ValueError):
+                    is_finite_number = False
+                if is_finite_number:
+                    bounded_budget[key] = max(0, int(value))
+            for key in ("compacted", "within_budget"):
+                value = token_budget.get(key)
+                if isinstance(value, bool):
+                    bounded_budget[key] = value
+            if token_budget.get("estimation") == "chars_per_token":
+                bounded_budget["estimation"] = "chars_per_token"
+            if bounded_budget:
+                payload["input_token_budget"] = bounded_budget
         if provider_attempts:
             payload["provider_attempts"] = provider_attempts
         if lifecycle_metadata:

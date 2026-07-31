@@ -1293,11 +1293,39 @@ def test_run_provider_marks_oversized_provider_request_with_specific_error():
     service = MatchLlmEvaluationService(db, config=_config(), llm_provider=provider)
     evaluation = _evaluation(status=LLM_EVALUATION_PENDING)
 
-    service._run_provider(evaluation, {"safe": "payload"})
+    service._run_provider(
+        evaluation,
+        {
+            "private_resume_content": "must not be persisted",
+            "input_metadata": {
+                "token_budget": {
+                    "max_input_tokens": 24_000,
+                    "estimation": "chars_per_token",
+                    "estimated_chars_per_token": 4,
+                    "initial_estimated_tokens": 16_188,
+                    "final_estimated_tokens": 16_198,
+                    "compacted": False,
+                    "within_budget": True,
+                    "unexpected": "must not be persisted",
+                }
+            },
+        },
+    )
 
     assert evaluation.status == LLM_EVALUATION_FAILED
     assert evaluation.error_code == "llm_judge_input_too_large"
     assert evaluation.retryable is False
+    assert evaluation.analysis["input_token_budget"] == {
+        "max_input_tokens": 24_000,
+        "estimation": "chars_per_token",
+        "estimated_chars_per_token": 4,
+        "initial_estimated_tokens": 16_188,
+        "final_estimated_tokens": 16_198,
+        "compacted": False,
+        "within_budget": True,
+    }
+    assert "private_resume_content" not in str(evaluation.analysis)
+    assert "unexpected" not in str(evaluation.analysis)
 
 
 def test_run_provider_marks_token_quota_failure_with_specific_error():
