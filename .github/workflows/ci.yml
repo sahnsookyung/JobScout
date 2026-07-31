@@ -79,6 +79,9 @@ jobs:
             tests/unit/database/test_migrate.py \
             tests/unit/test_migrations.py
 
+      - name: Reject undefined Python names
+        run: uv run ruff check . --select F821
+
       - name: Run Python unit tests
         run: |
           uv run python -m pytest tests/ -q \

@@ -32,14 +32,6 @@ import numpy as np
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
-# Use the database fixture module-wide. Redis is only needed for the
-# notification step and is started lazily there.
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.db,
-    pytest.mark.usefixtures("test_database"),
-]
-
 # All necessary imports are defined before MockAIService
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -56,6 +48,14 @@ from notification import NotificationService
 from notification.message_builder import (
     NotificationMessageBuilder
 )
+
+# Use the database fixture module-wide. Redis is only needed for the
+# notification step and is started lazily there.
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.db,
+    pytest.mark.usefixtures("test_database"),
+]
 
 
 class MockAIService(LLMProvider):
@@ -432,7 +432,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
             self.assertIsNotNone(evidence.text)
             self.assertGreater(len(evidence.text), 0)
 
-        print(f"  ✓ All evidence units have text content")
+        print("  ✓ All evidence units have text content")
         # Store as class attribute to persist across test instances
         type(self).test_evidence = evidence_units
     
@@ -449,7 +449,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
         )
         
         self.assertIsNotNone(profile, "Resume profiling should return a profile")
-        print(f"  ✓ Resume profiled successfully")
+        print("  ✓ Resume profiled successfully")
         
         # Run matching using two-stage pipeline
         preliminary_matches = self._get_matcher().match_resume_two_stage(
@@ -623,7 +623,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
         
         matches = self.session.query(JobMatch).count()
         
-        print(f"\n  📊 Pipeline Results:")
+        print("\n  📊 Pipeline Results:")
         print(f"     - Jobs processed: {jobs}")
         print(f"     - Matches created: {matches}")
         
@@ -635,11 +635,11 @@ class TestFullPipelineIntegration(unittest.TestCase):
         self.assertGreater(jobs, 0, "No jobs were processed")
         self.assertGreater(matches, 0, "No matches were created")
         
-        print(f"\n  ✅ Full pipeline integration test PASSED")
+        print("\n  ✅ Full pipeline integration test PASSED")
 
 
 if __name__ == '__main__':
-    if not RUN_TESTS:
+    if not os.environ.get("TEST_DATABASE_URL"):
         print("\n" + "="*70)
         print("SKIPPING: Set TEST_DATABASE_URL environment variable to run")
         print("Or ensure Docker is running for automatic container management")
