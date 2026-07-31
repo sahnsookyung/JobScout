@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 from rq.job import Job
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm.attributes import set_committed_value
 
 from core import llm_evaluation_queue
@@ -243,6 +244,77 @@ def test_queue_status_reports_bounded_registry_depths():
         "pause_reason": None,
         "pause_ttl_seconds": None,
     }
+
+
+def test_db_backlog_status_uses_cloud_aggregate_when_available():
+    db = Mock()
+    db.get_bind.return_value.dialect.name = "postgresql"
+    db.execute.return_value.mappings.return_value.one.return_value = {
+        "db_pending": 3,
+        "db_running": 2,
+        "db_failed": 5,
+        "db_retryable_failed": 1,
+        "oldest_pending": datetime(2026, 7, 31, 1, tzinfo=timezone.utc),
+        "oldest_retryable_failed": datetime(2026, 7, 31, 2, tzinfo=timezone.utc),
+    }
+
+    with patch("core.llm_evaluation_queue.SessionLocal", return_value=db), patch(
+        "core.llm_evaluation_queue._age_seconds", side_effect=[120, 60]
+    ), patch("core.llm_evaluation_queue._first_configured_provider_rpm", return_value=10):
+        status = llm_evaluation_queue._db_backlog_status()
+
+    assert status == {
+        "db_pending": 3,
+        "db_running": 2,
+        "db_failed": 5,
+        "db_retryable_failed": 1,
+        "oldest_pending_age_seconds": 120,
+        "oldest_retryable_failed_age_seconds": 60,
+        "drain_estimate_seconds": 24,
+    }
+    db.scalar.assert_not_called()
+    db.close.assert_called_once_with()
+
+
+def test_db_backlog_status_falls_back_when_cloud_function_is_missing():
+    class _MissingFunctionError(Exception):
+        pgcode = "42883"
+
+    db = Mock()
+    db.get_bind.return_value.dialect.name = "postgresql"
+    status_rows = Mock()
+    status_rows.all.return_value = [("pending", 4), ("failed", 2)]
+    db.execute.side_effect = [
+        ProgrammingError("statement", {}, _MissingFunctionError()),
+        status_rows,
+    ]
+    db.scalar.side_effect = [1, None, None]
+
+    with patch("core.llm_evaluation_queue.SessionLocal", return_value=db), patch(
+        "core.llm_evaluation_queue._first_configured_provider_rpm", return_value=None
+    ):
+        status = llm_evaluation_queue._db_backlog_status()
+
+    assert status["db_pending"] == 4
+    assert status["db_failed"] == 2
+    assert status["db_retryable_failed"] == 1
+    assert status["drain_estimate_seconds"] is None
+    db.rollback.assert_called_once_with()
+    db.close.assert_called_once_with()
+
+
+def test_cloud_db_backlog_status_propagates_unexpected_database_errors():
+    class _PermissionError(Exception):
+        pgcode = "42501"
+
+    db = Mock()
+    db.get_bind.return_value.dialect.name = "postgresql"
+    db.execute.side_effect = ProgrammingError("statement", {}, _PermissionError())
+
+    with pytest.raises(ProgrammingError):
+        llm_evaluation_queue._cloud_db_backlog_status(db)
+
+    db.rollback.assert_called_once_with()
 
 def test_pause_status_and_controls_round_trip_through_redis():
     redis = _PauseRedis()

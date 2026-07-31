@@ -12,7 +12,8 @@ from typing import Any
 from redis import Redis
 from rq import Queue, Retry
 from rq.registry import DeferredJobRegistry, FailedJobRegistry, ScheduledJobRegistry, StartedJobRegistry
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, func, or_, select, text, update
+from sqlalchemy.exc import DBAPIError
 
 from core.config_loader import load_config
 from core.llm_evaluation import MatchLlmEvaluationService
@@ -628,38 +629,73 @@ def _first_configured_provider_rpm() -> int | None:
     return None
 
 
+def _cloud_db_backlog_status(db: Any) -> dict[str, Any] | None:
+    """Read cross-owner aggregate counts when the cloud helper is installed."""
+    bind = db.get_bind()
+    if bind.dialect.name != "postgresql":
+        return None
+
+    try:
+        return dict(
+            db.execute(
+                text("SELECT * FROM jobscout_llm_evaluation_backlog_status()")
+            )
+            .mappings()
+            .one()
+        )
+    except DBAPIError as exc:
+        db.rollback()
+        sqlstate = getattr(exc.orig, "sqlstate", None) or getattr(
+            exc.orig, "pgcode", None
+        )
+        if sqlstate == "42883":
+            return None
+        raise
+
+
 def _db_backlog_status() -> dict[str, int | None]:
     db = SessionLocal()
     try:
-        rows = db.execute(
-            select(LlmMatchEvaluation.status, func.count(LlmMatchEvaluation.id))
-            .where(LlmMatchEvaluation.deleted_at.is_(None))
-            .group_by(LlmMatchEvaluation.status)
-        ).all()
-        counts = {str(status): int(count or 0) for status, count in rows}
-        retryable_failed = int(
-            db.scalar(
-                select(func.count(LlmMatchEvaluation.id)).where(
+        cloud_status = _cloud_db_backlog_status(db)
+        if cloud_status is None:
+            rows = db.execute(
+                select(LlmMatchEvaluation.status, func.count(LlmMatchEvaluation.id))
+                .where(LlmMatchEvaluation.deleted_at.is_(None))
+                .group_by(LlmMatchEvaluation.status)
+            ).all()
+            counts = {str(status): int(count or 0) for status, count in rows}
+            retryable_failed = int(
+                db.scalar(
+                    select(func.count(LlmMatchEvaluation.id)).where(
+                        LlmMatchEvaluation.deleted_at.is_(None),
+                        LlmMatchEvaluation.status == LLM_EVALUATION_FAILED,
+                        LlmMatchEvaluation.retryable.is_(True),
+                    )
+                )
+                or 0
+            )
+            oldest_pending = db.scalar(
+                select(func.min(LlmMatchEvaluation.created_at)).where(
+                    LlmMatchEvaluation.deleted_at.is_(None),
+                    LlmMatchEvaluation.status == LLM_EVALUATION_PENDING,
+                )
+            )
+            oldest_retryable_failed = db.scalar(
+                select(func.min(LlmMatchEvaluation.created_at)).where(
                     LlmMatchEvaluation.deleted_at.is_(None),
                     LlmMatchEvaluation.status == LLM_EVALUATION_FAILED,
                     LlmMatchEvaluation.retryable.is_(True),
                 )
             )
-            or 0
-        )
-        oldest_pending = db.scalar(
-            select(func.min(LlmMatchEvaluation.created_at)).where(
-                LlmMatchEvaluation.deleted_at.is_(None),
-                LlmMatchEvaluation.status == LLM_EVALUATION_PENDING,
-            )
-        )
-        oldest_retryable_failed = db.scalar(
-            select(func.min(LlmMatchEvaluation.created_at)).where(
-                LlmMatchEvaluation.deleted_at.is_(None),
-                LlmMatchEvaluation.status == LLM_EVALUATION_FAILED,
-                LlmMatchEvaluation.retryable.is_(True),
-            )
-        )
+        else:
+            counts = {
+                LLM_EVALUATION_PENDING: int(cloud_status["db_pending"] or 0),
+                LLM_EVALUATION_RUNNING: int(cloud_status["db_running"] or 0),
+                LLM_EVALUATION_FAILED: int(cloud_status["db_failed"] or 0),
+            }
+            retryable_failed = int(cloud_status["db_retryable_failed"] or 0)
+            oldest_pending = cloud_status["oldest_pending"]
+            oldest_retryable_failed = cloud_status["oldest_retryable_failed"]
     finally:
         db.close()
 
