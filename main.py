@@ -6,6 +6,9 @@ a few internal imports while the last legacy callers are removed.
 Running it directly as a CLI is intentionally unsupported.
 """
 
+# Logging is configured before imports that can emit startup diagnostics.
+# ruff: noqa: E402
+
 import time
 import logging
 import signal

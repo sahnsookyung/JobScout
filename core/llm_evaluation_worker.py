@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# Direct-file execution adjusts sys.path before importing project modules.
+# ruff: noqa: E402
+
 import argparse
 import logging
 import os
