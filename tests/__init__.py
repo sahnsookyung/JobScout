@@ -28,7 +28,6 @@ Database Setup:
 """
 
 import os
-import sys
 from typing import Optional
 
 # Database configuration
@@ -73,7 +72,7 @@ def is_database_available() -> bool:
             
             return True
             
-    except Exception as e:
+    except Exception:
         return False
 
 

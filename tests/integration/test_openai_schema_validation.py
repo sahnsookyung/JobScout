@@ -30,7 +30,7 @@ class TestOpenAISchemaStructure:
         """Top-level schema must have name, strict, and schema keys."""
         assert "name" in RESUME_SCHEMA
         assert "strict" in RESUME_SCHEMA
-        assert RESUME_SCHEMA["strict"] == True
+        assert RESUME_SCHEMA["strict"] is True
         assert "schema" in RESUME_SCHEMA
         assert isinstance(RESUME_SCHEMA["schema"], dict)
 
@@ -38,7 +38,7 @@ class TestOpenAISchemaStructure:
         """Top-level schema must have name, strict, and schema keys."""
         assert "name" in EXTRACTION_SCHEMA
         assert "strict" in EXTRACTION_SCHEMA
-        assert EXTRACTION_SCHEMA["strict"] == True
+        assert EXTRACTION_SCHEMA["strict"] is True
         assert "schema" in EXTRACTION_SCHEMA
         assert isinstance(EXTRACTION_SCHEMA["schema"], dict)
 
@@ -53,7 +53,7 @@ class TestOpenAIStrictRequirements:
         if isinstance(schema, dict):
             # Check if this is an object definition
             if schema.get("type") == "object":
-                if schema.get("additionalProperties") != False:
+                if schema.get("additionalProperties") is not False:
                     errors.append(f"{path}: additionalProperties must be false for objects")
             
             # Recurse into properties
@@ -104,7 +104,7 @@ class TestOpenAIStrictRequirements:
         errors = self._check_additional_properties_false(inner_schema)
         
         if errors:
-            pytest.fail(f"additionalProperties: false missing:\n" + "\n".join(errors))
+            pytest.fail("additionalProperties: false missing:\n" + "\n".join(errors))
 
     def test_job_extraction_schema_has_additional_properties_false(self):
         """All objects in job extraction schema must have additionalProperties: false."""
@@ -112,7 +112,7 @@ class TestOpenAIStrictRequirements:
         errors = self._check_additional_properties_false(inner_schema)
         
         if errors:
-            pytest.fail(f"additionalProperties: false missing:\n" + "\n".join(errors))
+            pytest.fail("additionalProperties: false missing:\n" + "\n".join(errors))
 
     def _check_no_default_values(self, schema: Dict[str, Any], path: str = "root") -> List[str]:
         """Check that schema doesn't contain default values (not allowed in strict mode)."""
@@ -144,7 +144,7 @@ class TestOpenAIStrictRequirements:
         errors = self._check_no_default_values(inner_schema)
         
         if errors:
-            pytest.fail(f"Default values found:\n" + "\n".join(errors))
+            pytest.fail("Default values found:\n" + "\n".join(errors))
 
     def _check_all_fields_required(self, schema: Dict[str, Any], path: str = "root") -> List[str]:
         """Check that all objects have required arrays matching their properties."""
@@ -229,7 +229,7 @@ class TestOpenAIStrictRequirements:
         errors = self._check_all_fields_required(inner_schema)
         
         if errors:
-            pytest.fail(f"Missing required fields:\n" + "\n".join(errors))
+            pytest.fail("Missing required fields:\n" + "\n".join(errors))
 
     def test_job_extraction_schema_has_no_defaults(self):
         """EXTRACTION_SCHEMA should have no default values."""
@@ -237,7 +237,7 @@ class TestOpenAIStrictRequirements:
         errors = self._check_no_default_values(inner_schema)
         
         if errors:
-            pytest.fail(f"Default values found:\n" + "\n".join(errors))
+            pytest.fail("Default values found:\n" + "\n".join(errors))
 
     def test_job_extraction_schema_all_fields_required(self):
         """All properties in EXTRACTION_SCHEMA must be listed in required array."""
@@ -245,7 +245,7 @@ class TestOpenAIStrictRequirements:
         errors = self._check_all_fields_required(inner_schema)
         
         if errors:
-            pytest.fail(f"Missing required fields:\n" + "\n".join(errors))
+            pytest.fail("Missing required fields:\n" + "\n".join(errors))
 
 
 class TestOpenAIExampleValidation:

@@ -552,7 +552,6 @@ class TestOrchestrateMatchEndpoint:
     @pytest.mark.asyncio
     async def test_orchestrate_match_success(self):
         """Test orchestrate match endpoint with existing resume in database."""
-        from core.app_context import AppContext
         from fastapi.testclient import TestClient
         from services.orchestrator.main import OrchestratorRegistry, app, get_current_user
 
@@ -849,7 +848,6 @@ class TestRunResumeEtl:
     @pytest.mark.asyncio
     async def test_orchestrate_match_no_resume_in_db(self):
         """Test orchestrate match endpoint when no resume exists in database."""
-        from core.app_context import AppContext
         from fastapi.testclient import TestClient
         from services.orchestrator.main import OrchestratorRegistry, app, get_current_user
 
@@ -958,7 +956,7 @@ class TestGetOrchestrationStatus:
         from fastapi.testclient import TestClient
         from services.orchestrator.main import app
 
-        with TestClient(app) as client:
+        with TestClient(app):
             routes = [
                 route.path
                 for route in app.routes
@@ -3098,7 +3096,6 @@ class TestCleanupStaleFull:
         from services.orchestrator.main import (
             OrchestratorRegistry,
             OrchestrationState,
-            cleanup_stale_orchestrations,
             ORCHESTRATION_TTL,
         )
 
@@ -4333,7 +4330,6 @@ class TestTriggerScrapeEndpoint:
     @pytest.mark.asyncio
     async def test_trigger_scrape_success(self, mock_ctx):
         """Test successful scrape via endpoint."""
-        from fastapi.testclient import TestClient
         from services.orchestrator.main import app
 
         scraper = MagicMock()

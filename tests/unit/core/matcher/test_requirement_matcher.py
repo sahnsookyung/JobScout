@@ -102,7 +102,7 @@ def test_requirement_matcher_covered(mock_requirement_with_embedding, mock_repo,
 
     assert len(matched) == 1
     assert len(missing) == 0
-    assert matched[0].is_covered == True
+    assert matched[0].is_covered is True
     assert matched[0].similarity >= 0.5
     assert matched[0].evidence is not None
 
@@ -123,7 +123,7 @@ def test_requirement_matcher_not_covered(mock_requirement_no_embedding, mock_rep
 
     assert len(matched) == 0
     assert len(missing) == 1
-    assert missing[0].is_covered == False
+    assert missing[0].is_covered is False
     assert missing[0].similarity == 0.0
     assert missing[0].evidence is None
 
@@ -144,7 +144,7 @@ def test_requirement_matcher_threshold(mock_requirement_with_embedding, mock_rep
 
     assert len(matched) == 0
     assert len(missing) == 1
-    assert missing[0].is_covered == False
+    assert missing[0].is_covered is False
     assert missing[0].similarity < 0.8
     assert missing[0].evidence is not None
 
@@ -167,7 +167,7 @@ def test_requirement_embedding_exception(mock_requirement_no_embedding, mock_rep
     assert len(missing) == 1
     assert missing[0].similarity == 0.0
     assert missing[0].evidence is None
-    assert missing[0].is_covered == False
+    assert missing[0].is_covered is False
 
 
 def test_pgvector_query_called_correctly(mock_requirement_with_embedding, mock_repo, mock_evidence_row):
@@ -206,7 +206,7 @@ def test_evidence_included_for_uncovered_requirements(mock_requirement_with_embe
 
     assert len(matched) == 0
     assert len(missing) == 1
-    assert missing[0].is_covered == False
+    assert missing[0].is_covered is False
     assert missing[0].similarity == 0.4
     assert missing[0].evidence is not None
     assert missing[0].evidence.id == "reu_001"
