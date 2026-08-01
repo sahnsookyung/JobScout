@@ -18,6 +18,7 @@ import os
 import sys
 import threading
 from pathlib import Path
+from urllib.parse import urlsplit
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -59,6 +60,24 @@ except ValueError:
         os.environ.get('NOTIFICATION_METRICS_PORT'),
     )
     _METRICS_PORT = 9464
+
+
+def _redact_redis_url(redis_url: str) -> str:
+    """Return a log-safe Redis URL without exposing its password."""
+    try:
+        parsed = urlsplit(redis_url)
+        if parsed.password is None:
+            return redis_url
+
+        credentials, host = parsed.netloc.rsplit("@", 1)
+        username, separator, _password = credentials.partition(":")
+        if not separator:
+            return "<unparseable>"
+
+        safe_netloc = f"{username}:***@{host}"
+        return parsed._replace(netloc=safe_netloc).geturl()
+    except ValueError:
+        return "<unparseable>"
 
 
 def _monitor_dlq(redis_conn: Redis, queue_name: str, stop: threading.Event) -> None:
@@ -106,13 +125,7 @@ def start_worker(burst: bool = False, queues: list = None):
         queues = ['notifications']
 
     logger.info("Starting RQ Worker")
-    try:
-        from urllib.parse import urlparse
-        parsed = urlparse(redis_url)
-        safe_url = parsed._replace(password="***").geturl() if parsed.password else redis_url  # NOSONAR
-    except Exception:
-        safe_url = "<unparseable>"
-    logger.info("Redis URL: %s", safe_url)
+    logger.info("Redis URL: %s", _redact_redis_url(redis_url))
     logger.info("Queues: %s", ", ".join(queues))
     logger.info("Burst mode: %s", burst)
 

@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from notification.worker import main, start_worker, _monitor_dlq
+from notification.worker import _monitor_dlq, _redact_redis_url, main, start_worker
 
 
 def _runtime_config(redis_url: str = "redis://runtime:6379/0") -> SimpleNamespace:
@@ -189,6 +189,23 @@ class TestWorkerMain:
 class TestWorkerLogging:
     """Test worker logging configuration."""
 
+    @pytest.mark.parametrize(
+        ("redis_url", "expected"),
+        [
+            ("redis://redis:6379/0", "redis://redis:6379/0"),
+            ("redis://:secret@redis:6379/0", "redis://:***@redis:6379/0"),
+            (
+                "rediss://worker:p%40ss@[2001:db8::1]:6380/2?ssl_cert_reqs=required",
+                "rediss://worker:***@[2001:db8::1]:6380/2?ssl_cert_reqs=required",
+            ),
+        ],
+    )
+    def test_redact_redis_url(self, redis_url, expected):
+        assert _redact_redis_url(redis_url) == expected
+
+    def test_redact_redis_url_rejects_malformed_authority(self):
+        assert _redact_redis_url("redis://[broken:6379/0") == "<unparseable>"
+
     @patch('notification.worker.Redis', spec=True)
     @patch('notification.worker.Worker', spec=True)
     def test_worker_logs_startup_info(self, mock_worker_class, mock_redis_class, caplog):
@@ -207,6 +224,23 @@ class TestWorkerLogging:
         assert "Starting RQ Worker" in caplog.text
         assert "Queues:" in caplog.text
         assert "Burst mode: True" in caplog.text
+
+    @patch('notification.worker.Redis', spec=True)
+    @patch('notification.worker.Worker', spec=True)
+    def test_worker_redacts_redis_password(self, mock_worker_class, mock_redis_class, caplog):
+        mock_redis = Mock()
+        mock_redis.ping.return_value = True
+        mock_redis_class.from_url.return_value = mock_redis
+        mock_worker_class.return_value = Mock()
+
+        with patch(
+            'notification.worker.get_notification_runtime_config',
+            return_value=_runtime_config('redis://worker:secret@redis:6379/0'),
+        ), caplog.at_level(logging.INFO, logger='notification.worker'):
+            start_worker(burst=True, queues=['notifications'])
+
+        assert "Redis URL: redis://worker:***@redis:6379/0" in caplog.text
+        assert "secret" not in caplog.text
 
     @patch('notification.worker.FailedJobRegistry', spec=True)
     @patch('notification.worker.Redis', spec=True)
