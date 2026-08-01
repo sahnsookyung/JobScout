@@ -490,7 +490,7 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                     </span>
                 )}
                 {evaluation?.verdict && <span className="caption">{evaluation.verdict}</span>}
-                {staleStatus && staleStatus !== 'current' && (
+                {evaluation?.status === 'succeeded' && staleStatus && staleStatus !== 'current' && (
                     <span className="caption text-warn">{cleanLabel(staleStatus)}</span>
                 )}
                 {evaluation?.queued_reason ? (
@@ -529,7 +529,7 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                 <p className="mt-4 text-[13px] text-ink-muted">Loading evaluation status.</p>
             ) : evaluation?.summary ? (
                 <p className="mt-4 text-[14px] leading-relaxed text-ink-soft">{evaluation.summary}</p>
-            ) : currentProgressMessage ? (
+            ) : evaluationInFlight ? (
                 <p className="mt-4 text-[13px] text-ink-muted">
                     Waiting for the review to finish.
                 </p>
