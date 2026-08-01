@@ -45,7 +45,6 @@ export default defineConfig({
                 'src/test/**',
                 'src/**/*.d.ts',
                 'src/main.tsx',
-                'src/App.tsx',
                 // Pure TypeScript interfaces — no runtime code to cover
                 'src/types/**',
                 // Test helper utilities — not application code

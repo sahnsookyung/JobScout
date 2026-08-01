@@ -1,19 +1,26 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { AuthGate } from '@/features/auth/AuthGate';
 import { TurnstileGate } from '@/features/auth/TurnstileGate';
 import { useAuth } from '@/features/auth/useAuth';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { MatchList } from '@/features/matches/components/MatchList';
-import { MatchDetailsModal } from '@/features/matches/components/MatchDetailsModal';
-import { EmailVerificationPage } from '@/features/notifications/components/EmailVerificationPage';
 import { PolicyPanel } from '@/features/config/components/PolicyPanel';
 import { DashboardControls } from '@/features/dashboard/components/DashboardControls';
 import { DashboardHeader } from '@/features/dashboard/components/DashboardHeader';
-import { JobManagementPanel } from '@/features/dashboard/components/JobManagementPanel';
 import { ToastProvider } from '@/components/ui/Toast';
 import { AppErrorBoundary } from '@/components/AppErrorBoundary';
 import { stripAppBasePath } from '@/config/publicPath';
 import { queryClient } from '@/services/queryClient';
+
+const MatchDetailsModal = lazy(() => import(
+    '@/features/matches/components/MatchDetailsModal'
+).then((module) => ({ default: module.MatchDetailsModal })));
+const EmailVerificationPage = lazy(() => import(
+    '@/features/notifications/components/EmailVerificationPage'
+).then((module) => ({ default: module.EmailVerificationPage })));
+const JobManagementPanel = lazy(() => import(
+    '@/features/dashboard/components/JobManagementPanel'
+).then((module) => ({ default: module.JobManagementPanel })));
 
 type WorkspaceTab = 'jobs' | 'management';
 
@@ -24,6 +31,21 @@ function workspaceTabClass(isActive: boolean): string {
             ? 'border-accent bg-accent-soft text-accent-ink'
             : 'border-rule bg-surface text-ink-muted hover:border-rule-strong hover:text-ink',
     ].join(' ');
+}
+
+function LazyContentFallback({
+    label,
+    overlay = false,
+}: Readonly<{ label: string; overlay?: boolean }>) {
+    const classes = overlay
+        ? 'fixed inset-0 z-50 flex items-center justify-center bg-canvas/80 text-[13px] text-ink-soft'
+        : 'flex min-h-32 items-center justify-center text-[13px] text-ink-soft';
+
+    return (
+        <div className={classes} role="status" aria-live="polite">
+            {label}
+        </div>
+    );
 }
 
 function AppContent() {
@@ -91,15 +113,21 @@ function AppContent() {
                     </div>
                 ) : (
                     <section role="tabpanel" aria-label="Job Management">
-                        <JobManagementPanel />
+                        <Suspense fallback={<LazyContentFallback label="Loading job management…" />}>
+                            <JobManagementPanel />
+                        </Suspense>
                     </section>
                 )}
             </main>
 
-            <MatchDetailsModal
-                matchId={selectedMatchId}
-                onClose={() => setSelectedMatchId(null)}
-            />
+            {selectedMatchId ? (
+                <Suspense fallback={<LazyContentFallback label="Loading match details…" overlay />}>
+                    <MatchDetailsModal
+                        matchId={selectedMatchId}
+                        onClose={() => setSelectedMatchId(null)}
+                    />
+                </Suspense>
+            ) : null}
         </div>
     );
 }
@@ -113,7 +141,9 @@ function App() {
             <AppErrorBoundary>
                 <ToastProvider />
                 {isEmailVerificationRoute ? (
-                    <EmailVerificationPage />
+                    <Suspense fallback={<LazyContentFallback label="Loading email verification…" />}>
+                        <EmailVerificationPage />
+                    </Suspense>
                 ) : (
                     <AuthGate>
                         <AppContent />
