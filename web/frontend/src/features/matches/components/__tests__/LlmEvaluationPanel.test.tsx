@@ -64,7 +64,11 @@ function renderPanel() {
     );
 }
 
-function mockFailedEvaluation(errorCode: string, providerStatusMessage: string) {
+function mockFailedEvaluation(
+    errorCode: string,
+    providerStatusMessage: string,
+    overrides: Record<string, unknown> = {},
+) {
     vi.mocked(matchesApi.getLlmEvaluations).mockResolvedValue({
         data: {
             success: true,
@@ -91,6 +95,7 @@ function mockFailedEvaluation(errorCode: string, providerStatusMessage: string) 
                     error_code: errorCode,
                     retryable: false,
                     provider_status_message: providerStatusMessage,
+                    ...overrides,
                 },
             ],
         },
@@ -163,8 +168,12 @@ describe('LlmEvaluationPanel', () => {
                         model: 'judge-model',
                         prompt_version: 'match-judge-v1',
                         schema_version: '1',
+                        error_code: 'llm_judge_provider_timeout',
                         retryable: true,
                         retry_after_seconds: 40,
+                        queued_reason: 'retry_now',
+                        queue_state: 'failed',
+                        provider_status_message: 'provider timed out',
                     },
                 ],
             },
@@ -198,7 +207,14 @@ describe('LlmEvaluationPanel', () => {
 
         renderPanel();
 
-        expect((await screen.findAllByText(/Retry available after 40s/i)).length).toBeGreaterThan(0);
+        expect(
+            await screen.findByText(/providers were temporarily unavailable.*automatic retry is expected in about 40s/i),
+        ).toBeInTheDocument();
+        expect(screen.getAllByText(/automatic retry is expected in about 40s/i)).toHaveLength(1);
+        expect(screen.queryByText(/provider timed out/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/Retry queued/i)).not.toBeInTheDocument();
+        expect(screen.getAllByText(/^failed$/i)).toHaveLength(1);
+        expect(screen.queryByText(/Regenerate this review to try again/i)).not.toBeInTheDocument();
         expect(screen.queryByText(/Waiting for the review to finish/i)).not.toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: /retry llm evaluation/i }));
 
@@ -282,6 +298,31 @@ describe('LlmEvaluationPanel', () => {
         expect(await screen.findByText(expectedMessage)).toBeInTheDocument();
         expect(screen.queryByText(providerMessage)).not.toBeInTheDocument();
         expect(screen.queryByText(/Waiting for the review to finish/i)).not.toBeInTheDocument();
+    });
+
+    it('shows the scheduled time for an automatic retry', async () => {
+        mockFailedEvaluation('llm_judge_input_too_large', 'raw input error', {
+            retryable: true,
+            next_retry_at: '2030-01-02T03:04:05Z',
+        });
+
+        renderPanel();
+
+        expect(await screen.findByText(/automatic retry is scheduled for/i)).toBeInTheDocument();
+        expect(screen.getByText(/use Retry to queue it now/i)).toBeInTheDocument();
+        expect(screen.queryByText(/raw input error/i)).not.toBeInTheDocument();
+    });
+
+    it('gives safe manual retry guidance when no retry time is available', async () => {
+        mockFailedEvaluation('unexpected_provider_error', 'raw provider failure', {
+            retryable: true,
+        });
+
+        renderPanel();
+
+        expect(await screen.findByText(/LLM review failed temporarily.*Use Retry to queue another attempt/i))
+            .toBeInTheDocument();
+        expect(screen.queryByText(/raw provider failure/i)).not.toBeInTheDocument();
     });
 
     it('shows stale successful analysis with ordered evidence fallback strengths', async () => {
