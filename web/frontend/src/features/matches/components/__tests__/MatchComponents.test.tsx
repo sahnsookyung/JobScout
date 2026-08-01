@@ -1094,7 +1094,9 @@ describe('MatchDetailsModal', () => {
 
         render(<MatchDetailsModal matchId="match-1" onClose={vi.fn()} />, { wrapper: makeQueryWrapper() });
 
-        expect((await screen.findAllByText(/Retryable failure/i)).length).toBeGreaterThan(0);
+        expect(
+            await screen.findByText(/LLM review failed temporarily.*automatic retry is expected in about 1m/i),
+        ).toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: /retry llm evaluation/i }));
 
         await waitFor(() => {

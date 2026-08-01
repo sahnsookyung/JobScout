@@ -71,29 +71,42 @@ function progressMessage(evaluation?: MatchLlmEvaluation | null, status?: string
     if (status === 'running') {
         return 'LLM review is running against the full resume and job description. This panel will update automatically.';
     }
-    if (status === 'failed' && evaluation?.retryable) {
-        if (evaluation.next_retry_at) return `Retryable failure. Next retry ${new Date(evaluation.next_retry_at).toLocaleString()}.`;
-        if (evaluation.retry_after_seconds != null) return `Retryable failure. Retry available after ${formatDuration(evaluation.retry_after_seconds)}.`;
-        return 'Retryable failure. Queue this review again when the provider is available.';
-    }
     return '';
+}
+
+function retryGuidance(evaluation: MatchLlmEvaluation): string {
+    if (evaluation.next_retry_at) {
+        return `An automatic retry is scheduled for ${new Date(evaluation.next_retry_at).toLocaleString()}. You can use Retry to queue it now.`;
+    }
+    if (evaluation.retry_after_seconds != null) {
+        return `An automatic retry is expected in about ${formatDuration(evaluation.retry_after_seconds)}. You can use Retry to queue it now.`;
+    }
+    return 'Use Retry to queue another attempt.';
 }
 
 function failureMessage(evaluation?: MatchLlmEvaluation | null): string {
     if (evaluation?.status !== 'failed') return '';
+    const recovery = evaluation.retryable ? retryGuidance(evaluation) : '';
     if (evaluation.error_code === 'llm_judge_input_too_large') {
-        return 'This review exceeded one provider’s input limit. Regenerate it to try the next available provider.';
+        return recovery
+            ? `This review exceeded one provider’s input limit. ${recovery}`
+            : 'This review exceeded one provider’s input limit. Regenerate it to try the next available provider.';
     }
     if (evaluation.error_code === 'llm_judge_token_quota_exceeded') {
-        return 'The provider rate limit stopped this review. Regenerate it when capacity is available.';
+        return recovery
+            ? `The provider rate limit stopped this review. ${recovery}`
+            : 'The provider rate limit stopped this review. Regenerate it when capacity is available.';
     }
     if (
         evaluation.error_code === 'llm_judge_provider_timeout'
         || evaluation.error_code === 'llm_judge_provider_connection_error'
         || evaluation.error_code === 'llm_judge_provider_unavailable'
     ) {
-        return 'The LLM providers were temporarily unavailable. Regenerate this review to try again.';
+        return recovery
+            ? `The LLM providers were temporarily unavailable. ${recovery}`
+            : 'The LLM providers were temporarily unavailable. Regenerate this review to try again.';
     }
+    if (recovery) return `The LLM review failed temporarily. ${recovery}`;
     return evaluation.provider_status_message || 'The LLM review failed. Regenerate it to try again.';
 }
 
@@ -493,10 +506,10 @@ export const LlmEvaluationPanel: React.FC<Props> = ({ matchId, markerStatus }) =
                 {evaluation?.status === 'succeeded' && staleStatus && staleStatus !== 'current' && (
                     <span className="caption text-warn">{cleanLabel(staleStatus)}</span>
                 )}
-                {evaluation?.queued_reason ? (
+                {evaluationInFlight && evaluation?.queued_reason ? (
                     <span className="caption">{queuedReasonLabel(evaluation.queued_reason)}</span>
                 ) : null}
-                {evaluation?.queue_state ? (
+                {evaluationInFlight && evaluation?.queue_state ? (
                     <span className="caption">{cleanLabel(evaluation.queue_state)}</span>
                 ) : null}
             </div>
