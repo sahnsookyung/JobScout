@@ -58,6 +58,7 @@ class TestCreateApp:
         assets_dir = tmp_path / 'web' / 'frontend' / 'dist' / 'assets'
         assets_dir.mkdir(parents=True)
         (assets_dir / 'app.js').write_text('console.log("ok")')
+        (assets_dir / 'theme-init.js').write_text('document.documentElement.dataset.theme = "light"')
         (tmp_path / 'web' / 'frontend' / 'dist' / 'favicon.svg').write_text('<svg />')
         from web.backend.app import create_app
         with patch('web.backend.app.get_project_root', return_value=tmp_path):
@@ -65,6 +66,11 @@ class TestCreateApp:
         route_paths = [getattr(r, 'path', '') for r in app.routes]
         assert "/assets" in route_paths
         assert "/favicon.svg" in route_paths
+
+        from fastapi.testclient import TestClient
+        response = TestClient(app).get("/assets/theme-init.js")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/javascript")
 
     def test_exception_handlers_registered(self):
         """ServiceException, HTTPException, and Exception handlers must be registered."""
