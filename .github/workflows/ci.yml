@@ -58,7 +58,7 @@ jobs:
 
       - name: Install uv
         # astral-sh/setup-uv v8.2.0 — verified 2026-06-21
-        uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
         with:
           version: "0.11.2"
 
@@ -107,7 +107,7 @@ jobs:
 
       - name: Install uv
         # astral-sh/setup-uv v8.2.0 — verified 2026-06-21
-        uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
         with:
           version: "0.11.2"
 
@@ -145,7 +145,7 @@ jobs:
 
       - name: Install uv
         # astral-sh/setup-uv v8.2.0 — verified 2026-06-21
-        uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
         with:
           version: "0.11.2"
 
@@ -183,7 +183,7 @@ jobs:
 
       - name: Install uv
         # astral-sh/setup-uv v8.2.0 — verified 2026-06-21
-        uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
         with:
           version: "0.11.2"
 
@@ -277,7 +277,7 @@ jobs:
 
       - name: Install uv
         # astral-sh/setup-uv v8.2.0 — verified 2026-06-21
-        uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
         with:
           version: "0.11.2"
 
@@ -377,7 +377,7 @@ jobs:
 
       - name: Install uv
         # astral-sh/setup-uv v8.2.0 — verified 2026-06-21
-        uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
         with:
           version: "0.11.2"
 
