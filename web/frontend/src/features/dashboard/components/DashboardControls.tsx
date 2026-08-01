@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { usePipeline } from '@/hooks/usePipeline';
 import { usePolicy } from '@/hooks/usePolicy';
 import { useStats } from '@/hooks/useStats';
@@ -11,11 +11,26 @@ import { ResumeUploadSection } from './ResumeUploadSection';
 import { StatsPanel } from './StatsPanel';
 import { ActionButton } from './ActionButton';
 import { StatusBanner } from './StatusBanner';
-import { FetchSourcesPanel } from './FetchSourcesPanel';
-import { JobInventoryPanel } from './JobInventoryPanel';
+
+const FetchSourcesPanel = lazy(() => import('./FetchSourcesPanel').then((module) => ({
+    default: module.FetchSourcesPanel,
+})));
+const JobInventoryPanel = lazy(() => import('./JobInventoryPanel').then((module) => ({
+    default: module.JobInventoryPanel,
+})));
 
 interface DashboardControlsProps {
     includeManagementSections?: boolean;
+}
+
+function ManagementSectionsFallback() {
+    return (
+        <div className="space-y-8" role="status" aria-live="polite">
+            <div className="h-40 animate-pulse border border-rule bg-surface" aria-hidden="true" />
+            <div className="h-40 animate-pulse border border-rule bg-surface" aria-hidden="true" />
+            <span className="sr-only">Loading management tools…</span>
+        </div>
+    );
 }
 
 export const DashboardControls: React.FC<DashboardControlsProps> = ({
@@ -122,10 +137,10 @@ export const DashboardControls: React.FC<DashboardControlsProps> = ({
                 </div>
             </div>
             {includeManagementSections ? (
-                <>
+                <Suspense fallback={<ManagementSectionsFallback />}>
                     <FetchSourcesPanel />
                     <JobInventoryPanel stats={stats} />
-                </>
+                </Suspense>
             ) : null}
             {showStatusBanner && statusData && <StatusBanner {...statusData} />}
         </DashboardWrapper>
