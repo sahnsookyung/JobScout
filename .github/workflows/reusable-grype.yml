@@ -98,7 +98,7 @@ jobs:
         # github/codeql-action v4.36.2 — verified 2026-06-21 (same SHA as CodeQL steps).
         # Skipped on fork PRs: the GITHUB_TOKEN in that context lacks security-events:write.
         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38
         with:
           sarif_file: grype.sarif
           category: grype
