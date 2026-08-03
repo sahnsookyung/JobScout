@@ -122,7 +122,7 @@ jobs:
       - name: Initialize CodeQL
         # github/codeql-action v4.36.2 — verified 2026-06-21
         # build-mode: none — all languages here are interpreted; no build step needed.
-        uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e
+        uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38
         with:
           languages: ${{ matrix.language }}
           build-mode: none
