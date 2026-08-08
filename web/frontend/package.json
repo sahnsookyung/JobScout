@@ -39,7 +39,7 @@
         "@typescript-eslint/eslint-plugin": "^8.62.0",
         "@typescript-eslint/parser": "^8.63.0",
         "@vitejs/plugin-react": "^6.0.2",
-        "@vitest/coverage-v8": "^4.1.9",
+        "@vitest/coverage-v8": "^4.1.10",
         "autoprefixer": "^10.5.4",
         "eslint": "^10.5.0",
         "fake-indexeddb": "^6.2.4",
