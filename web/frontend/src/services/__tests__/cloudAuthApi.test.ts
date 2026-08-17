@@ -89,6 +89,36 @@ describe('cloudAuthApi', () => {
         expect(result).toEqual(expected);
     });
 
+    it('waits for an in-flight logout before exchanging a new credential', async () => {
+        let resolveLogout!: (value: { data: undefined }) => void;
+        const logoutResponse = new Promise<{ data: undefined }>((resolve) => {
+            resolveLogout = resolve;
+        });
+        const exchangeResponse = { data: { access_token: 'new-app-token' } };
+        mockPost
+            .mockReturnValueOnce(logoutResponse)
+            .mockResolvedValueOnce(exchangeResponse);
+
+        const logoutPromise = cloudAuthApi.logout();
+        const exchangePromise = cloudAuthApi.exchangeGoogleCredential(
+            'new-google-credential',
+            'new-login-nonce'
+        );
+        await Promise.resolve();
+
+        expect(mockPost).toHaveBeenCalledTimes(1);
+        expect(mockPost).toHaveBeenNthCalledWith(1, '/cloud/auth/logout');
+
+        resolveLogout({ data: undefined });
+        await logoutPromise;
+        await exchangePromise;
+
+        expect(mockPost).toHaveBeenNthCalledWith(2, '/cloud/auth/google/exchange', {
+            credential: 'new-google-credential',
+            nonce: 'new-login-nonce',
+        });
+    });
+
     it('lists tenants visible to the authenticated user', async () => {
         const expected = {
             data: [
