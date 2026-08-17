@@ -66,6 +66,7 @@ let refreshInFlight: Promise<void> | null = null;
 let bootstrapInFlight: Promise<void> | null = null;
 let cookieBootstrapInFlight: Promise<void> | null = null;
 let hasBootstrappedStoredSession = false;
+let hasAttemptedCookieBootstrap = false;
 let bootstrapRetryCount = 0;
 let authVersion = 0;
 const listeners = new Set<() => void>();
@@ -480,15 +481,27 @@ async function bootstrapStoredSession(): Promise<void> {
 }
 
 async function bootstrapCookieSession(): Promise<void> {
-    if (!hostedAuthRequired() || getAuthState().token || cookieBootstrapInFlight) {
+    const currentAuth = getAuthState();
+    if (
+        !hostedAuthRequired()
+        || currentAuth.user
+        || currentAuth.token
+        || cookieBootstrapInFlight
+        || hasAttemptedCookieBootstrap
+    ) {
         return cookieBootstrapInFlight ?? Promise.resolve();
     }
+    hasAttemptedCookieBootstrap = true;
+    const expectedVersion = authVersion;
     cookieBootstrapInFlight = (async () => {
         try {
             const [userResponse, tenantsResponse] = await Promise.all([
                 cloudAuthApi.getCurrentUser(),
                 cloudAuthApi.listTenants(),
             ]);
+            if (authVersion !== expectedVersion) {
+                return;
+            }
             applyAuthState(
                 createAuthState(
                     {
@@ -507,7 +520,9 @@ async function bootstrapCookieSession(): Promise<void> {
                 )
             );
         } catch {
-            clearAuthState();
+            if (authVersion === expectedVersion) {
+                clearAuthState();
+            }
         } finally {
             cookieBootstrapInFlight = null;
         }
@@ -529,6 +544,7 @@ export function useAuth(): UseAuthResult {
 
     const logout = useCallback(() => {
         hasBootstrappedStoredSession = false;
+        hasAttemptedCookieBootstrap = true;
         const maybeLogout = cloudAuthApi.logout?.();
         clearAuthState();
         void maybeLogout?.catch(() => undefined);
@@ -537,6 +553,7 @@ export function useAuth(): UseAuthResult {
     const retrySession = useCallback(() => {
         const currentAuth = getAuthState();
         if (!currentAuth.token) {
+            hasAttemptedCookieBootstrap = false;
             void bootstrapCookieSession();
             return;
         }
@@ -595,6 +612,7 @@ export function __resetAuthForTests(): void {
     bootstrapInFlight = null;
     cookieBootstrapInFlight = null;
     hasBootstrappedStoredSession = false;
+    hasAttemptedCookieBootstrap = false;
     bootstrapRetryCount = 0;
     authVersion = 0;
     authState = null;

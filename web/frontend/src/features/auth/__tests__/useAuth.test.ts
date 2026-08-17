@@ -732,6 +732,55 @@ describe('useAuth', () => {
             expect(result.current.isReady).toBe(true);
         });
 
+        it('does not bootstrap the cleared cookie session again after explicit logout', async () => {
+            vi.stubEnv('VITE_AUTH_REQUIRED', 'true');
+            vi.mocked(cloudAuthApi.getCurrentUser).mockResolvedValue(
+                axiosResponse(buildCloudUser({ email: 'cookie@example.com', name: 'Cookie User' }))
+            );
+            vi.mocked(cloudAuthApi.listTenants).mockResolvedValue(
+                axiosResponse<CloudTenant[]>([
+                    { id: 'tenant-cookie', name: 'Cookie Tenant', role: 'owner', is_default: true },
+                ])
+            );
+            const authenticated = renderHook(() => useAuth());
+            await flushAuthEffects();
+            await flushAuthEffects();
+
+            act(() => {
+                authenticated.result.current.logout();
+            });
+            renderHook(() => useAuth());
+            await flushAuthEffects();
+            await flushAuthEffects();
+
+            expect(cloudAuthApi.getCurrentUser).toHaveBeenCalledTimes(1);
+            expect(cloudAuthApi.listTenants).toHaveBeenCalledTimes(1);
+        });
+
+        it('does not let an in-flight cookie bootstrap restore an explicitly logged-out session', async () => {
+            vi.stubEnv('VITE_AUTH_REQUIRED', 'true');
+            const bootstrap = createDeferred<AxiosResponse<CloudUser>>();
+            vi.mocked(cloudAuthApi.getCurrentUser).mockReturnValue(bootstrap.promise);
+            vi.mocked(cloudAuthApi.listTenants).mockResolvedValue(
+                axiosResponse<CloudTenant[]>([])
+            );
+            const { result } = renderHook(() => useAuth());
+            await flushAuthEffects();
+
+            act(() => {
+                result.current.logout();
+            });
+            await act(async () => {
+                bootstrap.resolve(
+                    axiosResponse(buildCloudUser({ email: 'stale@example.com', name: 'Stale User' }))
+                );
+                await Promise.resolve();
+            });
+
+            expect(result.current.user).toBeNull();
+            expect(result.current.token).toBeNull();
+        });
+
         it('clears hosted cookie state when bootstrap fails', async () => {
             vi.stubEnv('VITE_AUTH_REQUIRED', 'true');
             vi.mocked(cloudAuthApi.getCurrentUser).mockRejectedValue(new Error('unauthorized'));
