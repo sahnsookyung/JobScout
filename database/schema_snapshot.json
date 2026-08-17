@@ -217,6 +217,12 @@
       "type": "PRIMARY KEY"
     },
     {
+      "definition": "FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE",
+      "name": "match_selection_run_tenant_id_fkey",
+      "table": "match_selection_run",
+      "type": "FOREIGN KEY"
+    },
+    {
       "definition": "FOREIGN KEY (job_match_id) REFERENCES job_match(id) ON DELETE CASCADE",
       "name": "notification_tracker_job_match_id_fkey",
       "table": "notification_tracker",
@@ -979,9 +985,18 @@
     },
     {
       "access_method": "btree",
-      "definition": "CREATE UNIQUE INDEX idx_match_selection_run_current ON public.match_selection_run USING btree (owner_id, resume_fingerprint) WHERE (is_current AND (lifecycle_status = 'committed'::text))",
-      "name": "idx_match_selection_run_current",
-      "predicate": "(is_current AND (lifecycle_status = 'committed'::text))",
+      "definition": "CREATE UNIQUE INDEX idx_match_selection_run_current_global ON public.match_selection_run USING btree (owner_id, resume_fingerprint) WHERE ((tenant_id IS NULL) AND is_current AND (lifecycle_status = 'committed'::text))",
+      "name": "idx_match_selection_run_current_global",
+      "predicate": "((tenant_id IS NULL) AND is_current AND (lifecycle_status = 'committed'::text))",
+      "reloptions": null,
+      "table": "match_selection_run",
+      "unique": true
+    },
+    {
+      "access_method": "btree",
+      "definition": "CREATE UNIQUE INDEX idx_match_selection_run_current_tenant ON public.match_selection_run USING btree (owner_id, resume_fingerprint, tenant_id) WHERE ((tenant_id IS NOT NULL) AND is_current AND (lifecycle_status = 'committed'::text))",
+      "name": "idx_match_selection_run_current_tenant",
+      "predicate": "((tenant_id IS NOT NULL) AND is_current AND (lifecycle_status = 'committed'::text))",
       "reloptions": null,
       "table": "match_selection_run",
       "unique": true
@@ -2879,6 +2894,12 @@
           "name": "task_id",
           "nullable": true,
           "type": "text"
+        },
+        {
+          "default": null,
+          "name": "tenant_id",
+          "nullable": true,
+          "type": "uuid"
         },
         {
           "default": "0",

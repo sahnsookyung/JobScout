@@ -38,6 +38,7 @@ class MatchSelectionRun(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id", ondelete="CASCADE"), nullable=True)
     resume_fingerprint = Column(Text, nullable=False)
     task_id = Column(Text, nullable=True)
     lifecycle_status = Column(
@@ -84,11 +85,23 @@ class MatchSelectionRun(Base):
         Index("idx_match_selection_run_owner", "owner_id", "created_at"),
         Index("idx_match_selection_run_resume", "resume_fingerprint", "created_at"),
         Index(
-            "idx_match_selection_run_current",
+            "idx_match_selection_run_current_tenant",
+            "owner_id",
+            "resume_fingerprint",
+            "tenant_id",
+            unique=True,
+            postgresql_where=sql_text(
+                "tenant_id IS NOT NULL AND is_current AND lifecycle_status = 'committed'"
+            ),
+        ),
+        Index(
+            "idx_match_selection_run_current_global",
             "owner_id",
             "resume_fingerprint",
             unique=True,
-            postgresql_where=sql_text("is_current AND lifecycle_status = 'committed'"),
+            postgresql_where=sql_text(
+                "tenant_id IS NULL AND is_current AND lifecycle_status = 'committed'"
+            ),
         ),
     )
 
