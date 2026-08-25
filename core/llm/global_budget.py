@@ -160,14 +160,15 @@ def _next_utc_day_timestamp() -> int:
     return int(reset.timestamp())
 
 
-def _record_global_llm_budget_usage(
+def _record_global_llm_capacity_result(
     *,
-    current_requests: int,
-    current_tokens: int,
+    raw: Any,
     request_limit: int,
     token_limit: int,
     reset_at: int,
-) -> None:
+) -> str | None:
+    current_requests = int(raw[2])
+    current_tokens = int(raw[3])
     set_global_llm_budget_usage(
         "requests",
         current_requests,
@@ -180,6 +181,10 @@ def _record_global_llm_budget_usage(
         token_limit,
         reset_at=reset_at,
     )
+    if int(raw[0]) == 1:
+        return None
+    record_public_security_event("global_budget_exhausted")
+    return raw[1].decode("utf-8") if isinstance(raw[1], bytes) else str(raw[1])
 
 
 def reserve_global_llm_budget(
@@ -211,20 +216,15 @@ def reserve_global_llm_budget(
         )
     except Exception as exc:
         raise GlobalLlmBudgetUnavailable("Global LLM budget backend is unavailable.") from exc
-    current_requests = int(raw[2])
-    current_tokens = int(raw[3])
-    _record_global_llm_budget_usage(
-        current_requests=current_requests,
-        current_tokens=current_tokens,
+    exhausted_bucket = _record_global_llm_capacity_result(
+        raw=raw,
         request_limit=request_limit,
         token_limit=token_limit,
         reset_at=reset_at,
     )
-    if int(raw[0]) != 1:
-        bucket = raw[1].decode("utf-8") if isinstance(raw[1], bytes) else str(raw[1])
-        record_public_security_event("global_budget_exhausted")
+    if exhausted_bucket is not None:
         scope = "Background daily" if _BUDGET_LANE.get() == "background" else "Global daily"
-        raise GlobalLlmBudgetExceeded(f"{scope} LLM {bucket} budget exhausted.")
+        raise GlobalLlmBudgetExceeded(f"{scope} LLM {exhausted_bucket} budget exhausted.")
     return GlobalLlmBudgetReservation(
         client=resolved_client,
         tokens_key=tokens_key,
@@ -306,19 +306,16 @@ def ensure_global_llm_budget_available(
     except Exception as exc:
         raise GlobalLlmBudgetUnavailable("Global LLM budget backend is unavailable.") from exc
 
-    current_requests = int(raw[2])
-    current_tokens = int(raw[3])
-    _record_global_llm_budget_usage(
-        current_requests=current_requests,
-        current_tokens=current_tokens,
+    exhausted_bucket = _record_global_llm_capacity_result(
+        raw=raw,
         request_limit=request_limit,
         token_limit=token_limit,
         reset_at=reset_at,
     )
-    if int(raw[0]) != 1:
-        bucket = raw[1].decode("utf-8") if isinstance(raw[1], bytes) else str(raw[1])
-        record_public_security_event("global_budget_exhausted")
-        raise GlobalLlmBudgetExceeded(f"Global daily LLM {bucket} budget exhausted.")
+    if exhausted_bucket is not None:
+        raise GlobalLlmBudgetExceeded(
+            f"Global daily LLM {exhausted_bucket} budget exhausted."
+        )
 
 
 def _provider_actual_tokens(provider: LLMProvider) -> int | None:
