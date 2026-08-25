@@ -164,6 +164,36 @@ class TestResumeUploadEndpoint(unittest.TestCase):
         self.assertTrue(data['success'])
         self.assertIn('background', data['message'].lower())
 
+    def test_upload_rejects_exhausted_ai_capacity_before_creating_task(self):
+        """A full shared budget returns a clear error without consuming upload state."""
+        from core.llm.global_budget import GlobalLlmBudgetExceeded
+
+        files = {'file': ('resume.json', '{"name": "Test User"}', 'application/json')}
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            mocks = self._create_upload_mocks(
+                os.path.join(tmp_dir, "resume.json"),
+                resume_exists=False,
+            )
+            with patch(
+                'web.backend.routers.pipeline.ensure_global_llm_budget_available',
+                side_effect=GlobalLlmBudgetExceeded(
+                    "Global daily LLM requests budget exhausted."
+                ),
+            ) as ensure_capacity:
+                response = self.client.post('/api/pipeline/upload-resume', files=files)
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json()['code'],
+            'pipeline.resume.ai_capacity_exhausted',
+        )
+        mocks['repo'].create_resume_upload.assert_not_called()
+        ensure_capacity.assert_called_once_with(
+            estimated_requests=2,
+            estimated_tokens=32_768,
+        )
+
     def test_upload_unsupported_format_rejected(self):
         """Test that unsupported file formats are rejected."""
         files = {'file': ('resume.exe', 'binary content', 'application/octet-stream')}

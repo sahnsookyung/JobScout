@@ -69,6 +69,15 @@ class TestProviderQuotaExhausted:
 
         assert _provider_quota_exhausted(error) is False
 
+    def test_shared_budget_exhaustion_is_non_transient(self):
+        """Shared daily budget exhaustion skips immediate per-job retries."""
+        from core.llm.global_budget import GlobalLlmBudgetExceeded
+        from services.base.extraction import _provider_quota_exhausted
+
+        assert _provider_quota_exhausted(
+            GlobalLlmBudgetExceeded("Background daily LLM requests budget exhausted.")
+        ) is True
+
 
 class TestMarkJobFailed:
     """Test _mark_job_failed function."""

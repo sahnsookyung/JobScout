@@ -9,6 +9,8 @@ from core.llm.global_budget import (
     BudgetedLLMProvider,
     GlobalLlmBudgetExceeded,
     consume_global_llm_request,
+    ensure_global_llm_budget_available,
+    global_llm_budget_lane,
     reconcile_global_llm_budget,
     reserve_global_llm_budget,
 )
@@ -127,3 +129,58 @@ def test_budget_exhaustion_records_bounded_security_event(monkeypatch) -> None:
         call("requests", 1, 100, reset_at=1_800),
         call("tokens", 2_000_000, 2_000_000, reset_at=1_800),
     ]
+
+
+def test_background_lane_preserves_interactive_request_reserve(monkeypatch) -> None:
+    monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_BUDGET_ENABLED", "true")
+    monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_REQUESTS_PER_DAY", "10")
+    monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_TOKENS_PER_DAY", "2000000")
+    monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_INTERACTIVE_REQUESTS_RESERVE", "2")
+    client = Mock()
+    client.eval.side_effect = (
+        [0, "requests", 8, 100],
+        [1, "ok", 9, 200],
+    )
+
+    with global_llm_budget_lane("background"):
+        with pytest.raises(GlobalLlmBudgetExceeded, match="Background daily"):
+            reserve_global_llm_budget(100, client=client)
+
+    reservation = reserve_global_llm_budget(100, client=client)
+
+    assert reservation is not None
+    assert client.eval.call_args_list[0].args[4] == 8
+    assert client.eval.call_args_list[1].args[4] == 10
+
+
+def test_background_retries_cannot_consume_interactive_reserve(monkeypatch) -> None:
+    monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_BUDGET_ENABLED", "true")
+    monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_REQUESTS_PER_DAY", "10")
+    monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_TOKENS_PER_DAY", "2000000")
+    monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_INTERACTIVE_REQUESTS_RESERVE", "2")
+    client = Mock()
+    client.eval.return_value = [0, 8]
+
+    with global_llm_budget_lane("background"):
+        with pytest.raises(GlobalLlmBudgetExceeded, match="Background daily"):
+            consume_global_llm_request(client=client)
+
+    assert client.eval.call_args.args[3] == 8
+
+
+def test_capacity_check_rejects_without_consuming_budget(monkeypatch) -> None:
+    monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_BUDGET_ENABLED", "true")
+    monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_REQUESTS_PER_DAY", "200")
+    monkeypatch.setenv("JOBSCOUT_CLOUD_GLOBAL_LLM_TOKENS_PER_DAY", "2000000")
+    client = Mock()
+    client.eval.return_value = [0, "requests", 199, 1_000]
+
+    with pytest.raises(GlobalLlmBudgetExceeded, match="requests budget exhausted"):
+        ensure_global_llm_budget_available(
+            estimated_requests=2,
+            estimated_tokens=32_768,
+            client=client,
+        )
+
+    assert "INCR" not in client.eval.call_args.args[0]
+    assert client.eval.call_args.args[6:] == (2, 32_768)

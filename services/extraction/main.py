@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from core.config_loader import load_config
 from core.app_context import AppContext
 from core.logging_utils import setup_service_logging
+from core.llm.global_budget import global_llm_budget_lane
 from core.metrics import bind_worker_running
 from core.metrics_router import router as metrics_router
 from services.base.service_state import BaseServiceState
@@ -287,14 +288,15 @@ class ExtractionBatchConsumer(StreamConsumerWithCompletion):
         )
 
         try:
-            processed = await asyncio.to_thread(
-                run_job_extraction,
-                self.ctx,
-                self.stop_event,
-                limit,
-                job_ids=job_ids,
-                description_recovery_run_id=description_recovery_run_id,
-            )
+            with global_llm_budget_lane("background"):
+                processed = await asyncio.to_thread(
+                    run_job_extraction,
+                    self.ctx,
+                    self.stop_event,
+                    limit,
+                    job_ids=job_ids,
+                    description_recovery_run_id=description_recovery_run_id,
+                )
         except ProviderQuotaExceeded as exc:
             backoff_seconds = _batch_quota_backoff_seconds(exc)
             if backoff_seconds:

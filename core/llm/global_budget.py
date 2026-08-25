@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from core.llm.interfaces import LLMProvider
 from core.metrics import record_public_security_event, set_global_llm_budget_usage
@@ -28,6 +29,22 @@ requests = redis.call('INCR', KEYS[1])
 tokens = redis.call('INCRBY', KEYS[2], reserve_tokens)
 redis.call('EXPIRE', KEYS[1], tonumber(ARGV[4]))
 redis.call('EXPIRE', KEYS[2], tonumber(ARGV[4]))
+return {1, 'ok', requests, tokens}
+"""
+
+_CHECK_CAPACITY_SCRIPT = """
+local requests = tonumber(redis.call('GET', KEYS[1]) or '0')
+local tokens = tonumber(redis.call('GET', KEYS[2]) or '0')
+local request_limit = tonumber(ARGV[1])
+local token_limit = tonumber(ARGV[2])
+local required_requests = tonumber(ARGV[3])
+local required_tokens = tonumber(ARGV[4])
+if requests + required_requests > request_limit then
+  return {0, 'requests', requests, tokens}
+end
+if tokens + required_tokens > token_limit then
+  return {0, 'tokens', requests, tokens}
+end
 return {1, 'ok', requests, tokens}
 """
 
@@ -73,6 +90,10 @@ _PREPAID_REQUEST_UNITS: ContextVar[int] = ContextVar(
     "jobscout_global_llm_prepaid_request_units",
     default=0,
 )
+_BUDGET_LANE: ContextVar[str] = ContextVar(
+    "jobscout_global_llm_budget_lane",
+    default="interactive",
+)
 
 
 def global_llm_budget_enabled() -> bool:
@@ -92,6 +113,37 @@ def _positive_env(name: str) -> int:
     if value <= 0:
         raise GlobalLlmBudgetUnavailable(f"Global LLM budget must be positive: {name}.")
     return value
+
+
+def _nonnegative_env(name: str, default: int = 0) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError) as exc:
+        raise GlobalLlmBudgetUnavailable(f"Invalid global LLM budget: {name}.") from exc
+    if value < 0:
+        raise GlobalLlmBudgetUnavailable(f"Global LLM budget must be non-negative: {name}.")
+    return value
+
+
+def _request_limit_for_current_lane(request_limit: int) -> int:
+    if _BUDGET_LANE.get() != "background":
+        return request_limit
+    interactive_reserve = _nonnegative_env(
+        "JOBSCOUT_CLOUD_GLOBAL_LLM_INTERACTIVE_REQUESTS_RESERVE"
+    )
+    return max(request_limit - interactive_reserve, 0)
+
+
+@contextmanager
+def global_llm_budget_lane(lane: str) -> Iterator[None]:
+    """Apply the request ceiling for interactive or background provider work."""
+    if lane not in {"interactive", "background"}:
+        raise ValueError(f"Unsupported global LLM budget lane: {lane}.")
+    token = _BUDGET_LANE.set(lane)
+    try:
+        yield
+    finally:
+        _BUDGET_LANE.reset(token)
 
 
 def _seconds_until_next_utc_day() -> int:
@@ -116,6 +168,7 @@ def reserve_global_llm_budget(
     if not global_llm_budget_enabled():
         return None
     request_limit = _positive_env("JOBSCOUT_CLOUD_GLOBAL_LLM_REQUESTS_PER_DAY")
+    effective_request_limit = _request_limit_for_current_lane(request_limit)
     token_limit = _positive_env("JOBSCOUT_CLOUD_GLOBAL_LLM_TOKENS_PER_DAY")
     day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     requests_key = f"jobscout-cloud:llm-budget:{day}:requests"
@@ -129,7 +182,7 @@ def reserve_global_llm_budget(
             2,
             requests_key,
             tokens_key,
-            request_limit,
+            effective_request_limit,
             token_limit,
             reserved_tokens,
             _seconds_until_next_utc_day(),
@@ -153,7 +206,8 @@ def reserve_global_llm_budget(
     if int(raw[0]) != 1:
         bucket = raw[1].decode("utf-8") if isinstance(raw[1], bytes) else str(raw[1])
         record_public_security_event("global_budget_exhausted")
-        raise GlobalLlmBudgetExceeded(f"Global daily LLM {bucket} budget exhausted.")
+        scope = "Background daily" if _BUDGET_LANE.get() == "background" else "Global daily"
+        raise GlobalLlmBudgetExceeded(f"{scope} LLM {bucket} budget exhausted.")
     return GlobalLlmBudgetReservation(
         client=resolved_client,
         tokens_key=tokens_key,
@@ -174,6 +228,7 @@ def consume_global_llm_request(*, client: Any | None = None) -> None:
         return
 
     request_limit = _positive_env("JOBSCOUT_CLOUD_GLOBAL_LLM_REQUESTS_PER_DAY")
+    effective_request_limit = _request_limit_for_current_lane(request_limit)
     day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     requests_key = f"jobscout-cloud:llm-budget:{day}:requests"
     resolved_client = client or get_redis_client()
@@ -183,7 +238,7 @@ def consume_global_llm_request(*, client: Any | None = None) -> None:
             _RESERVE_ADDITIONAL_REQUEST_SCRIPT,
             1,
             requests_key,
-            request_limit,
+            effective_request_limit,
             _seconds_until_next_utc_day(),
         )
     except Exception as exc:
@@ -197,7 +252,61 @@ def consume_global_llm_request(*, client: Any | None = None) -> None:
     )
     if int(raw[0]) != 1:
         record_public_security_event("global_budget_exhausted")
-        raise GlobalLlmBudgetExceeded("Global daily LLM requests budget exhausted.")
+        scope = "Background daily" if _BUDGET_LANE.get() == "background" else "Global daily"
+        raise GlobalLlmBudgetExceeded(f"{scope} LLM requests budget exhausted.")
+
+
+def ensure_global_llm_budget_available(
+    *,
+    estimated_requests: int = 1,
+    estimated_tokens: int = 1,
+    client: Any | None = None,
+) -> None:
+    """Fail closed when an interactive operation cannot fit in today's budget."""
+    if not global_llm_budget_enabled():
+        return
+
+    request_limit = _positive_env("JOBSCOUT_CLOUD_GLOBAL_LLM_REQUESTS_PER_DAY")
+    token_limit = _positive_env("JOBSCOUT_CLOUD_GLOBAL_LLM_TOKENS_PER_DAY")
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    requests_key = f"jobscout-cloud:llm-budget:{day}:requests"
+    tokens_key = f"jobscout-cloud:llm-budget:{day}:tokens"
+    resolved_client = client or get_redis_client()
+    required_requests = max(int(estimated_requests), 1)
+    required_tokens = max(int(estimated_tokens), 1)
+    reset_at = _next_utc_day_timestamp()
+    try:
+        raw = resolved_client.eval(
+            _CHECK_CAPACITY_SCRIPT,
+            2,
+            requests_key,
+            tokens_key,
+            request_limit,
+            token_limit,
+            required_requests,
+            required_tokens,
+        )
+    except Exception as exc:
+        raise GlobalLlmBudgetUnavailable("Global LLM budget backend is unavailable.") from exc
+
+    current_requests = int(raw[2])
+    current_tokens = int(raw[3])
+    set_global_llm_budget_usage(
+        "requests",
+        current_requests,
+        request_limit,
+        reset_at=reset_at,
+    )
+    set_global_llm_budget_usage(
+        "tokens",
+        current_tokens,
+        token_limit,
+        reset_at=reset_at,
+    )
+    if int(raw[0]) != 1:
+        bucket = raw[1].decode("utf-8") if isinstance(raw[1], bytes) else str(raw[1])
+        record_public_security_event("global_budget_exhausted")
+        raise GlobalLlmBudgetExceeded(f"Global daily LLM {bucket} budget exhausted.")
 
 
 def _provider_actual_tokens(provider: LLMProvider) -> int | None:

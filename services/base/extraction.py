@@ -10,6 +10,7 @@ import threading
 from typing import Optional
 
 from core.app_context import AppContext
+from core.llm.global_budget import GlobalLlmBudgetExceeded, GlobalLlmBudgetUnavailable
 from database.uow import job_uow
 from etl.resume.loader import load_resume_with_parser
 from database.models import SYSTEM_OWNER_ID, generate_file_fingerprint
@@ -35,6 +36,9 @@ def _format_http_error(e: Exception) -> str:
 
 def _provider_quota_exhausted(e: Exception) -> bool:
     """Return True for provider quota failures that cannot recover in this batch."""
+    if isinstance(e, (GlobalLlmBudgetExceeded, GlobalLlmBudgetUnavailable)):
+        return True
+
     response = getattr(e, 'response', None)
     status_code = getattr(response, 'status_code', None)
     if status_code != 429:

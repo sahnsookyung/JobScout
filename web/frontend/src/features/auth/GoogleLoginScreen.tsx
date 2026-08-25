@@ -1,3 +1,4 @@
+import { isAxiosError } from 'axios';
 import { useEffect, useRef, useState } from 'react';
 import { cloudAuthApi } from '@/services/cloudAuthApi';
 import { useAuth } from './useAuth';
@@ -24,6 +25,23 @@ const NONCE_RETRY_BASE_DELAY_MS = 1_000;
 const NONCE_RETRY_MAX_DELAY_MS = 30_000;
 const NONCE_RETRY_JITTER_MS = 500;
 const SECURE_SIGN_IN_ERROR = 'Secure sign-in is temporarily unavailable. Please try again.';
+const REPOSITORY_URL = 'https://github.com/sahnsookyung/JobScout';
+const INVITE_ONLY_AUTH_CODES = new Set([
+    'cloud.auth.access_closed',
+    'cloud.auth.access_revoked',
+]);
+const INVITE_ONLY_SIGN_IN_ERROR =
+    'This Google account is not approved for the hosted demo. View the repository or contact the maintainer for access.';
+
+function signInErrorMessage(error: unknown): string {
+    if (isAxiosError(error) && error.response?.status === 403) {
+        const authCode = error.response.headers?.['x-jobscout-auth-code'];
+        if (typeof authCode === 'string' && INVITE_ONLY_AUTH_CODES.has(authCode)) {
+            return INVITE_ONLY_SIGN_IN_ERROR;
+        }
+    }
+    return 'Sign-in didn’t go through. Please try once more.';
+}
 
 export function GoogleLoginScreen() {
     const { login } = useAuth();
@@ -146,9 +164,9 @@ export function GoogleLoginScreen() {
                             },
                             accessToken ?? tenants
                         );
-                    } catch {
+                    } catch (error) {
                         if (!isMountedRef.current || attemptId !== exchangeAttemptRef.current) return;
-                        setAuthError('Sign-in didn’t go through. Please try once more.');
+                        setAuthError(signInErrorMessage(error));
                         void initButton();
                     } finally {
                         if (isMountedRef.current && attemptId === exchangeAttemptRef.current) {
@@ -198,16 +216,38 @@ export function GoogleLoginScreen() {
                 </div>
 
                 <div className="px-8 py-8">
-                    <p className="caption">Welcome back</p>
+                    <p className="caption">Private hosted demo</p>
                     <h1 className="mt-2 text-[26px] font-medium leading-tight tracking-tight text-ink">
-                        A quiet place to find your next role.
+                        Explore JobScout on your own terms.
                     </h1>
                     <p className="mt-3 max-w-sm text-[14px] leading-relaxed text-ink-soft">
-                        Sign in with Google to try the complete workflow. Non-admin accounts and
-                        their uploaded data are deleted four hours after the last sign-in.
+                        The hosted workshop is invite-only so its shared AI capacity stays reliable.
+                        Everyone else can run the complete open-source project locally.
                     </p>
 
-                    <div className="mt-6 flex justify-center">
+                    <a
+                        href={REPOSITORY_URL}
+                        className="mt-6 flex w-full items-center justify-between border border-ink bg-ink px-4 py-3 text-[14px] font-medium text-surface transition-colors hover:bg-ink/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                    >
+                        <span>View source &amp; run locally</span>
+                        <span aria-hidden="true">↗</span>
+                    </a>
+                    <p className="mt-2 text-[12px] leading-relaxed text-ink-muted">
+                        Use your own provider settings without relying on this demo’s shared limits.
+                    </p>
+
+                    <div className="my-7 flex items-center gap-3" aria-hidden="true">
+                        <span className="h-px flex-1 bg-rule" />
+                        <span className="caption">Approved access</span>
+                        <span className="h-px flex-1 bg-rule" />
+                    </div>
+
+                    <p className="text-[14px] font-medium text-ink">Already invited?</p>
+                    <p className="mt-1 text-[13px] leading-relaxed text-ink-soft">
+                        Sign in with the Google account approved by the maintainer.
+                    </p>
+
+                    <div className="mt-5 flex justify-center">
                         <div ref={buttonRef} />
                     </div>
 
@@ -228,7 +268,8 @@ export function GoogleLoginScreen() {
                 </div>
 
                 <div className="border-t border-rule px-8 py-4 text-[12px] text-ink-muted">
-                    Temporary testing accounts are isolated from other users. Shared job data remains.
+                    Non-admin accounts and their uploaded data are deleted four hours after the last
+                    sign-in. Approved testing accounts remain isolated from other users.
                 </div>
             </div>
         </main>
