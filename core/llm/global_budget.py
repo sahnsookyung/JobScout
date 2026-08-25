@@ -160,6 +160,28 @@ def _next_utc_day_timestamp() -> int:
     return int(reset.timestamp())
 
 
+def _record_global_llm_budget_usage(
+    *,
+    current_requests: int,
+    current_tokens: int,
+    request_limit: int,
+    token_limit: int,
+    reset_at: int,
+) -> None:
+    set_global_llm_budget_usage(
+        "requests",
+        current_requests,
+        request_limit,
+        reset_at=reset_at,
+    )
+    set_global_llm_budget_usage(
+        "tokens",
+        current_tokens,
+        token_limit,
+        reset_at=reset_at,
+    )
+
+
 def reserve_global_llm_budget(
     estimated_tokens: int,
     *,
@@ -191,16 +213,11 @@ def reserve_global_llm_budget(
         raise GlobalLlmBudgetUnavailable("Global LLM budget backend is unavailable.") from exc
     current_requests = int(raw[2])
     current_tokens = int(raw[3])
-    set_global_llm_budget_usage(
-        "requests",
-        current_requests,
-        request_limit,
-        reset_at=reset_at,
-    )
-    set_global_llm_budget_usage(
-        "tokens",
-        current_tokens,
-        token_limit,
+    _record_global_llm_budget_usage(
+        current_requests=current_requests,
+        current_tokens=current_tokens,
+        request_limit=request_limit,
+        token_limit=token_limit,
         reset_at=reset_at,
     )
     if int(raw[0]) != 1:
@@ -291,16 +308,11 @@ def ensure_global_llm_budget_available(
 
     current_requests = int(raw[2])
     current_tokens = int(raw[3])
-    set_global_llm_budget_usage(
-        "requests",
-        current_requests,
-        request_limit,
-        reset_at=reset_at,
-    )
-    set_global_llm_budget_usage(
-        "tokens",
-        current_tokens,
-        token_limit,
+    _record_global_llm_budget_usage(
+        current_requests=current_requests,
+        current_tokens=current_tokens,
+        request_limit=request_limit,
+        token_limit=token_limit,
         reset_at=reset_at,
     )
     if int(raw[0]) != 1:
