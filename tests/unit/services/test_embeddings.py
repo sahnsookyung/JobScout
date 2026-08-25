@@ -275,6 +275,25 @@ class TestEmbeddingsConsumerClass:
         assert result["processed"] == 6
 
     @pytest.mark.asyncio
+    async def test_batch_consumer_uses_background_budget_lane(self):
+        """Catalog embeddings cannot consume requests reserved for interactive work."""
+        from services.embeddings.main import EmbeddingsBatchConsumer
+
+        mock_ctx = Mock()
+        consumer = EmbeddingsBatchConsumer(mock_ctx, threading.Event())
+
+        with patch("services.embeddings.main.run_embedding_extraction", return_value=1), patch(
+            "services.embeddings.main.global_llm_budget_lane"
+        ) as budget_lane:
+            success, _ = await consumer._do_process(
+                "msg-1",
+                {"task_id": "t-1", "limit": 25},
+            )
+
+        assert success is True
+        budget_lane.assert_called_once_with("background")
+
+    @pytest.mark.asyncio
     async def test_batch_consumer_enqueues_followup_matching_jobs(self):
         """Batch consumer queues matching only after embeddings complete."""
         from services.embeddings.main import EmbeddingsBatchConsumer

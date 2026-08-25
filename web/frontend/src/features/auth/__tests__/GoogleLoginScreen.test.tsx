@@ -73,6 +73,16 @@ describe('GoogleLoginScreen', () => {
             ).toBeInTheDocument();
         });
 
+        it('presents the repository as the primary option for uninvited visitors', () => {
+            render(<GoogleLoginScreen />);
+
+            expect(screen.getByText(/hosted workshop is invite-only/i)).toBeInTheDocument();
+            expect(
+                screen.getByRole('link', { name: /view source & run locally/i })
+            ).toHaveAttribute('href', 'https://github.com/sahnsookyung/JobScout');
+            expect(screen.getByText('Already invited?')).toBeInTheDocument();
+        });
+
         it('appends the Google GSI script to document.head', () => {
             render(<GoogleLoginScreen />);
             const script = document.getElementById('google-gsi') as HTMLScriptElement | null;
@@ -398,6 +408,28 @@ describe('GoogleLoginScreen', () => {
 
             expect(screen.getByRole('alert')).toHaveTextContent(
                 'Sign-in didn’t go through. Please try once more.'
+            );
+            expect(mockLogin).not.toHaveBeenCalled();
+        });
+
+        it('explains invite-only access when the Google account is not approved', async () => {
+            const { fire, mockLogin } = await setupLoginCallback();
+            vi.mocked(cloudAuthApi.exchangeGoogleCredential).mockRejectedValueOnce({
+                isAxiosError: true,
+                response: {
+                    status: 403,
+                    headers: {
+                        'x-jobscout-auth-code': 'cloud.auth.access_revoked',
+                    },
+                },
+            });
+
+            await act(async () => {
+                await fire('header.payload.sig');
+            });
+
+            expect(screen.getByRole('alert')).toHaveTextContent(
+                'This Google account is not approved for the hosted demo.'
             );
             expect(mockLogin).not.toHaveBeenCalled();
         });

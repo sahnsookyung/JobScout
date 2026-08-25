@@ -970,3 +970,44 @@ class TestPipelineRoutes(unittest.TestCase):
             "public_testing.resume_upload_quota_exceeded",
         )
         repo.create_resume_upload.assert_not_called()
+
+    def test_retry_resume_rejects_exhausted_ai_capacity_before_creating_attempt(self):
+        from core.llm.global_budget import GlobalLlmBudgetExceeded
+
+        with patch("web.backend.routers.pipeline.job_uow") as mock_uow, patch(
+            "web.backend.routers.pipeline.ensure_global_llm_budget_available",
+            side_effect=GlobalLlmBudgetExceeded(
+                "Global daily LLM requests budget exhausted."
+            ),
+        ) as ensure_capacity, patch(
+            "web.backend.routers.pipeline.consume_ephemeral_quota"
+        ) as consume_quota:
+            source_upload = SimpleNamespace(
+                id="upload-old",
+                status="failed_retryable",
+                resume_hash="hash-1",
+                resume_fingerprint="fp-1",
+                original_filename="resume.pdf",
+            )
+            repo = MagicMock()
+            repo.get_resume_upload.return_value = source_upload
+            repo.get_structured_resume_by_fingerprint.return_value = object()
+            mock_uow.return_value.__enter__ = MagicMock(return_value=repo)
+            mock_uow.return_value.__exit__ = MagicMock(return_value=False)
+
+            response = self.client.post(
+                "/api/pipeline/retry-resume",
+                json={"upload_id": "upload-old"},
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json()["code"],
+            "pipeline.resume.ai_capacity_exhausted",
+        )
+        repo.create_resume_upload.assert_not_called()
+        consume_quota.assert_not_called()
+        ensure_capacity.assert_called_once_with(
+            estimated_requests=1,
+            estimated_tokens=16_384,
+        )

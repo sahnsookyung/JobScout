@@ -371,6 +371,25 @@ class TestExtractionConsumer:
         assert result["processed"] == 4
 
     @pytest.mark.asyncio
+    async def test_batch_consumer_uses_background_budget_lane(self):
+        """Catalog extraction cannot consume requests reserved for interactive work."""
+        from services.extraction.main import ExtractionBatchConsumer
+
+        mock_ctx = Mock()
+        consumer = ExtractionBatchConsumer(mock_ctx, threading.Event())
+
+        with patch("services.extraction.main.run_job_extraction", return_value=1), patch(
+            "services.extraction.main.global_llm_budget_lane"
+        ) as budget_lane:
+            success, _ = await consumer._do_process(
+                "msg-1",
+                {"task_id": "t-1", "limit": 25},
+            )
+
+        assert success is True
+        budget_lane.assert_called_once_with("background")
+
+    @pytest.mark.asyncio
     async def test_batch_consumer_processes_targeted_recovery_jobs(self):
         """Targeted recovery batches pass explicit job IDs into extraction."""
         from services.extraction.main import ExtractionBatchConsumer

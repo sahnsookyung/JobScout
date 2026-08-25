@@ -37,6 +37,11 @@ from core.ephemeral_quota import (
     EphemeralQuotaUnavailable,
     consume_ephemeral_quota,
 )
+from core.llm.global_budget import (
+    GlobalLlmBudgetExceeded,
+    GlobalLlmBudgetUnavailable,
+    ensure_global_llm_budget_available,
+)
 from core.scraper.jobspy_client import JobSpyClient
 from core.redis_streams import (
     _sanitize_log,
@@ -57,6 +62,8 @@ from web.backend.api_error_codes import (
     PIPELINE_MATCH_START_FAILED,
     PIPELINE_MATCH_STOP_FAILED,
     PIPELINE_MATCH_STOP_NOT_FOUND,
+    PIPELINE_RESUME_AI_CAPACITY_EXHAUSTED,
+    PIPELINE_RESUME_AI_CAPACITY_UNAVAILABLE,
     PIPELINE_RESUME_FILE_EMPTY,
     PIPELINE_RESUME_FILE_REQUIRED,
     PIPELINE_RESUME_FILE_TOO_LARGE,
@@ -135,6 +142,10 @@ RESUME_ETL_WAIT_TIMEOUT_SECONDS = float(
 RESUME_PROCESSING_FAILED_MESSAGE = "Resume processing failed."
 RESUME_PROCESSING_COMPLETED_MESSAGE = "Resume processing completed successfully."
 RESUME_PROCESSING_TIMED_OUT_MESSAGE = "Resume processing timed out. Please retry."
+RESUME_UPLOAD_ESTIMATED_LLM_REQUESTS = 2
+RESUME_UPLOAD_ESTIMATED_LLM_TOKENS = 32_768
+RESUME_RETRY_ESTIMATED_LLM_REQUESTS = 1
+RESUME_RETRY_ESTIMATED_LLM_TOKENS = 16_384
 MATCHING_PHASES = (
     "initializing",
     "loading_resume",
@@ -831,6 +842,27 @@ def _guard_resume_not_uploading(redis, owner_id: str) -> None:
         raise
     except Exception:
         pass  # Redis unavailable — proceed without guard
+
+
+def _ensure_resume_ai_capacity(*, estimated_requests: int, estimated_tokens: int) -> None:
+    """Reject resume work before it consumes quota or creates an unserviceable task."""
+    try:
+        ensure_global_llm_budget_available(
+            estimated_requests=estimated_requests,
+            estimated_tokens=estimated_tokens,
+        )
+    except GlobalLlmBudgetExceeded:
+        _raise_pipeline_error(
+            status_code=503,
+            code=PIPELINE_RESUME_AI_CAPACITY_EXHAUSTED,
+            message="AI processing has reached today's shared capacity. Please retry after 00:00 UTC.",
+        )
+    except GlobalLlmBudgetUnavailable:
+        _raise_pipeline_error(
+            status_code=503,
+            code=PIPELINE_RESUME_AI_CAPACITY_UNAVAILABLE,
+            message="AI processing capacity is temporarily unavailable. Please try again shortly.",
+        )
 
 
 def _latest_resume_upload_uses_task(owner_id: str, task_id: str) -> bool:
@@ -2280,6 +2312,10 @@ async def retry_resume(
                     message="Retry requires re-upload because extracted artifacts are missing.",
                 )
 
+            _ensure_resume_ai_capacity(
+                estimated_requests=RESUME_RETRY_ESTIMATED_LLM_REQUESTS,
+                estimated_tokens=RESUME_RETRY_ESTIMATED_LLM_TOKENS,
+            )
             try:
                 consume_ephemeral_quota(owner_id, "resume_uploads", default_limit=3)
             except EphemeralQuotaExceeded as exc:
@@ -2737,6 +2773,10 @@ async def upload_resume_endpoint(
                     ),
                 )
 
+            _ensure_resume_ai_capacity(
+                estimated_requests=RESUME_UPLOAD_ESTIMATED_LLM_REQUESTS,
+                estimated_tokens=RESUME_UPLOAD_ESTIMATED_LLM_TOKENS,
+            )
             try:
                 consume_ephemeral_quota(owner_id, "resume_uploads", default_limit=3)
             except EphemeralQuotaExceeded as exc:

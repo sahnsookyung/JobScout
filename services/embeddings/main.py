@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from core.config_loader import load_config
 from core.app_context import AppContext
 from core.logging_utils import setup_service_logging
+from core.llm.global_budget import global_llm_budget_lane
 from core.metrics import bind_worker_running
 from core.metrics_router import router as metrics_router
 from services.base.service_state import BaseServiceState
@@ -197,9 +198,10 @@ class EmbeddingsBatchConsumer(StreamConsumerWithCompletion):
             limit,
         )
         try:
-            processed = await asyncio.to_thread(
-                run_embedding_extraction, self.ctx, self.stop_event, limit
-            )
+            with global_llm_budget_lane("background"):
+                processed = await asyncio.to_thread(
+                    run_embedding_extraction, self.ctx, self.stop_event, limit
+                )
         except Exception as exc:
             retry_enqueued, retry_count = _requeue_embeddings_batch(msg)
             logger.warning(
