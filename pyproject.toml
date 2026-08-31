@@ -40,7 +40,7 @@ web = [
     "uvicorn>=0.40.0",
     "pydantic>=2.12.5",
     "python-multipart>=0.0.31",
-    "slowapi>=0.1.9",
+    "slowapi>=0.1.10",
     "python-dotenv>=1.2.2",
 ]
 fit-models = [
