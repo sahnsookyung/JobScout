@@ -382,6 +382,31 @@ def _resolve_build_images(
         return (not skip_build) or (not images_available)
     return not images_available
 
+def _run_post_e2e_docker_cleanup() -> None:
+    try:
+        auto_cleanup = _env_flag("JOBSCOUT_DOCKER_AUTO_CLEANUP")
+        if auto_cleanup is False or (auto_cleanup is None and os.getenv("CI")):
+            return
+
+        cleanup_script = PROJECT_ROOT / "scripts" / "cleanup_docker_artifacts.py"
+        result = subprocess.run(
+            [sys.executable, str(cleanup_script), "--apply"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=600,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        print(f"Post-E2E Docker cleanup warning: {exc}", file=sys.stderr, flush=True)
+        return
+
+    if result.stdout.strip():
+        print(result.stdout.strip(), flush=True)
+    if result.returncode != 0:
+        warning = result.stderr.strip() or "unknown Docker cleanup error"
+        print(f"Post-E2E Docker cleanup warning: {warning}", file=sys.stderr, flush=True)
+
 
 def _compose_up_with_retries(
     compose_args: tuple[str, ...],
@@ -697,6 +722,7 @@ def microservices_stack() -> MicroservicesContext:
         if compose_env is None:
             compose_env = _next_compose_env()
         _compose_down(compose_args, compose_env)
+        _run_post_e2e_docker_cleanup()
         _clear_active_e2e_cleanup()
         if created_dotenv:
             DOTENV_PATH.unlink(missing_ok=True)

@@ -17,6 +17,7 @@ from tests.integration.test_microservices_resume_flow import (
     _env_flag,
     _register_active_e2e_cleanup,
     _resolve_build_images,
+    _run_post_e2e_docker_cleanup,
 )
 
 
@@ -192,6 +193,47 @@ def test_resolve_build_images_prefers_explicit_build_override(monkeypatch) -> No
     )
 
     assert _resolve_build_images(compose_args, compose_env) is True
+
+def test_post_e2e_docker_cleanup_runs_locally_by_default(monkeypatch) -> None:
+    commands: list[list[str]] = []
+
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("JOBSCOUT_DOCKER_AUTO_CLEANUP", raising=False)
+
+    def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        del kwargs
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="cleanup complete\n", stderr="")
+
+    monkeypatch.setattr(
+        "tests.integration.test_microservices_resume_flow.subprocess.run",
+        fake_run,
+    )
+
+    _run_post_e2e_docker_cleanup()
+
+    assert len(commands) == 1
+    assert Path(commands[0][-2]).name == "cleanup_docker_artifacts.py"
+    assert commands[0][-1] == "--apply"
+
+def test_post_e2e_docker_cleanup_skips_ci_by_default(monkeypatch) -> None:
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.delenv("JOBSCOUT_DOCKER_AUTO_CLEANUP", raising=False)
+    monkeypatch.setattr(
+        "tests.integration.test_microservices_resume_flow.subprocess.run",
+        lambda *args, **kwargs: pytest.fail("cleanup should not run on CI"),
+    )
+
+    _run_post_e2e_docker_cleanup()
+
+def test_post_e2e_docker_cleanup_failure_is_non_fatal(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setenv("JOBSCOUT_DOCKER_AUTO_CLEANUP", "invalid")
+
+    _run_post_e2e_docker_cleanup()
+
+    captured = capsys.readouterr()
+    assert "Post-E2E Docker cleanup warning" in captured.err
 
 
 def test_active_e2e_cleanup_runs_down_and_clears_state(monkeypatch) -> None:

@@ -212,7 +212,7 @@ Important local environment values:
 - **Compose says `JOBSPY_API_TOKEN` is not set:** copy `.env.example` to `.env` and replace the token placeholder.
 - **Redis reports `NOAUTH`:** use the password-bearing `REDIS_URL` from `.env.example` for native processes.
 - **A container cannot reach Ollama:** start Ollama with `OLLAMA_HOST=0.0.0.0:11434`; Compose maps `host.docker.internal` on Docker Desktop and Linux.
-- **A build reports `no space left on device`:** run `docker system df`, increase Docker Desktop's disk allocation, or deliberately remove Docker data you no longer need. Do not run broad prune commands without reviewing what they will delete.
+- **A build reports `no space left on device`:** run `docker system df`, then preview the project-scoped cleanup with `uv run python scripts/cleanup_docker_artifacts.py`. Add `--apply` after reviewing the plan. The utility preserves running-container images, `latest` tags, the newest image per JobScout repository, and all volumes.
 - **The scorer appears stuck on first start:** allow time for the `BAAI/bge-reranker-v2-m3` bootstrap download. The cached model is stored in the `scorer_models` Docker volume.
 
 Useful local health checks:
@@ -279,6 +279,8 @@ TEST_DATABASE_URL=postgresql://testuser:testpass@localhost:5433/jobscout_test \
 ```
 
 The three ORM schema-snapshot tests create their own ephemeral PostgreSQL containers even when `TEST_DATABASE_URL` is set, so they also require Docker and additional storage headroom.
+
+Local microservices E2E teardown automatically applies the same conservative Docker retention policy: superseded JobScout images and unused build cache older than seven days are removed. CI skips this host-level cleanup by default because hosted runners are ephemeral. Set `JOBSCOUT_DOCKER_AUTO_CLEANUP=0` to disable it locally, or `JOBSCOUT_DOCKER_AUTO_CLEANUP=1` to enable it explicitly in another environment.
 
 ## Project Structure
 
