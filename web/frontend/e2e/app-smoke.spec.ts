@@ -305,3 +305,47 @@ test('keeps shortlist controls visible and preference ranking in Candidate Prefe
     await expect(rankingSettings.getByLabel('Default order')).toHaveValue('balanced');
     await expect(rankingSettings.getByText('60% preference · 40% fit')).toBeVisible();
 });
+
+for (const width of [320, 375, 390, 768, 1024, 1440]) {
+    test(`keeps long match content and menus readable at ${width}px`, async ({ page }, testInfo) => {
+        await page.setViewportSize({ width, height: 900 });
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+        const longMatch = {
+            ...match,
+            title: 'Senior Backend Engineer – Cloud Infrastructure and Developer Experience',
+            company: 'InternationalDeveloperInfrastructureCompany',
+            location: 'Tokyo, Japan / Remote across Asia Pacific',
+            llm_evaluation_status: 'succeeded',
+            llm_score: 91,
+            llm_ignored_for_rerank_reason: 'stale_job_content',
+            preference_status: { applied: false, reason: 'outside_preference_window' },
+        };
+        await page.route('**/api/matches?**', (route) => fulfillJson(route, {
+            success: true, count: 1, total: 1, has_more: false, matches: [longMatch],
+        }));
+        await page.reload();
+
+        const title = page.getByRole('heading', { name: longMatch.title });
+        await expect(title).toBeVisible();
+        const titleBox = await title.boundingBox();
+        expect(titleBox?.width).toBeGreaterThanOrEqual(190);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+        await expect(page.getByRole('button', { name: 'Hide', exact: true })).toHaveCSS('opacity', width < 1280 ? '1' : '0');
+        await page.screenshot({ path: testInfo.outputPath(`jobs-${width}.png`), fullPage: true });
+
+        await page.getByRole('button', { name: 'Open profile menu' }).click();
+        const profileBox = await page.getByLabel('Profile panel').boundingBox();
+        expect(profileBox?.x).toBeGreaterThanOrEqual(0);
+        expect((profileBox?.x ?? 0) + (profileBox?.width ?? 0)).toBeLessThanOrEqual(width);
+        await page.keyboard.press('Escape');
+
+        await page.getByRole('button', { name: 'Preferences', exact: true }).click();
+        await expect(page.getByRole('dialog')).toBeVisible();
+        expect(await page.getByRole('dialog').evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(width);
+        await page.keyboard.press('Escape');
+
+        await page.getByRole('tab', { name: 'Job Management' }).click();
+        await expect(page.getByRole('tabpanel', { name: 'Job Management' })).toBeVisible();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    });
+}

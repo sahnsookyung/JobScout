@@ -168,16 +168,12 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, onSelect, featured 
             />
 
             <div
-                className={`relative grid items-start gap-5 px-5 py-5 sm:px-7 sm:py-6 ${
-                    featured
-                        ? 'grid-cols-[auto_1fr_auto] gap-6 sm:py-8'
-                        : 'grid-cols-[auto_1fr_auto]'
-                }`}
+                className={`relative grid grid-cols-1 items-start gap-4 px-4 py-5 sm:grid-cols-[auto_minmax(0,1fr)] sm:gap-5 sm:px-7 sm:py-6 xl:grid-cols-[auto_minmax(0,1fr)_auto] ${featured ? 'sm:py-8' : ''}`}
             >
                 {/* Score — the hero numeral */}
-                <div className="flex min-w-[88px] flex-col items-start">
+                <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 sm:min-w-[88px] sm:flex-col sm:items-start sm:gap-0">
                     <span
-                        className={`display-numeral ${featured ? 'text-[72px]' : 'text-[44px]'} ${scoreColor}`}
+                        className={`display-numeral text-[36px] ${featured ? 'sm:text-[72px]' : 'sm:text-[44px]'} ${scoreColor}`}
                         aria-label={`Fit score ${fitScore} out of 100`}
                     >
                         {formatScore(fitScore)}
@@ -207,19 +203,19 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, onSelect, featured 
                     <h3
                         className={`${
                             featured ? 'text-[22px] sm:text-[26px]' : 'text-[17px]'
-                        } font-medium leading-snug tracking-tight text-ink group-hover:text-accent-ink`}
+                        } wrap-anywhere font-medium leading-snug tracking-tight text-ink group-hover:text-accent-ink`}
                     >
                         {match.title}
                     </h3>
 
                     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-ink-soft">
-                        <span className="inline-flex items-center gap-1.5">
-                            <Building2 className="h-3.5 w-3.5 text-ink-muted" aria-hidden="true" />
+                        <span className="inline-flex min-w-0 items-center gap-1.5 wrap-anywhere">
+                            <Building2 className="h-3.5 w-3.5 shrink-0 text-ink-muted" aria-hidden="true" />
                             <span className="text-ink">{match.company}</span>
                         </span>
                         {match.location && (
-                            <span className="inline-flex items-center gap-1.5">
-                                <MapPin className="h-3.5 w-3.5 text-ink-muted" aria-hidden="true" />
+                            <span className="inline-flex min-w-0 items-center gap-1.5 wrap-anywhere">
+                                <MapPin className="h-3.5 w-3.5 shrink-0 text-ink-muted" aria-hidden="true" />
                                 <span>{match.location}</span>
                             </span>
                         )}
@@ -242,14 +238,14 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, onSelect, featured 
                                 style={{ width: `${coveragePct}%`, height: '3px' }}
                             />
                         </div>
-                        <span className="num text-[12px] text-ink-muted tabular-nums">
+                        <span className="num shrink-0 text-[12px] text-ink-muted tabular-nums">
                             {coveragePct}% covered
                         </span>
                     </div>
                 </div>
 
                 {/* Right rail — quiet state + hide */}
-                <div className="relative z-20 flex flex-col items-end gap-2">
+                <div className="relative z-20 col-span-full flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 border-t border-rule pt-3 xl:col-auto xl:flex-col xl:items-end xl:border-0 xl:pt-0">
                     {isExcluded && (
                         <span className="caption text-warn">
                             {(match.excluded_reason ?? 'excluded').replace(/_/g, ' ')}
@@ -270,7 +266,7 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, onSelect, featured 
                     )}
                     {llmOrdering && (
                         <span
-                            className="caption max-w-[12rem] text-right text-ink-muted"
+                            className="caption max-w-full text-left text-ink-muted xl:max-w-[12rem] xl:text-right"
                             title={llmOrdering}
                             aria-label={llmOrdering}
                         >
@@ -279,7 +275,7 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, onSelect, featured 
                     )}
                     {preferenceStatus && (
                         <span
-                            className={`caption max-w-[14rem] text-right ${preferenceStatusTone}`}
+                            className={`caption max-w-full text-left xl:max-w-[14rem] xl:text-right ${preferenceStatusTone}`}
                             title={preferenceStatus}
                             aria-label={preferenceStatus}
                         >
@@ -292,7 +288,7 @@ export const MatchCard: React.FC<MatchCardProps> = ({ match, onSelect, featured 
                             type="button"
                             onClick={handleToggleHidden}
                             disabled={toggleHiddenMutation.isPending}
-                            className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-ink-muted opacity-0 transition-opacity duration-200 hover:bg-surface-sunk hover:text-ink group-hover:opacity-100 focus-visible:opacity-100 disabled:opacity-30"
+                            className="ml-auto inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-sm text-ink-muted transition-opacity duration-200 hover:bg-surface-sunk hover:text-ink xl:ml-0 xl:h-7 xl:w-7 xl:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 disabled:opacity-30"
                             title={match.is_hidden ? 'Unhide' : 'Hide'}
                             aria-label={match.is_hidden ? 'Unhide' : 'Hide'}
                             aria-pressed={match.is_hidden}

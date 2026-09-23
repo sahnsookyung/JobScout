@@ -23,6 +23,7 @@ from core.redis_streams import (
     STREAM_EXTRACTION_BATCH,
     enqueue_job,
 )
+from core.scraper.jobspy_client import JobSpyTaskError
 from services.orchestrator.batch_stage_queue import BatchStageQueueService
 from services.orchestrator.pipeline_runs import PipelineRunService
 
@@ -161,11 +162,15 @@ class ScrapePipelineService:
                     task_id,
                     request_timeout_s=request_timeout,
                     stop_event=poll_stop_event,
+                    raise_on_failure=True,
                     cancellation_event=poll_stop_event,
                 )
                 if result is not None:
                     return result
                 return []
+            except JobSpyTaskError:
+                # Polling the same terminal task again cannot restart its scrape.
+                raise
             except Exception as exc:
                 if attempt == max_retries - 1:
                     self.logger.exception(

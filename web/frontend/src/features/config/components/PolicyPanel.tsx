@@ -102,7 +102,7 @@ export const PolicyPanel: React.FC = () => {
             <div className="space-y-6 px-5 py-5">
                 <section>
                     <p className="caption mb-2">Quick presets</p>
-                    <div className="grid grid-cols-1 gap-px border border-rule bg-rule">
+                    <div className="grid grid-cols-3 gap-px border border-rule bg-rule lg:grid-cols-1">
                         {Object.entries(POLICY_PRESETS).map(([key, { label }]) => {
                             const active = preset === key;
                             return (
@@ -110,7 +110,7 @@ export const PolicyPanel: React.FC = () => {
                                     type="button"
                                     key={key}
                                     onClick={() => handlePresetChange(key as PolicyPreset)}
-                                    className={`min-h-10 w-full px-3 py-2 text-center text-[13px] leading-tight whitespace-normal transition-colors duration-200 ${
+                                    className={`min-h-10 w-full px-1 py-2 text-center text-[12px] leading-tight whitespace-normal transition-colors duration-200 sm:px-3 sm:text-[13px] ${
                                         active
                                             ? 'bg-accent-soft text-accent'
                                             : 'bg-surface text-ink-soft hover:text-ink'

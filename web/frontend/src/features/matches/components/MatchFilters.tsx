@@ -34,7 +34,7 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
     processedCount = 0,
 }) => {
     return (
-        <div className="grid grid-cols-1 gap-5 border-b border-rule pb-5 md:grid-cols-[minmax(9rem,14rem)_minmax(9rem,14rem)_minmax(0,1fr)] md:items-end md:gap-8">
+        <div className="grid grid-cols-2 gap-4 border-b border-rule pb-5 md:grid-cols-[minmax(9rem,14rem)_minmax(9rem,14rem)_minmax(0,1fr)] md:items-end md:gap-8">
             <SelectField
                 id="match-filter-status"
                 label="Status"
@@ -49,7 +49,7 @@ export const MatchFilters: React.FC<MatchFiltersProps> = ({
                 onChange={(value) => onRankingModeChange(value as RankingMode)}
                 options={RANKING_MODE_OPTIONS}
             />
-            <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 md:justify-end">
+            <div className="col-span-2 flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 md:col-auto md:justify-end">
                 <Toggle
                     label="Judge boost"
                     checked={llmOrdering}
@@ -86,7 +86,7 @@ interface SelectFieldProps {
 }
 
 const SelectField: React.FC<SelectFieldProps> = ({ id, label, value, onChange, options }) => (
-    <label htmlFor={id} className="block">
+    <label htmlFor={id} className="block min-w-0">
         <span className="caption mb-1.5 block">{label}</span>
         <select
             id={id}
@@ -116,16 +116,16 @@ interface ToggleProps {
 }
 
 const Toggle: React.FC<ToggleProps> = ({ label, checked, onChange }) => (
-    <label className="inline-flex min-w-0 cursor-pointer items-center gap-2 text-[13px] text-ink-soft">
-        <span className="relative">
+    <label className="inline-flex min-h-9 min-w-0 cursor-pointer items-center gap-2 text-[13px] text-ink-soft">
+        <span className="relative shrink-0">
             <input
                 type="checkbox"
                 checked={checked}
                 onChange={(e) => onChange(e.target.checked)}
-                className="sr-only"
+                className="peer sr-only"
             />
             <span
-                className={`block h-4 w-7 rounded-full border transition-colors duration-200 ${
+                className={`block h-4 w-7 rounded-full border transition-colors duration-200 peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent ${
                     checked ? 'border-accent bg-accent' : 'border-rule-strong bg-surface-sunk'
                 }`}
             >

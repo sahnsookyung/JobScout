@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 _FAILED_POLL_RESULT = object()
 
 
+class JobSpyTaskError(RuntimeError):
+    """A submitted scrape failed or did not complete before its deadline."""
+
+
 def _is_retryable_error(exc: Exception) -> bool:
     """
     Determine if an exception is retryable.
@@ -253,9 +257,14 @@ class JobSpyClient:
         poll_interval_s: Optional[int] = None,
         job_timeout_s: Optional[int] = None,
         request_timeout_s: Optional[int] = None,
-        stop_event: Optional[threading.Event] = None
+        stop_event: Optional[threading.Event] = None,
+        raise_on_failure: bool = False,
     ) -> Optional[List[Dict[str, Any]]]:
-        """Poll for job completion with cancellation support."""
+        """Poll for completion; optionally distinguish failures from empty results.
+
+        Cancellation still returns None. The orchestrator uses strict failure
+        reporting so failed jobs cannot become successful zero-job imports.
+        """
         poll_interval = poll_interval_s or self.poll_interval_seconds
         job_timeout = job_timeout_s or self.job_timeout_seconds
         
@@ -266,19 +275,24 @@ class JobSpyClient:
                 return None
             
             try:
-                poll_result = self._handle_poll_result(
-                    task_id,
-                    self._poll_status(task_id, request_timeout_s),
-                )
+                status_result = self._poll_status(task_id, request_timeout_s)
+                poll_result = self._handle_poll_result(task_id, status_result)
                 if poll_result is _FAILED_POLL_RESULT:
+                    if raise_on_failure:
+                        error = (status_result or {}).get("error") or "Unknown error"
+                        raise JobSpyTaskError(f"JobSpy task {task_id} failed: {error}")
                     return None
                 if poll_result is not None:
                     return poll_result
+            except JobSpyTaskError:
+                raise
             except Exception as e:
                 logger.warning(f"Polling error for {task_id}: {e}")
             
             if waited >= job_timeout:
                 logger.warning(f"Timeout waiting for job {task_id}")
+                if raise_on_failure:
+                    raise JobSpyTaskError(f"JobSpy task {task_id} timed out after {job_timeout}s")
                 return None
             
             self._sleep_for_poll_interval(poll_interval, stop_event)

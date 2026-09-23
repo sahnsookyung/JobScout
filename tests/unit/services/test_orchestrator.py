@@ -3920,6 +3920,33 @@ class TestWaitForScrapeWithRetry:
 class TestScrapeSingleScraper:
     """Test _scrape_single_scraper function."""
 
+    @pytest.mark.asyncio
+    async def test_terminal_jobspy_failure_reaches_scrape_summary(
+        self, mock_redis_client, mock_scraper_cfg, mock_ctx,
+    ) -> None:
+        from core.scraper.jobspy_client import JobSpyClient
+        from services.orchestrator.main import run_all_scrapers
+
+        with JobSpyClient() as client:
+            client.submit_scrape = MagicMock(return_value="failed-task")
+            client._poll_status = MagicMock(return_value={
+                "status": "failed",
+                "error": "scrape exceeded request timeout of 45 seconds",
+            })
+            mock_ctx.jobspy_client = client
+
+            with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+                result = await run_all_scrapers(mock_ctx, mock_redis_client)
+
+            assert result["total_jobs"] == 0
+            assert result["total_scraped"] == 0
+            assert len(result["errors"]) == 1
+            assert "tokyodev" in result["errors"][0]
+            assert "request timeout of 45 seconds" in result["errors"][0]
+            client._poll_status.assert_called_once()
+            sleep.assert_not_called()
+            mock_redis_client.eval.assert_awaited_once()
+
     @pytest.fixture
     def mock_redis_client(self):
         """Create mock Redis client."""
