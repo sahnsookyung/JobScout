@@ -25,6 +25,7 @@ class RuntimeLLMConfig(BaseModel):
     headers: Optional[Dict[str, str]] = None
     model: Optional[str] = None
     temperature: float = 0.0
+    top_p: Optional[float] = Field(default=None, gt=0, le=1)
     timeout_seconds: Optional[int] = None
     structured_output_mode: Optional[Literal["auto", "json_schema", "json_object"]] = None
     max_output_tokens: Optional[int] = Field(default=None, ge=1)
@@ -144,6 +145,7 @@ def build_llm_provider(config: RuntimeLLMConfig) -> LLMProvider:
         "embedding_model": config.embedding_model,
         "embedding_dimensions": config.embedding_dimensions,
         "extraction_temperature": config.temperature,
+        "extraction_top_p": config.top_p,
     }
     service = OpenAIService(
         base_url=_normalize_base_url(config),
