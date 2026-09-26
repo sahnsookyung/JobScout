@@ -93,6 +93,17 @@ class JobSpyConfig(BaseModel):
     health_timeout_seconds: float = 2.0
 
 
+class JobExtractionRoutingConfig(BaseModel):
+    """Opt-in NVIDIA-first routing for public job descriptions only."""
+
+    enabled: bool = False
+    nvidia_model: str = Field(default="nvidia/nemotron-3-super-120b-a12b", min_length=1, max_length=200)
+    nvidia_api_key: Optional[str] = Field(default=None, repr=False, exclude=True)
+    timeout_seconds: int = Field(default=60, ge=1, le=120)
+    max_output_tokens: int = Field(default=4096, ge=256, le=4096)
+    requests_per_minute: int = Field(default=10, ge=1, le=40)
+
+
 class LlmConfig(BaseModel):
     provider: Literal["openai_compatible"] = "openai_compatible"
     base_url: Optional[str] = None
@@ -109,6 +120,7 @@ class LlmConfig(BaseModel):
     embedding_api_key: Optional[str] = None
     embedding_api_secret: Optional[str] = None
     embedding_headers: Optional[Dict[str, str]] = None
+    job_routing: JobExtractionRoutingConfig = Field(default_factory=JobExtractionRoutingConfig)
 
 
 class PreferenceModelConfig(BaseModel):
@@ -991,6 +1003,12 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["ETL_EMBEDDING_API_KEY"], ["etl", "llm", "embedding_api_key"]),
     (["ETL_EMBEDDING_API_SECRET"], ["etl", "llm", "embedding_api_secret"]),
     (["ETL_LLM_EXTRACTION_MODEL"], ["etl", "llm", "extraction_model"]),
+    (["JOB_EXTRACTION_NVIDIA_FIRST"], ["etl", "llm", "job_routing", "enabled"]),
+    (["NVIDIA_EXTRACTION_MODEL"], ["etl", "llm", "job_routing", "nvidia_model"]),
+    (["NVIDIA_EXTRACTION_API_KEY", "NVIDIA_API_KEY"], ["etl", "llm", "job_routing", "nvidia_api_key"]),
+    (["JOB_EXTRACTION_PROVIDER_TIMEOUT_SECONDS"], ["etl", "llm", "job_routing", "timeout_seconds"]),
+    (["JOB_EXTRACTION_MAX_OUTPUT_TOKENS"], ["etl", "llm", "job_routing", "max_output_tokens"]),
+    (["NVIDIA_EXTRACTION_REQUESTS_PER_MINUTE"], ["etl", "llm", "job_routing", "requests_per_minute"]),
     (
         ["ETL_LLM_EXTRACTION_STRUCTURED_OUTPUT_MODE", "ETL_LLM_STRUCTURED_OUTPUT_MODE"],
         ["etl", "llm", "structured_output_mode"],

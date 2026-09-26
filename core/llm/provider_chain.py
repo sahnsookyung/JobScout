@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List
 
 from core.config_loader import LlmJudgeProviderRuntimeConfig, LlmJudgeRuntimeConfig
 from core.llm.interfaces import LLMProvider
+from core.llm.global_budget import GlobalLlmBudgetExceeded, GlobalLlmBudgetUnavailable
 from core.llm.provider_factory import RuntimeLLMConfig, build_llm_provider
 from core.llm.provider_rate_limiter import (
     ProviderCircuitBreaker,
@@ -17,7 +19,7 @@ from core.llm.provider_rate_limiter import (
 TRANSIENT_ERROR_CATEGORIES = frozenset(
     {"rate_limit", "timeout", "connection_error", "server_error", "circuit_open"}
 )
-RETRYABLE_ERROR_CATEGORIES = TRANSIENT_ERROR_CATEGORIES
+RETRYABLE_ERROR_CATEGORIES = TRANSIENT_ERROR_CATEGORIES | {"provider_quota"}
 CIRCUIT_FAILURE_CATEGORIES = frozenset({"timeout", "connection_error", "server_error"})
 
 
@@ -30,6 +32,7 @@ class LLMProviderCandidate:
     requests_per_minute: int | None = None
     rate_limit_max_wait_seconds: int = 0
     fallback_on_rate_limit: bool = False
+    fallback_on_invalid_output: bool = False
 
 
 class LLMProviderChainError(RuntimeError):
@@ -65,6 +68,10 @@ def classify_llm_provider_error(exc: BaseException) -> str:
     status_code = _status_code(exc)
     message = str(exc).lower()
     class_name = exc.__class__.__name__.lower()
+    if status_code == 402 or (status_code == 429 and any(
+        marker in message for marker in ("per day limit exceeded", "daily", "insufficient_quota", "billing")
+    )):
+        return "provider_quota"
     if status_code == 413 or "request too large" in message or "context length" in message:
         return "input_too_large"
     if (
@@ -86,9 +93,9 @@ def classify_llm_provider_error(exc: BaseException) -> str:
         return "unsupported_model"
     if status_code in {400, 422}:
         return "invalid_request"
-    if isinstance(exc, ValueError) and (
+    if isinstance(exc, json.JSONDecodeError) or (isinstance(exc, ValueError) and (
         "schema" in message or "json" in message or "validation" in message
-    ):
+    )):
         return "schema_error"
     return "unknown"
 
@@ -268,6 +275,9 @@ class LLMProviderChain(LLMProvider):
                 self._check_provider_circuit(candidate)
                 self._rate_limit_provider(candidate)
                 result = operation(candidate.provider)
+            except (GlobalLlmBudgetExceeded, GlobalLlmBudgetUnavailable):
+                # Preserve reset metadata and never route around the global cap.
+                raise
             except ProviderCircuitOpen as exc:
                 last_error = exc
                 last_category = "circuit_open"
@@ -319,6 +329,8 @@ class LLMProviderChain(LLMProvider):
             except Exception as exc:
                 last_error = exc
                 last_category = classify_llm_provider_error(exc)
+                if last_category == "provider_quota":
+                    self._circuit_breaker.defer(candidate.name, model=candidate.model, seconds=3600)
                 if last_category in CIRCUIT_FAILURE_CATEGORIES:
                     self._circuit_breaker.record_failure(candidate.name, model=candidate.model)
                 self._append_failure_attempt(
@@ -333,6 +345,8 @@ class LLMProviderChain(LLMProvider):
                     and (
                         llm_error_is_transient(last_category)
                         or last_category == "input_too_large"
+                        or last_category == "provider_quota"
+                        or (last_category == "schema_error" and candidate.fallback_on_invalid_output)
                     )
                     and (last_category != "rate_limit" or candidate.fallback_on_rate_limit)
                 )
@@ -394,8 +408,14 @@ class LLMProviderChain(LLMProvider):
     def extract_resume_data(self, text: str) -> Dict[str, Any]:
         return self._call(lambda provider: provider.extract_resume_data(text))
 
-    def extract_requirements_data(self, text: str) -> Dict[str, Any]:
-        return self._call(lambda provider: provider.extract_requirements_data(text))
+    def extract_requirements_data(
+        self, text: str, *, validator: Callable[[Any], Dict[str, Any]] | None = None,
+    ) -> Dict[str, Any]:
+        def extract(provider: LLMProvider) -> Dict[str, Any]:
+            result = provider.extract_requirements_data(text)
+            return validator(result) if validator else result
+
+        return self._call(extract)
 
     def generate_embedding(self, text: str) -> List[float]:
         return self._call(lambda provider: provider.generate_embedding(text))

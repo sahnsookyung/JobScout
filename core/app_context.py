@@ -4,6 +4,7 @@ from typing import Any, Optional
 from core.config_loader import AppConfig, LlmConfig
 from core.llm.interfaces import LLMProvider
 from core.llm.provider_factory import build_llm_provider, runtime_llm_config_from_etl
+from core.llm.job_extraction_provider import build_job_extraction_provider
 from core.scraper.jobspy_client import JobSpyClient
 
 
@@ -59,7 +60,8 @@ class AppContext:
     @staticmethod
     def _build_ai_service(llm_config: LlmConfig) -> LLMProvider:
         """Build the ETL AI service from canonical runtime provider config."""
-        return build_llm_provider(runtime_llm_config_from_etl(llm_config))
+        default_provider = build_llm_provider(runtime_llm_config_from_etl(llm_config))
+        return build_job_extraction_provider(llm_config, default_provider)
 
     @staticmethod
     def _build_jobspy_client(config: AppConfig) -> JobSpyClient:

@@ -28,6 +28,9 @@ class RuntimeLLMConfig(BaseModel):
     timeout_seconds: Optional[int] = None
     structured_output_mode: Optional[Literal["auto", "json_schema", "json_object"]] = None
     max_output_tokens: Optional[int] = Field(default=None, ge=1)
+    retry_max_attempts: Optional[int] = Field(default=None, ge=1, le=4)
+    enable_thinking: Optional[bool] = None
+    requirements_system_prompt: Optional[str] = None
     embedding_model: Optional[str] = None
     embedding_dimensions: Optional[int] = None
     embedding_base_url: Optional[str] = None
@@ -150,6 +153,9 @@ def build_llm_provider(config: RuntimeLLMConfig) -> LLMProvider:
         extraction_headers=config.headers,
         timeout_seconds=config.timeout_seconds,
         max_output_tokens=config.max_output_tokens,
+        retry_max_attempts=config.retry_max_attempts,
+        enable_thinking=config.enable_thinking,
+        requirements_system_prompt=config.requirements_system_prompt,
         structured_output_mode=_normalize_structured_output_mode(config),
         embedding_base_url=config.embedding_base_url,
         embedding_api_key=config.embedding_api_key,
