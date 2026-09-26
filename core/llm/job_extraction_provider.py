@@ -47,6 +47,12 @@ class JobExtractionProvider(LLMProvider):
     def __getattr__(self, name: str) -> Any:
         return getattr(self.default_provider, name)
 
+    @property
+    def extraction_model(self) -> Optional[str]:
+        if self.chain.last_success is not None:
+            return self.chain.last_success["model"]
+        return getattr(self.default_provider, "extraction_model", None)
+
     def extract_requirements_data(self, text: str) -> Dict[str, Any]:
         try:
             return self.chain.extract_requirements_data(text, validator=_validate_job_extraction)

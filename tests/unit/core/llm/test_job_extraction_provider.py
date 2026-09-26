@@ -43,6 +43,20 @@ def test_nvidia_success_does_not_call_cerebras(extraction):
     default.extract_requirements_data.assert_not_called()
 
 
+@pytest.mark.parametrize('primary_fails', [False, True])
+def test_extraction_metadata_reports_successful_model(extraction, primary_fails):
+    primary, fallback = Mock(spec=LLMProvider), Mock(spec=LLMProvider)
+    primary.extract_requirements_data.return_value = extraction
+    fallback.extract_requirements_data.return_value = extraction
+    if primary_fails:
+        primary.extract_requirements_data.side_effect = TimeoutError('timed out')
+    default = Mock(extraction_model='previous-model')
+    service = JobExtractionProvider(default, make_chain(primary, fallback))
+    assert service.extraction_model == 'previous-model'
+    service.extract_requirements_data('Public job')
+    assert service.extraction_model == ('cerebras-model' if primary_fails else 'nvidia-model')
+
+
 @pytest.mark.parametrize('status', [402, 429, 500, 503])
 def test_provider_failures_use_fallback(status, extraction):
     primary, fallback = Mock(spec=LLMProvider), Mock(spec=LLMProvider)
