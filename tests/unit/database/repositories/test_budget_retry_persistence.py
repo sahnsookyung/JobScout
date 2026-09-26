@@ -6,7 +6,10 @@ from sqlalchemy.orm import Session
 
 from database.models import JobPost
 from database.repositories.job_post import JobPostRepository
-from tests.unit.database.repositories.test_job_post_stage_status import db_session, _make_job
+from tests.unit.database.repositories import test_job_post_stage_status as stage_status
+
+db_session = stage_status.db_session
+_make_job = stage_status._make_job
 
 
 @pytest.mark.db
