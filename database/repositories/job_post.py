@@ -617,6 +617,22 @@ class JobPostRepository(BaseRepository):
         )
         self.db.execute(stmt)
 
+    def defer_extraction_until(self, job_ids: List[Any], retry_at: datetime) -> None:
+        """Persist budget deferral without claiming jobs owned by another worker."""
+        self.db.execute(
+            update(JobPost)
+            .where(
+                JobPost.id.in_(job_ids),
+                JobPost.is_extracted.is_(False),
+                JobPost.extraction_status.in_(("pending", "queued", "failed_retryable")),
+            )
+            .values(
+                extraction_status="failed_retryable",
+                extraction_next_retry_at=retry_at,
+                extraction_last_error="global_budget_exhausted",
+            )
+        )
+
     def mark_extraction_retryable_failed(self, job_post_id: Any, error: str) -> None:
         """Mark job extraction as retryable failure."""
         job_post = self.get_by_id(job_post_id)

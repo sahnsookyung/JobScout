@@ -72,6 +72,11 @@ return adjusted
 class GlobalLlmBudgetExceeded(RuntimeError):
     """Raised before a provider call would exceed a configured daily ceiling."""
 
+    def __init__(self, message: str, *, reset_at: int | None = None) -> None:
+        super().__init__(message)
+        tomorrow = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        self.reset_at = int(tomorrow.timestamp()) if reset_at is None else reset_at
+
 
 class GlobalLlmBudgetUnavailable(RuntimeError):
     """Raised when the budget backend cannot make a safe decision."""
@@ -224,7 +229,7 @@ def reserve_global_llm_budget(
     )
     if exhausted_bucket is not None:
         scope = "Background daily" if _BUDGET_LANE.get() == "background" else "Global daily"
-        raise GlobalLlmBudgetExceeded(f"{scope} LLM {exhausted_bucket} budget exhausted.")
+        raise GlobalLlmBudgetExceeded(f"{scope} LLM {exhausted_bucket} budget exhausted.", reset_at=reset_at)
     return GlobalLlmBudgetReservation(
         client=resolved_client,
         tokens_key=tokens_key,
@@ -270,7 +275,7 @@ def consume_global_llm_request(*, client: Any | None = None) -> None:
     if int(raw[0]) != 1:
         record_public_security_event("global_budget_exhausted")
         scope = "Background daily" if _BUDGET_LANE.get() == "background" else "Global daily"
-        raise GlobalLlmBudgetExceeded(f"{scope} LLM requests budget exhausted.")
+        raise GlobalLlmBudgetExceeded(f"{scope} LLM requests budget exhausted.", reset_at=reset_at)
 
 
 def ensure_global_llm_budget_available(
@@ -314,7 +319,7 @@ def ensure_global_llm_budget_available(
     )
     if exhausted_bucket is not None:
         raise GlobalLlmBudgetExceeded(
-            f"Global daily LLM {exhausted_bucket} budget exhausted."
+            f"Global daily LLM {exhausted_bucket} budget exhausted.", reset_at=reset_at
         )
 
 

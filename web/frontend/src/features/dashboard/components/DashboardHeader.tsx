@@ -118,9 +118,9 @@ export function DashboardHeader() {
     return (
         <>
             <header className="sticky top-0 z-40 border-b border-rule bg-canvas/85 backdrop-blur-md">
-                <div className="mx-auto flex max-w-[var(--container-content)] items-center justify-between gap-6 px-5 py-4 sm:px-8 lg:px-10">
-                    <a href="/" className="group flex items-center gap-3" aria-label="JobScout home">
-                        <span className="jobscout-mark" aria-hidden="true" />
+                <div className="mx-auto flex max-w-[var(--container-content)] items-center justify-between gap-2 px-5 py-3 sm:gap-6 sm:px-8 sm:py-4 lg:px-10">
+                    <a href="/" className="group flex shrink-0 items-center gap-2 sm:gap-3" aria-label="JobScout home">
+                        <span className="jobscout-mark hidden min-[360px]:inline-block" aria-hidden="true" />
                         <span className="flex items-baseline gap-2">
                             <span className="text-[17px] font-medium tracking-tight text-ink">
                                 JobScout
@@ -129,7 +129,7 @@ export function DashboardHeader() {
                         </span>
                     </a>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex min-w-0 items-center gap-1 sm:gap-2">
                         <ThemeToggle />
                         <button
                             type="button"
@@ -156,7 +156,7 @@ export function DashboardHeader() {
                             <button
                                 type="button"
                                 onClick={toggleProfile}
-                                className="inline-flex h-9 items-center gap-2 rounded-md border border-rule bg-surface pl-1.5 pr-3 text-left transition-colors hover:border-rule-strong"
+                                className="inline-flex h-9 items-center gap-2 rounded-md border border-rule bg-surface px-1.5 text-left transition-colors hover:border-rule-strong sm:pr-3"
                                 aria-expanded={isProfileOpen}
                                 aria-controls="profile-panel"
                                 aria-label="Open profile menu"
@@ -172,7 +172,7 @@ export function DashboardHeader() {
                                         {avatarInitials}
                                     </span>
                                 )}
-                                <span className="hidden min-w-0 sm:block">
+                                <span className="hidden min-w-0 max-w-32 sm:block">
                                     <span className="block truncate text-[13px] font-medium text-ink">
                                         {identity.name}
                                     </span>
@@ -183,7 +183,7 @@ export function DashboardHeader() {
                                 <div
                                     id="profile-panel"
                                     aria-label="Profile panel"
-                                    className="absolute right-0 top-full mt-2 w-[20rem] overflow-hidden rounded-md border border-rule bg-surface-raised shadow-lg enter-fade"
+                                    className="absolute right-0 top-full mt-2 w-[min(20rem,calc(100vw-2.5rem))] overflow-hidden rounded-md border border-rule bg-surface-raised shadow-lg enter-fade"
                                 >
                                     <div className="border-b border-rule px-5 py-4">
                                         <div className="flex items-center gap-3">

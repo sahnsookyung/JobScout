@@ -7,6 +7,7 @@ microservice and shared extraction helpers used by the current runtime.
 
 import logging
 import threading
+from datetime import datetime, timezone
 from typing import Optional
 
 from core.app_context import AppContext
@@ -20,6 +21,11 @@ logger = logging.getLogger(__name__)
 
 class ProviderQuotaExceeded(RuntimeError):
     """Raised when the extraction provider reports a non-transient quota limit."""
+
+    def __init__(self, message: str, *, reset_at: Optional[int] = None) -> None:
+        super().__init__(message)
+        self.reset_at = reset_at
+        self.processed = 0
 
 
 def _format_http_error(e: Exception) -> str:
@@ -105,7 +111,7 @@ def _on_extraction_error(
             http_details,
         )
         _mark_job_retryable(job_id, exc_type, exc_message)
-        raise ProviderQuotaExceeded(exc_message) from e
+        raise ProviderQuotaExceeded(exc_message, reset_at=getattr(e, "reset_at", None)) from e
 
     if is_last_attempt:
         logger.error(
@@ -186,12 +192,22 @@ def _run_extraction_batch(
     retry_intervals = [30, 60, 120]
     success_count = 0
 
-    for job_id in selected_job_ids:
+    for index, job_id in enumerate(selected_job_ids):
         if stop_event.is_set():
             break
 
-        if _extract_single_job(ctx, job_id, retry_intervals, stop_event):
-            success_count += 1
+        try:
+            if _extract_single_job(ctx, job_id, retry_intervals, stop_event):
+                success_count += 1
+        except ProviderQuotaExceeded as exc:
+            exc.processed = success_count
+            if exc.reset_at is not None:
+                with job_uow() as repo:
+                    repo.job_post.defer_extraction_until(
+                        selected_job_ids[index:],
+                        datetime.fromtimestamp(exc.reset_at, timezone.utc),
+                    )
+            raise
 
     logger.info(
         "Extraction batch completed: %d/%d jobs",

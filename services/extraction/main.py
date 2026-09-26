@@ -298,6 +298,19 @@ class ExtractionBatchConsumer(StreamConsumerWithCompletion):
                     description_recovery_run_id=description_recovery_run_id,
                 )
         except ProviderQuotaExceeded as exc:
+            if exc.reset_at is not None:
+                # The batch persisted retry timestamps before propagating this
+                # error. Acknowledge it; the existing due-job scheduler resumes
+                # after reset without duplicate messages or a sleeping worker.
+                logger.info("Extraction deferred until budget reset: task_id=%s reset_at=%s", msg["task_id"], exc.reset_at)
+                return True, {
+                    "status": "deferred",
+                    "error_code": "global_budget_exhausted",
+                    "error": f"Extraction paused until daily budget reset at {exc.reset_at}",
+                    "retry_at": exc.reset_at,
+                    "processed": exc.processed,
+                    "retry_enqueued": False,
+                }
             backoff_seconds = _batch_quota_backoff_seconds(exc)
             if backoff_seconds:
                 logger.warning(
