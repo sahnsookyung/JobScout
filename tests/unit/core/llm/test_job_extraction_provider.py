@@ -149,6 +149,33 @@ def test_builder_bounds_attempts_and_uses_nvidia_first():
     assert provider.chain._candidates[0].rate_limit_max_wait_seconds == 0
 
 
+def test_nvidia_sampling_reaches_api_without_changing_fallback(monkeypatch):
+    monkeypatch.setenv('JOBSCOUT_CLOUD_GLOBAL_LLM_BUDGET_ENABLED', 'false')
+    config = LlmConfig(
+        api_key='cerebras-test', extraction_model='gpt-oss-120b',
+        extraction_temperature=0.2,
+        job_routing=JobExtractionRoutingConfig(enabled=True, nvidia_api_key='nvidia-test'),
+    )
+    provider = build_job_extraction_provider(config, Mock())
+    primary, fallback = [candidate.provider for candidate in provider.chain._candidates]
+    try:
+        for service in (primary, fallback):
+            with patch.object(service.client.chat.completions, 'create') as create:
+                service._create_chat_completion([{'role': 'user', 'content': 'job'}], None)
+                kwargs = create.call_args.kwargs
+                assert kwargs['max_tokens'] == 4096
+                if service is primary:
+                    assert kwargs['temperature'] == 1.0
+                    assert kwargs['top_p'] == 0.95
+                    assert kwargs['extra_body']['chat_template_kwargs']['enable_thinking'] is False
+                else:
+                    assert kwargs['temperature'] == 0.2
+                    assert 'top_p' not in kwargs
+    finally:
+        for service in (primary, fallback):
+            service.client.close()
+
+
 def test_single_attempt_and_thinking_disabled(monkeypatch):
     monkeypatch.setenv('JOBSCOUT_CLOUD_GLOBAL_LLM_BUDGET_ENABLED', 'false')
     service = OpenAIService(api_key='test', retry_max_attempts=1, enable_thinking=False)

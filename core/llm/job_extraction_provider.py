@@ -90,7 +90,10 @@ def build_job_extraction_provider(config: LlmConfig, default_provider: LLMProvid
         raise ValueError("NVIDIA-first job extraction requires NVIDIA_EXTRACTION_API_KEY or NVIDIA_API_KEY")
     nvidia = build_llm_provider(RuntimeLLMConfig(
         base_url=NVIDIA_OPENAI_COMPATIBLE_BASE_URL, api_key=routing.nvidia_api_key,
-        model=routing.nvidia_model, temperature=0, structured_output_mode="json_schema",
+        # Nemotron's model card recommends this sampling even with reasoning disabled:
+        # https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b/modelcard
+        model=routing.nvidia_model, temperature=1.0, top_p=0.95,
+        structured_output_mode="json_schema",
         timeout_seconds=routing.timeout_seconds, max_output_tokens=routing.max_output_tokens,
         retry_max_attempts=1, enable_thinking=False,
         requirements_system_prompt=JOB_EXTRACTION_PROMPT,

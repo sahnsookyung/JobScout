@@ -475,6 +475,8 @@ class OpenAIService(LLMProvider):
             kwargs["response_format"] = response_format
         if self.max_output_tokens is not None:
             kwargs["max_tokens"] = self.max_output_tokens
+        if self.model_config.get("extraction_top_p") is not None:
+            kwargs["top_p"] = self.model_config["extraction_top_p"]
         if self.enable_thinking is not None:
             kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": self.enable_thinking}}
         consume_global_llm_request()
