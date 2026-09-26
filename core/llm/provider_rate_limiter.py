@@ -292,6 +292,15 @@ class ProviderCircuitBreaker:
         except Exception:
             logger.warning("Could not record LLM provider circuit failure for %s", provider_name)
 
+    def defer(self, provider_name: str, *, model: str | None = None, seconds: int) -> None:
+        """Persist a bounded cooldown after an explicit provider quota failure."""
+        try:
+            self.client_factory().setex(
+                self._open_key(provider_name, model), min(max(int(seconds), 1), 86400), "1"
+            )
+        except Exception:
+            logger.warning("Could not defer LLM provider %s", provider_name)
+
     def reset(self, provider_name: str, model: str | None = None) -> dict[str, int | str | None | bool]:
         deleted = 0
         try:

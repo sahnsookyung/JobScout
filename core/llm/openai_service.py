@@ -166,7 +166,10 @@ def _llm_retry(**kwargs):
             )
         ),
         wait=_wait_respecting_retry_after,
-        stop=stop_after_attempt(LLM_RETRY_MAX_ATTEMPTS),
+        stop=lambda state: stop_after_attempt(
+            getattr(state.args[0], "retry_max_attempts", LLM_RETRY_MAX_ATTEMPTS)
+            if state.args else LLM_RETRY_MAX_ATTEMPTS
+        )(state),
         before_sleep=_log_retry,
         reraise=True,
         **kwargs,
@@ -292,6 +295,9 @@ class OpenAIService(LLMProvider):
         timeout_seconds: Optional[int] = None,
         structured_output_mode: Optional[str] = None,
         max_output_tokens: Optional[int] = None,
+        retry_max_attempts: Optional[int] = None,
+        enable_thinking: Optional[bool] = None,
+        requirements_system_prompt: Optional[str] = None,
     ):
         # Build extraction client
         client_kwargs = {"max_retries": OPENAI_CLIENT_MAX_RETRIES}
@@ -335,6 +341,9 @@ class OpenAIService(LLMProvider):
         self.extraction_temperature = self.model_config.get("extraction_temperature", 0.0)
         self.structured_output_mode = structured_output_mode or "json_schema"
         self.max_output_tokens = max_output_tokens
+        self.retry_max_attempts = retry_max_attempts or LLM_RETRY_MAX_ATTEMPTS
+        self.enable_thinking = enable_thinking
+        self.requirements_system_prompt = requirements_system_prompt
         self.last_usage: Dict[str, int] | None = None
 
     def _record_usage(self, response: Any) -> int | None:
@@ -466,6 +475,8 @@ class OpenAIService(LLMProvider):
             kwargs["response_format"] = response_format
         if self.max_output_tokens is not None:
             kwargs["max_tokens"] = self.max_output_tokens
+        if self.enable_thinking is not None:
+            kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": self.enable_thinking}}
         consume_global_llm_request()
         return self.client.chat.completions.create(
             model=self.extraction_model,
@@ -527,7 +538,7 @@ class OpenAIService(LLMProvider):
         data = self.extract_structured_data(
             text,
             EXTRACTION_SCHEMA,
-            system_prompt=REQUIREMENTS_EXTRACTION_SYSTEM_PROMPT,
+            system_prompt=self.requirements_system_prompt or REQUIREMENTS_EXTRACTION_SYSTEM_PROMPT,
             user_message=(
                 f"<JOB_DESCRIPTION>\n{text}\n</JOB_DESCRIPTION>\n\n"
                 "Extract qualification requirements and the job offerings profile."

@@ -92,6 +92,7 @@ _LLM_JUDGE_ERROR_CATEGORIES = frozenset(
         "schema_error",
         "unsupported_model",
         "input_too_large",
+        "provider_quota",
         "unknown",
     }
 )

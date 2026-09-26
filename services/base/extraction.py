@@ -12,6 +12,7 @@ from typing import Optional
 
 from core.app_context import AppContext
 from core.llm.global_budget import GlobalLlmBudgetExceeded, GlobalLlmBudgetUnavailable
+from core.llm.provider_chain import LLMProviderChainError
 from database.uow import job_uow
 from etl.resume.loader import load_resume_with_parser
 from database.models import SYSTEM_OWNER_ID, generate_file_fingerprint
@@ -100,6 +101,12 @@ def _on_extraction_error(
     exc_type = type(e).__name__
     exc_message = str(e)
     is_last_attempt = attempt == len(retry_intervals) - 1
+
+    if isinstance(e, LLMProviderChainError):
+        # The chain already tried its eligible providers; durable backoff owns retries.
+        _mark_job_retryable(job_id, exc_type, e.error_category)
+        logger.warning("Job extraction providers failed: category=%s", e.error_category)
+        return True
 
     if _provider_quota_exhausted(e):
         logger.error(
