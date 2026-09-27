@@ -1398,7 +1398,7 @@ def _persisted_requirement_to_dto(req) -> RequirementMatchDTO:
         )
     return RequirementMatchDTO(
         requirement=JobRequirementDTO(
-            id=str(req.requirement.id),
+            id=str(req.job_requirement_unit_id),
             req_type=req.req_type,
         ),
         evidence=evidence,

@@ -1873,3 +1873,24 @@ class TestPublishMatchSelectionRun:
             repo.match_selection.publish_selection_run.call_args.kwargs["owner_id"]
             == SYSTEM_OWNER_ID
         )
+
+
+def test_persisted_requirement_conversion_needs_only_saved_columns():
+    from services.scorer_matcher.pipeline import _persisted_requirement_to_dto
+
+    saved = SimpleNamespace(
+        job_requirement_unit_id="saved-requirement-id",
+        req_type="required",
+        evidence_text="Python experience",
+        evidence_section="skills",
+        evidence_tags={"skill": "python"},
+        similarity_score=0.83,
+        is_covered=True,
+        evidence_score=0.9,
+    )
+    dto = _persisted_requirement_to_dto(saved)
+    assert dto.requirement.id == "saved-requirement-id"
+    assert dto.requirement.req_type == "required"
+    assert dto.evidence.text == "Python experience"
+    assert dto.similarity == 0.83
+    assert dto.is_covered and dto.evidence_score == 0.9
