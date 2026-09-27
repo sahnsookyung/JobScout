@@ -16,6 +16,12 @@ from unittest.mock import MagicMock, patch
 from web.backend.routers.pipeline import _validate_task_id
 
 
+@pytest.fixture(autouse=True)
+def stub_durable_matching_lookup():
+    with patch("web.backend.routers.pipeline.read_matching_state", return_value=None):
+        yield
+
+
 class TestValidateTaskId:
     """Test _validate_task_id function for input validation."""
 

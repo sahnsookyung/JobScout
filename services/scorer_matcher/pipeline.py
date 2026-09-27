@@ -56,6 +56,7 @@ class SaveMatchesBatchResult:
     failed_count: int
     active_job_ids: frozenset[str]
     job_match_ids_by_job_id: dict[str, str]
+    replayed: bool = False
 
 
 @dataclass(frozen=True)
@@ -109,6 +110,7 @@ class MatchingPipelineResult:
     error: Optional[str] = None
     execution_time: float = 0.0
     cancelled: bool = False
+    replayed: bool = False
 
 
 def _resolve_ranking_context(owner_id: object | None = None) -> RankingContext:
@@ -165,6 +167,7 @@ def _error_result(
     notified_count: int = 0,
     execution_time: float = 0.0,
     cancelled: bool = False,
+    replayed: bool = False,
 ) -> MatchingPipelineResult:
     """Build an error result with consistent defaults."""
     return MatchingPipelineResult(
@@ -175,6 +178,7 @@ def _error_result(
         error=error,
         execution_time=execution_time,
         cancelled=cancelled,
+        replayed=replayed,
     )
 
 
@@ -183,6 +187,8 @@ def _success_result(
     saved_count: int,
     notified_count: int,
     execution_time: float,
+    *,
+    replayed: bool = False,
 ) -> MatchingPipelineResult:
     """Build a successful pipeline result."""
     return MatchingPipelineResult(
@@ -191,6 +197,7 @@ def _success_result(
         saved_count=saved_count,
         notified_count=notified_count,
         execution_time=execution_time,
+        replayed=replayed,
     )
 
 
@@ -201,6 +208,7 @@ def _cancelled_result(
     saved_count: int = 0,
     notified_count: int = 0,
     execution_time: float = 0.0,
+    replayed: bool = False,
 ) -> MatchingPipelineResult:
     """Build a cancelled pipeline result."""
     return _error_result(
@@ -210,6 +218,7 @@ def _cancelled_result(
         notified_count=notified_count,
         execution_time=execution_time,
         cancelled=True,
+        replayed=replayed,
     )
 
 
@@ -320,6 +329,8 @@ def _finish_pipeline_result(
     notified_count: int,
     stop_event: threading.Event,
     pipeline_start_time: float,
+    *,
+    replayed: bool = False,
 ) -> MatchingPipelineResult:
     """Build the final pipeline result after completion logging."""
     execution_time = time.time() - pipeline_start_time
@@ -334,6 +345,7 @@ def _finish_pipeline_result(
             saved_count=saved_count,
             notified_count=notified_count,
             execution_time=execution_time,
+            replayed=replayed,
         )
 
     return _success_result(
@@ -341,6 +353,7 @@ def _finish_pipeline_result(
         saved_count=saved_count,
         notified_count=notified_count,
         execution_time=execution_time,
+        replayed=replayed,
     )
 
 
@@ -441,18 +454,23 @@ def run_matching_pipeline(
             pipeline_start_time,
         )
         if save_result:
+            save_result.replayed = save_batch_result.replayed
             return save_result
 
         # Step 5: Send notifications
-        notified_count = _send_run_notifications(
-            ctx,
-            failed_count=save_batch_result.failed_count,
-            resume_fingerprint=resume_fingerprint,
-            stop_event=stop_event,
-            status_callback=status_callback,
-            selection_run_id=selection_run_id,
-            owner_id=prepared_selection.owner_id,
-            task_id=task_id,
+        notified_count = (
+            0
+            if save_batch_result.replayed
+            else _send_run_notifications(
+                ctx,
+                failed_count=save_batch_result.failed_count,
+                resume_fingerprint=resume_fingerprint,
+                stop_event=stop_event,
+                status_callback=status_callback,
+                selection_run_id=selection_run_id,
+                owner_id=prepared_selection.owner_id,
+                task_id=task_id,
+            )
         )
 
         return _finish_pipeline_result(
@@ -461,14 +479,17 @@ def run_matching_pipeline(
             notified_count,
             stop_event,
             pipeline_start_time,
+            replayed=save_batch_result.replayed,
         )
 
     except Exception as e:
-        logger.exception("Error in matching pipeline")
+        # Database exceptions can embed SQL and bound values. Keep them out of
+        # logs and task state; the worker records a stable failure category.
+        logger.error("Error in matching pipeline (%s)", type(e).__name__)
         execution_time = time.time() - pipeline_start_time
         return MatchingPipelineResult(
             success=False, matches_count=0, saved_count=0, notified_count=0,
-            error=str(e), execution_time=execution_time,
+            error="Matching pipeline failed", execution_time=execution_time,
         )
 
 
@@ -481,51 +502,93 @@ def _save_results_and_publish_selection(
     task_id: Optional[str],
     tenant_id=None,
 ) -> tuple[SaveMatchesBatchResult, Optional[str]]:
-    """Persist the selected match set and publish its immutable run artifact."""
+    """Persist and publish one immutable match snapshot in a single transaction."""
     persist_match_dtos = prepared_selection.persist_match_dtos
     if not persist_match_dtos and not prepared_selection.cached_job_match_ids_by_job_id:
         persist_match_dtos = match_dtos
-    save_batch_result = _save_matches_batch(
-        persist_match_dtos,
-        resume_fingerprint,
-        matching_config,
-        owner_id=prepared_selection.owner_id or SYSTEM_OWNER_ID,
-        tenant_id=tenant_id,
-    )
-    if save_batch_result.failed_count > 0:
-        logger.warning(
-            "Skipping active-match refresh for %s because %d match saves failed",
-            resume_fingerprint[:16],
-            save_batch_result.failed_count,
+    is_task_replay = False
+    with job_uow() as repo:
+        effective_tenant_id = _effective_tenant_id(repo, tenant_id)
+        effective_owner_id = prepared_selection.owner_id or SYSTEM_OWNER_ID
+        existing_run = (
+            repo.match_selection.get_committed_run_for_task(
+                owner_id=effective_owner_id,
+                resume_fingerprint=resume_fingerprint,
+                task_id=task_id,
+                tenant_id=effective_tenant_id,
+            )
+            if task_id
+            else None
         )
-        return save_batch_result, None
+        if existing_run is not None:
+            # A retried queue message must not mutate matches referenced by the
+            # already-published immutable run.
+            is_task_replay = True
+            save_batch_result = SaveMatchesBatchResult(
+                saved_count=0,
+                failed_count=0,
+                active_job_ids=frozenset(),
+                job_match_ids_by_job_id={},
+                replayed=True,
+            )
+            selection_run_id = str(existing_run.id)
+        else:
+            save_batch_result = _save_matches_batch(
+                persist_match_dtos,
+                resume_fingerprint,
+                matching_config,
+                owner_id=effective_owner_id,
+                tenant_id=effective_tenant_id,
+                repo=repo,
+            )
+            if save_batch_result.failed_count > 0:
+                raise RuntimeError("Match save batch reported failures")
 
-    job_match_ids_by_job_id = _job_match_ids_for_selection(
-        prepared_selection,
-        save_batch_result,
-    )
-    _reactivate_selection_matches(prepared_selection.cached_job_match_ids_by_job_id)
-    _refresh_resume_match_set(
-        resume_fingerprint,
-        active_job_ids=_active_job_ids_for_selection(
-            prepared_selection,
-            fallback_active_job_ids=save_batch_result.active_job_ids,
-        ),
-    )
-    selection_run_id = _publish_match_selection_run(
-        owner_id=prepared_selection.owner_id,
-        resume_fingerprint=resume_fingerprint,
-        task_id=task_id,
-        prepared_selection=prepared_selection,
-        save_batch_result=save_batch_result,
-        job_match_ids_by_job_id=job_match_ids_by_job_id,
-    )
-    _run_llm_judge_for_selection(
-        selection_run_id=selection_run_id,
-        owner_id=prepared_selection.owner_id,
-        tenant_id=tenant_id,
-    )
+            job_match_ids_by_job_id = _job_match_ids_for_selection(
+                prepared_selection,
+                save_batch_result,
+            )
+            _reactivate_selection_matches(
+                prepared_selection.cached_job_match_ids_by_job_id,
+                repo=repo,
+                tenant_id=effective_tenant_id,
+            )
+            _refresh_resume_match_set(
+                resume_fingerprint,
+                active_job_ids=_active_job_ids_for_selection(
+                    prepared_selection,
+                    fallback_active_job_ids=save_batch_result.active_job_ids,
+                ),
+                repo=repo,
+                tenant_id=effective_tenant_id,
+            )
+            selection_run_id = _publish_match_selection_run(
+                owner_id=prepared_selection.owner_id,
+                resume_fingerprint=resume_fingerprint,
+                task_id=task_id,
+                prepared_selection=prepared_selection,
+                save_batch_result=save_batch_result,
+                job_match_ids_by_job_id=job_match_ids_by_job_id,
+                repo=repo,
+                tenant_id=effective_tenant_id,
+            )
+
+    # Optional enqueueing must only happen after the persisted snapshot commits.
+    if not is_task_replay:
+        _run_llm_judge_for_selection(
+            selection_run_id=selection_run_id,
+            owner_id=prepared_selection.owner_id,
+            tenant_id=tenant_id,
+        )
     return save_batch_result, selection_run_id
+
+def _effective_tenant_id(repo, tenant_id):
+    if tenant_id is not None:
+        return tenant_id
+    session_info = getattr(getattr(repo, "db", None), "info", None)
+    if isinstance(session_info, dict):
+        return session_info.get("jobscout.tenant_id")
+    return None
 
 
 def _run_llm_judge_for_selection(
@@ -576,12 +639,29 @@ def _job_match_ids_for_selection(
     return ids
 
 
-def _reactivate_selection_matches(job_match_ids_by_job_id: dict[str, str]) -> int:
+def _reactivate_selection_matches(
+    job_match_ids_by_job_id: dict[str, str],
+    *,
+    repo=None,
+    tenant_id=None,
+) -> int:
     match_ids = list(job_match_ids_by_job_id.values())
     if not match_ids:
         return 0
-    with job_uow() as repo:
-        return repo.activate_matches_by_ids(match_ids)
+    if repo is None:
+        with job_uow() as scoped_repo:
+            return _reactivate_selection_matches(
+                job_match_ids_by_job_id,
+                repo=scoped_repo,
+                tenant_id=tenant_id,
+            )
+    reactivated_count = repo.match.activate_matches_by_ids(
+        match_ids,
+        tenant_id=_effective_tenant_id(repo, tenant_id),
+    )
+    if reactivated_count != len(set(match_ids)):
+        raise ValueError("Selected cached matches are unavailable in this tenant")
+    return reactivated_count
 
 
 def _active_job_ids_for_selection(
@@ -1481,84 +1561,98 @@ def _save_matches_batch(
     *,
     owner_id: str = SYSTEM_OWNER_ID,
     tenant_id=None,
+    repo=None,
 ) -> SaveMatchesBatchResult:
-    """Save matches to database with per-match transactions."""
+    """Save a batch using the caller's transaction, or one batch transaction."""
+    if repo is None:
+        with job_uow() as scoped_repo:
+            return _save_matches_batch(
+                scored_match_dtos,
+                resume_fingerprint,
+                matching_config,
+                owner_id=owner_id,
+                tenant_id=tenant_id,
+                repo=scoped_repo,
+            )
+
+    tenant_id = _effective_tenant_id(repo, tenant_id)
     saved_count = 0
-    failed_count = 0
     active_job_ids: set[str] = set()
     job_match_ids_by_job_id: dict[str, str] = {}
     for dto in scored_match_dtos:
         try:
-            with job_uow() as repo:
-                existing = repo.get_existing_match(
-                    dto.job.id,
-                    resume_fingerprint,
-                    owner_id=owner_id,
-                )
+            existing = repo.match.get_existing_match(
+                dto.job.id,
+                resume_fingerprint,
+                owner_id=owner_id,
+                tenant_id=tenant_id,
+            )
 
-                if existing and existing.status == 'active':
-                    if existing.job_content_hash != dto.job.content_hash:
-                        existing.status = 'stale'
-                        existing.invalidated_reason = "Job content updated"
-                        logger.info("Invalidated match for job %s due to content change", dto.job.id)
-                        match_record = save_match_to_db(
-                            scored_match=dto,
-                            repo=repo,
-                            is_stale_replacement=True,
-                            owner_id=owner_id,
-                            tenant_id=tenant_id,
-                        )
-                        saved_count += 1
-                        active_job_ids.add(str(dto.job.id))
-                        job_match_ids_by_job_id[str(dto.job.id)] = str(match_record.id)
-                        continue
+            if existing and existing.status == 'active':
+                if existing.job_content_hash != dto.job.content_hash:
+                    existing.status = 'stale'
+                    existing.invalidated_reason = "Job content updated"
+                    logger.info("Invalidated match for job %s due to content change", dto.job.id)
+                    match_record = save_match_to_db(
+                        scored_match=dto,
+                        repo=repo,
+                        is_stale_replacement=True,
+                        owner_id=owner_id,
+                        tenant_id=tenant_id,
+                        commit=False,
+                    )
+                    saved_count += 1
+                    active_job_ids.add(str(dto.job.id))
+                    job_match_ids_by_job_id[str(dto.job.id)] = str(match_record.id)
+                    continue
 
-                    if not matching_config.recalculate_existing:
-                        logger.debug("Refreshing existing active match snapshot for job %s", dto.job.id)
-                        existing.job_similarity = dto.job_similarity
-                        existing.fit_score = dto.fit_score
-                        existing.preference_score = dto.preference_score
-                        existing.fit_components = dto.fit_components
-                        existing.preference_components = dto.preference_components
-                        existing.ranking_snapshot = dto.ranking_snapshot
-                        existing.base_score = dto.base_score
-                        existing.penalties = dto.penalties
-                        existing.penalty_details = dto.penalty_details
-                        existing.required_coverage = dto.jd_required_coverage
-                        existing.preferred_requirement_coverage = (
-                            dto.jd_preferred_requirement_coverage
-                        )
-                        existing.total_requirements = (
-                            len(dto.requirement_matches) + len(dto.missing_requirements)
-                        )
-                        existing.matched_requirements_count = len(dto.requirement_matches)
-                        existing.match_type = dto.match_type
-                        existing.job_content_hash = dto.job.content_hash
-                        existing.calculated_at = datetime.now(timezone.utc)
-                        existing.status = 'active'
-                        repo.db.flush()
-                        saved_count += 1
-                        active_job_ids.add(str(dto.job.id))
-                        job_match_ids_by_job_id[str(dto.job.id)] = str(existing.id)
-                        continue
+                if not matching_config.recalculate_existing:
+                    logger.debug("Refreshing existing active match snapshot for job %s", dto.job.id)
+                    existing.job_similarity = dto.job_similarity
+                    existing.fit_score = dto.fit_score
+                    existing.preference_score = dto.preference_score
+                    existing.fit_components = dto.fit_components
+                    existing.preference_components = dto.preference_components
+                    existing.ranking_snapshot = dto.ranking_snapshot
+                    existing.base_score = dto.base_score
+                    existing.penalties = dto.penalties
+                    existing.penalty_details = dto.penalty_details
+                    existing.required_coverage = dto.jd_required_coverage
+                    existing.preferred_requirement_coverage = (
+                        dto.jd_preferred_requirement_coverage
+                    )
+                    existing.total_requirements = (
+                        len(dto.requirement_matches) + len(dto.missing_requirements)
+                    )
+                    existing.matched_requirements_count = len(dto.requirement_matches)
+                    existing.match_type = dto.match_type
+                    existing.job_content_hash = dto.job.content_hash
+                    existing.calculated_at = datetime.now(timezone.utc)
+                    existing.status = 'active'
+                    repo.db.flush()
+                    saved_count += 1
+                    active_job_ids.add(str(dto.job.id))
+                    job_match_ids_by_job_id[str(dto.job.id)] = str(existing.id)
+                    continue
 
-                match_record = save_match_to_db(
-                    scored_match=dto,
-                    repo=repo,
-                    is_stale_replacement=False,
-                    owner_id=owner_id,
-                    tenant_id=tenant_id,
-                )
-                saved_count += 1
-                active_job_ids.add(str(dto.job.id))
-                job_match_ids_by_job_id[str(dto.job.id)] = str(match_record.id)
-        except Exception:
-            logger.exception("Failed saving match job_id=%s", dto.job.id)
-            failed_count += 1
+            match_record = save_match_to_db(
+                scored_match=dto,
+                repo=repo,
+                is_stale_replacement=False,
+                owner_id=owner_id,
+                tenant_id=tenant_id,
+                commit=False,
+            )
+            saved_count += 1
+            active_job_ids.add(str(dto.job.id))
+            job_match_ids_by_job_id[str(dto.job.id)] = str(match_record.id)
+        except Exception as exc:
+            logger.error("Failed saving match (%s)", type(exc).__name__)
+            raise
 
     return SaveMatchesBatchResult(
         saved_count=saved_count,
-        failed_count=failed_count,
+        failed_count=0,
         active_job_ids=frozenset(active_job_ids),
         job_match_ids_by_job_id=job_match_ids_by_job_id,
     )
@@ -1572,36 +1666,60 @@ def _publish_match_selection_run(
     prepared_selection: PreparedSelectionResult,
     save_batch_result: SaveMatchesBatchResult,
     job_match_ids_by_job_id: Optional[dict[str, str]] = None,
+    repo=None,
+    tenant_id=None,
 ) -> Optional[str]:
     """Publish the committed selection run that defines canonical membership."""
-    with job_uow() as repo:
-        selection_run = repo.match_selection.publish_selection_run(
-            owner_id=owner_id or SYSTEM_OWNER_ID,
-            resume_fingerprint=resume_fingerprint,
-            policy_snapshot=prepared_selection.policy_snapshot,
-            item_snapshots=prepared_selection.item_snapshots,
-            job_match_ids_by_job_id=(
-                job_match_ids_by_job_id
-                if job_match_ids_by_job_id is not None
-                else save_batch_result.job_match_ids_by_job_id
-            ),
-            task_id=task_id,
-        )
-        return str(selection_run.id)
+    if repo is None:
+        with job_uow() as scoped_repo:
+            return _publish_match_selection_run(
+                owner_id=owner_id,
+                resume_fingerprint=resume_fingerprint,
+                task_id=task_id,
+                prepared_selection=prepared_selection,
+                save_batch_result=save_batch_result,
+                job_match_ids_by_job_id=job_match_ids_by_job_id,
+                repo=scoped_repo,
+                tenant_id=tenant_id,
+            )
+    selection_run = repo.match_selection.publish_selection_run(
+        owner_id=owner_id or SYSTEM_OWNER_ID,
+        resume_fingerprint=resume_fingerprint,
+        policy_snapshot=prepared_selection.policy_snapshot,
+        item_snapshots=prepared_selection.item_snapshots,
+        job_match_ids_by_job_id=(
+            job_match_ids_by_job_id
+            if job_match_ids_by_job_id is not None
+            else save_batch_result.job_match_ids_by_job_id
+        ),
+        task_id=task_id,
+        tenant_id=_effective_tenant_id(repo, tenant_id),
+    )
+    return str(selection_run.id)
 
 
 def _refresh_resume_match_set(
     resume_fingerprint: str,
     *,
     active_job_ids: frozenset[str] = frozenset(),
+    repo=None,
+    tenant_id=None,
 ) -> int:
     """Mark prior active matches stale after a successful refreshed save batch."""
-    with job_uow() as repo:
-        invalidated_count = repo.invalidate_matches_for_resume_except(
-            resume_fingerprint,
-            active_job_ids=active_job_ids,
-            reason="Matching pipeline rerun refreshed active match set",
-        )
+    if repo is None:
+        with job_uow() as scoped_repo:
+            return _refresh_resume_match_set(
+                resume_fingerprint,
+                active_job_ids=active_job_ids,
+                repo=scoped_repo,
+                tenant_id=tenant_id,
+            )
+    invalidated_count = repo.match.invalidate_matches_for_resume_except(
+        resume_fingerprint,
+        active_job_ids=active_job_ids,
+        reason="Matching pipeline rerun refreshed active match set",
+        tenant_id=_effective_tenant_id(repo, tenant_id),
+    )
 
     if invalidated_count:
         logger.info(

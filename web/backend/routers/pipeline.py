@@ -43,6 +43,7 @@ from core.llm.global_budget import (
     ensure_global_llm_budget_available,
 )
 from core.scraper.jobspy_client import JobSpyClient
+from core.matching_run_state import read_matching_state
 from core.redis_streams import (
     _sanitize_log,
     clear_task_cancellation_requested,
@@ -1611,6 +1612,7 @@ def _set_initial_matching_task_state(
     owner_id: str,
     *,
     trigger: str = "manual",
+    tenant_id: Optional[str] = None,
 ) -> None:
     """Write initial pending state for matching tasks."""
     now = _utc_now_iso()
@@ -1624,6 +1626,7 @@ def _set_initial_matching_task_state(
                 "task_type": "matching",
                 "upload_id": upload_id,
                 "owner_id": owner_id,
+                "tenant_id": tenant_id,
                 "resume_fingerprint": fingerprint,
                 "trigger": trigger,
                 "started_at": now,
@@ -1884,6 +1887,7 @@ def _enqueue_matching_for_ready_resume(
         resume_fingerprint,
         owner_key,
         trigger=trigger,
+        tenant_id=str(tenant_id) if tenant_id is not None else None,
     )
     claimed_task_id = _claim_active_task_id(redis, owner_key, task_id)
     if claimed_task_id != task_id:
@@ -2068,6 +2072,7 @@ def _stop_matching(user) -> PipelineTaskResponse:
 def get_pipeline_status(
     task_id: str,
     user: Annotated[None, Depends(get_current_user)] = None,
+    request: Request = None,
 ):
     """
     Get the status of a pipeline task.
@@ -2079,6 +2084,7 @@ def get_pipeline_status(
     - failed: Pipeline encountered an error
     """
     owner_id = resolve_owner_id(user)
+    tenant_id = getattr(request.state, "tenant_id", None) if request is not None else None
     # Check Redis first — task state is written by the scorer-matcher consumer
     try:
         state = get_task_state(task_id)
@@ -2087,9 +2093,25 @@ def get_pipeline_status(
     if state:
         try:
             _ensure_task_visible_to_owner(state, owner_id)
+            if state.get("tenant_id") is not None and str(state["tenant_id"]) != str(tenant_id):
+                _raise_pipeline_error(
+                    status_code=404, code=PIPELINE_TASK_NOT_FOUND, message=TASK_NOT_FOUND_DETAIL,
+                )
         except PipelineApiError as exc:
             return _pipeline_error_response(exc)
         return _build_pipeline_status_response(task_id, state)
+
+    # Matching outcomes outlive Redis's one-hour projection and active-task marker.
+    try:
+        durable_state = read_matching_state(task_id, owner_id=owner_id, tenant_id=tenant_id)
+    except Exception:
+        logger.warning("Unable to read durable matching status", exc_info=True)
+        return _pipeline_error_response(PipelineApiError(
+            status_code=503, code=PIPELINE_STATUS_LOOKUP_FAILED,
+            message="Matching status is temporarily unavailable. Please retry.",
+        ))
+    if durable_state is not None:
+        return _build_pipeline_status_response(task_id, durable_state)
 
     if _active_task_id_for_owner(owner_id) != task_id:
         return _pipeline_error_response(

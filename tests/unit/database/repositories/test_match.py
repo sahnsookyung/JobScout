@@ -59,6 +59,16 @@ class TestGetExistingMatch:
         result = repo.get_existing_match("job-1", "fp-1", load_job_post=False)
         assert result is expected
 
+    def test_tenant_scope_includes_private_rows_and_only_global_catalog_rows(self):
+        repo, mock_db = make_repo()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        repo.get_existing_match("job-1", "fp-1", tenant_id="tenant-1")
+
+        sql = str(mock_db.execute.call_args.args[0])
+        assert "job_post.tenant_id IS NULL" in sql
+        assert "job_match.tenant_id =" in sql
+
 
 # ---------------------------------------------------------------------------
 # get_matches_for_resume
@@ -205,6 +215,46 @@ class TestInvalidateMatchesForResumeExcept:
 
         assert count == 0
         assert keep_match.status == "active"
+
+    def test_tenant_refresh_invalidates_only_private_matches(self):
+        repo, mock_db = make_repo()
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+        repo.invalidate_matches_for_resume_except(
+            "fp-1",
+            active_job_ids=set(),
+            tenant_id="tenant-1",
+        )
+
+        sql = str(mock_db.execute.call_args.args[0])
+        assert "job_post" in sql
+        assert "job_match.tenant_id =" in sql
+        assert "job_post.tenant_id IS NULL" not in sql
+
+    def test_oss_refresh_stays_global(self):
+        repo, mock_db = make_repo()
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+        repo.invalidate_matches_for_resume_except(
+            "fp-1",
+            active_job_ids=set(),
+            tenant_id=None,
+        )
+
+        sql = str(mock_db.execute.call_args.args[0])
+        assert "job_post.tenant_id IS NULL" in sql
+        assert "job_match.tenant_id IS NULL" in sql
+
+
+def test_reactivation_scopes_to_private_and_global_catalog_matches():
+    repo, mock_db = make_repo()
+    mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+    repo.activate_matches_by_ids(["match-1"], tenant_id="tenant-1")
+
+    sql = str(mock_db.execute.call_args.args[0])
+    assert "job_post.tenant_id IS NULL" in sql
+    assert "job_match.tenant_id =" in sql
 
 
 # ---------------------------------------------------------------------------

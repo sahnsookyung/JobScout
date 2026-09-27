@@ -10,14 +10,18 @@ from core.match_selection.contracts import (
     MatchSelectionItemSnapshot,
     MatchSelectionPolicySnapshot,
 )
-from database.models import JobMatch, JobPost, MatchSelectionItem, MatchSelectionRun
+from database.models import JobMatch, MatchSelectionItem, MatchSelectionRun
 from database.repositories.base import BaseRepository
+
+_TENANT_ID_UNSET = object()
 
 
 class MatchSelectionRepository(BaseRepository):
     def get_current_run_for_resume(
         self,
         resume_fingerprint: str,
+        *,
+        tenant_id: Any = _TENANT_ID_UNSET,
     ) -> Optional[MatchSelectionRun]:
         stmt = (
             select(MatchSelectionRun)
@@ -29,13 +33,15 @@ class MatchSelectionRepository(BaseRepository):
             .order_by(MatchSelectionRun.created_at.desc())
             .limit(1)
         )
+        if tenant_id is not _TENANT_ID_UNSET:
+            stmt = stmt.where(MatchSelectionRun.tenant_id == tenant_id)
         return self.db.execute(stmt).scalar_one_or_none()
 
     def get_latest_current_run_for_owner(
         self,
         owner_id: Any,
         *,
-        tenant_id: Any | None = None,
+        tenant_id: Any = _TENANT_ID_UNSET,
     ) -> Optional[MatchSelectionRun]:
         stmt = (
             select(MatchSelectionRun)
@@ -47,17 +53,8 @@ class MatchSelectionRepository(BaseRepository):
             .order_by(MatchSelectionRun.created_at.desc())
             .limit(1)
         )
-        if tenant_id is not None:
-            tenant_item_exists = (
-                select(MatchSelectionItem.id)
-                .join(JobMatch, JobMatch.id == MatchSelectionItem.job_match_id)
-                .join(JobPost, JobPost.id == JobMatch.job_post_id)
-                .where(
-                    MatchSelectionItem.selection_run_id == MatchSelectionRun.id,
-                    JobPost.tenant_id == tenant_id,
-                )
-            )
-            stmt = stmt.where(tenant_item_exists.exists())
+        if tenant_id is not _TENANT_ID_UNSET:
+            stmt = stmt.where(MatchSelectionRun.tenant_id == tenant_id)
         return self.db.execute(stmt).scalar_one_or_none()
 
     def get_committed_run_for_task(
@@ -66,6 +63,7 @@ class MatchSelectionRepository(BaseRepository):
         owner_id: Any,
         resume_fingerprint: str,
         task_id: str,
+        tenant_id: Any = _TENANT_ID_UNSET,
     ) -> Optional[MatchSelectionRun]:
         stmt = (
             select(MatchSelectionRun)
@@ -78,6 +76,8 @@ class MatchSelectionRepository(BaseRepository):
             .order_by(MatchSelectionRun.created_at.desc())
             .limit(1)
         )
+        if tenant_id is not _TENANT_ID_UNSET:
+            stmt = stmt.where(MatchSelectionRun.tenant_id == tenant_id)
         return self.db.execute(stmt).scalar_one_or_none()
 
     def get_items_for_run(
@@ -85,7 +85,7 @@ class MatchSelectionRepository(BaseRepository):
         selection_run_id: Any,
         *,
         tier: Optional[str] = "primary",
-        tenant_id: Any | None = None,
+        tenant_id: Any = _TENANT_ID_UNSET,
     ) -> list[MatchSelectionItem]:
         """Fetch selection items for a run.
 
@@ -104,11 +104,13 @@ class MatchSelectionRepository(BaseRepository):
         )
         if tier == "primary":
             stmt = stmt.where(MatchSelectionItem.selection_tier == "primary")
-        if tenant_id is not None:
+        if tenant_id is not _TENANT_ID_UNSET:
             stmt = (
-                stmt.join(JobMatch, JobMatch.id == MatchSelectionItem.job_match_id)
-                .join(JobPost, JobPost.id == JobMatch.job_post_id)
-                .where(JobPost.tenant_id == tenant_id)
+                stmt.join(
+                    MatchSelectionRun,
+                    MatchSelectionRun.id == MatchSelectionItem.selection_run_id,
+                )
+                .where(MatchSelectionRun.tenant_id == tenant_id)
             )
         return list(self.db.execute(stmt).scalars().all())
 
@@ -155,18 +157,21 @@ class MatchSelectionRepository(BaseRepository):
         item_snapshots: Iterable[MatchSelectionItemSnapshot],
         job_match_ids_by_job_id: dict[str, str],
         task_id: Optional[str] = None,
+        tenant_id: Any | None = None,
     ) -> MatchSelectionRun:
         if task_id:
             existing_for_task = self.get_committed_run_for_task(
                 owner_id=owner_id,
                 resume_fingerprint=resume_fingerprint,
                 task_id=task_id,
+                tenant_id=tenant_id,
             )
             if existing_for_task is not None:
                 return existing_for_task
 
         run = MatchSelectionRun(
             owner_id=owner_id,
+            tenant_id=tenant_id,
             resume_fingerprint=resume_fingerprint,
             task_id=task_id,
             lifecycle_status="pending",
@@ -216,6 +221,7 @@ class MatchSelectionRepository(BaseRepository):
                 MatchSelectionRun.lifecycle_status == "committed",
                 MatchSelectionRun.is_current.is_(True),
                 MatchSelectionRun.id != run.id,
+                MatchSelectionRun.tenant_id == tenant_id,
             )
             .values(is_current=False, lifecycle_status="superseded")
         )

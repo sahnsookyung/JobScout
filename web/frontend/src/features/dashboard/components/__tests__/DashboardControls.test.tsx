@@ -594,6 +594,31 @@ describe('DashboardControls', () => {
             expect(within(startingUp.parentElement as HTMLElement).getByText('Active')).toBeInTheDocument();
         });
 
+        it('shows a recoverable progress transport error without a task status', async () => {
+            const retrySSE = vi.fn();
+            mockUsePipeline.mockReturnValue({
+                runPipeline: mockRunPipeline,
+                stopPipeline: mockStopPipeline,
+                isRunning: false,
+                isStopping: false,
+                status: null,
+                connectionState: 'failed',
+                sseError: 'Your session expired. Sign in again to view run progress.',
+                retrySSE,
+                uploadResume: mockUploadResume,
+                isUploading: false,
+                isPreparingResume: false,
+                resumeProcessingStep: undefined,
+            });
+
+            render(<DashboardControls />, { wrapper: createWrapper() });
+
+            const alert = screen.getByRole('alert');
+            expect(alert).toHaveTextContent('Your session expired. Sign in again to view run progress.');
+            await userEvent.click(within(alert).getByRole('button', { name: 'Retry progress updates' }));
+            expect(retrySSE).toHaveBeenCalledOnce();
+        });
+
         it('renders the completed state alongside the idle action label', () => {
             mockUsePipeline.mockReturnValue({
                 runPipeline: mockRunPipeline,

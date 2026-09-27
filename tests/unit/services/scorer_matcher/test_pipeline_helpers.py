@@ -44,6 +44,15 @@ def _uow(repo):
     manager.__exit__.return_value = False
     return manager
 
+def _publication_repo(existing_run=None):
+    repo = MagicMock()
+    repo.db.info = {}
+    repo.match_selection.get_committed_run_for_task.return_value = existing_run
+    repo.match.activate_matches_by_ids.side_effect = lambda ids, **_kwargs: len(set(ids))
+    repo.match.invalidate_matches_for_resume_except.return_value = 0
+    repo.match_selection.publish_selection_run.return_value = SimpleNamespace(id="run-1")
+    return repo
+
 
 def _dto(
     job_id: str = "job-1",
@@ -1172,6 +1181,14 @@ class TestRunMatchingAndScoring:
 
 
 class TestRunMatchingPipeline:
+    @pytest.fixture(autouse=True)
+    def _mock_publication_transaction(self, monkeypatch):
+        repo = _publication_repo()
+        monkeypatch.setattr(
+            "services.scorer_matcher.pipeline.job_uow",
+            lambda: _uow(repo),
+        )
+
     def test_disabled_matching_returns_early(self):
         ctx = MagicMock()
         ctx.config.matching = None
@@ -1180,6 +1197,50 @@ class TestRunMatchingPipeline:
 
         assert result.success is True
         assert result.matches_count == 0
+
+    def test_committed_task_replay_is_truthful_and_skips_side_effects(self, monkeypatch):
+        existing_run = SimpleNamespace(id="selection-run-existing")
+        repo = _publication_repo(existing_run=existing_run)
+        monkeypatch.setattr(
+            "services.scorer_matcher.pipeline.job_uow",
+            lambda: _uow(repo),
+        )
+        monkeypatch.setattr(
+            "services.scorer_matcher.pipeline._load_pipeline_resume",
+            lambda _fingerprint: ({"profile": {}}, "fp-123", False, None),
+        )
+        monkeypatch.setattr(
+            "services.scorer_matcher.pipeline._resolve_ranking_context",
+            lambda _owner_id: SimpleNamespace(),
+        )
+        monkeypatch.setattr(
+            "services.scorer_matcher.pipeline._run_matching_and_scoring",
+            lambda *_args, **_kwargs: _prepared_selection_result(_dto()),
+        )
+        notify = MagicMock(return_value=1)
+        judge = MagicMock()
+        save_batch = MagicMock()
+        monkeypatch.setattr("services.scorer_matcher.pipeline.send_notifications", notify)
+        monkeypatch.setattr("services.scorer_matcher.pipeline._run_llm_judge_for_selection", judge)
+        monkeypatch.setattr("services.scorer_matcher.pipeline._save_matches_batch", save_batch)
+
+        ctx = MagicMock()
+        ctx.config.matching = SimpleNamespace(enabled=True, recalculate_existing=True)
+        ctx.config.notifications = SimpleNamespace(enabled=True)
+        ctx.notification_service = MagicMock()
+
+        result = run_matching_pipeline(ctx, owner_id="user-1", task_id="task-1")
+
+        assert result.success is True
+        assert result.saved_count == 0
+        assert result.replayed is True
+        assert result.notified_count == 0
+        save_batch.assert_not_called()
+        repo.match.activate_matches_by_ids.assert_not_called()
+        repo.match.invalidate_matches_for_resume_except.assert_not_called()
+        repo.match_selection.publish_selection_run.assert_not_called()
+        judge.assert_not_called()
+        notify.assert_not_called()
 
     @patch("services.scorer_matcher.pipeline.send_notifications", return_value=1)
     @patch("services.scorer_matcher.pipeline._refresh_resume_match_set", return_value=0)
@@ -1221,7 +1282,9 @@ class TestRunMatchingPipeline:
 
         assert result.success is True
         assert result.notified_count == 1
-        mock_refresh.assert_called_once_with("fp-123", active_job_ids=frozenset({"job-1"}))
+        mock_refresh.assert_called_once()
+        assert mock_refresh.call_args.args == ("fp-123",)
+        assert mock_refresh.call_args.kwargs["active_job_ids"] == frozenset({"job-1"})
         mock_notify.assert_called_once()
 
     @patch("services.scorer_matcher.pipeline._refresh_resume_match_set", return_value=2)
@@ -1263,14 +1326,13 @@ class TestRunMatchingPipeline:
         assert result.success is True
         assert result.matches_count == 0
         assert result.saved_count == 0
-        mock_refresh.assert_called_once_with("fp-123", active_job_ids=frozenset())
-        mock_save.assert_called_once_with(
-            [],
-            "fp-123",
-            ctx.config.matching,
-            owner_id="user-1",
-            tenant_id=None,
-        )
+        mock_refresh.assert_called_once()
+        assert mock_refresh.call_args.args == ("fp-123",)
+        assert mock_refresh.call_args.kwargs["active_job_ids"] == frozenset()
+        mock_save.assert_called_once()
+        assert mock_save.call_args.args == ([], "fp-123", ctx.config.matching)
+        assert mock_save.call_args.kwargs["owner_id"] == "user-1"
+        assert mock_save.call_args.kwargs["tenant_id"] is None
 
     @patch("services.scorer_matcher.pipeline._refresh_resume_match_set")
     @patch(
@@ -1303,8 +1365,9 @@ class TestRunMatchingPipeline:
 
         result = run_matching_pipeline(ctx)
 
-        assert result.success is True
-        assert result.saved_count == 1
+        assert result.success is False
+        assert result.saved_count == 0
+        assert result.error == "Matching pipeline failed"
         save_args = mock_save.call_args.args
         assert len(save_args[0]) == 1
         assert save_args[0][0].job.id == "job-1"
@@ -1351,12 +1414,22 @@ class TestRunMatchingPipeline:
         result = run_matching_pipeline(ctx, owner_id="user-1", task_id="task-1")
 
         assert result.success is True
-        mock_refresh.assert_called_once_with("fp-123", active_job_ids=frozenset({"job-1"}))
+        mock_refresh.assert_called_once()
+        assert mock_refresh.call_args.args == ("fp-123",)
+        assert mock_refresh.call_args.kwargs["active_job_ids"] == frozenset({"job-1"})
         mock_publish.assert_called_once()
         assert mock_notify.call_args.kwargs["selection_run_id"] == "selection-run-123"
 
 
 class TestPipelineNotificationAndPublicationHelpers:
+    @pytest.fixture(autouse=True)
+    def _mock_publication_transaction(self, monkeypatch):
+        repo = _publication_repo()
+        monkeypatch.setattr(
+            "services.scorer_matcher.pipeline.job_uow",
+            lambda: _uow(repo),
+        )
+
     def test_send_run_notifications_skips_when_no_service_or_enabled_config(self):
         ctx = SimpleNamespace(
             notification_service=None,
@@ -1427,7 +1500,9 @@ class TestPipelineNotificationAndPublicationHelpers:
 
         assert save_result.saved_count == 1
         assert selection_run_id == "run-1"
-        mock_refresh.assert_called_once_with("fp-123", active_job_ids=frozenset({"job-1"}))
+        mock_refresh.assert_called_once()
+        assert mock_refresh.call_args.args == ("fp-123",)
+        assert mock_refresh.call_args.kwargs["active_job_ids"] == frozenset({"job-1"})
         mock_publish.assert_called_once()
         assert mock_publish.call_args.kwargs["owner_id"] == "user-1"
         mock_llm_judge.assert_called_once_with(
@@ -1512,10 +1587,9 @@ class TestPipelineNotificationAndPublicationHelpers:
         assert selection_run_id == "run-1"
         saved_dtos = mock_save.call_args.args[0]
         assert [dto.job.id for dto in saved_dtos] == ["job-primary", "job-excluded"]
-        mock_refresh.assert_called_once_with(
-            "fp-123",
-            active_job_ids=frozenset({"job-primary"}),
-        )
+        mock_refresh.assert_called_once()
+        assert mock_refresh.call_args.args == ("fp-123",)
+        assert mock_refresh.call_args.kwargs["active_job_ids"] == frozenset({"job-primary"})
         mock_publish.assert_called_once()
 
     @patch("services.scorer_matcher.pipeline._publish_match_selection_run", return_value="run-1")
@@ -1555,7 +1629,8 @@ class TestPipelineNotificationAndPublicationHelpers:
             task_id="task-1",
         )
 
-        mock_reactivate.assert_called_once_with({"job-cached": "match-cached"})
+        mock_reactivate.assert_called_once()
+        assert mock_reactivate.call_args.args == ({"job-cached": "match-cached"},)
         assert mock_publish.call_args.kwargs["job_match_ids_by_job_id"] == {
             "job-cached": "match-cached",
             "job-new": "match-new",
@@ -1577,16 +1652,15 @@ class TestPipelineNotificationAndPublicationHelpers:
             job_match_ids_by_job_id={},
         )
 
-        save_result, selection_run_id = _save_results_and_publish_selection(
-            match_dtos=[_dto()],
-            resume_fingerprint="fp-123",
-            matching_config=SimpleNamespace(),
-            prepared_selection=_prepared_selection_result(_dto()),
-            task_id="task-1",
-        )
+        with pytest.raises(RuntimeError, match="Match save batch reported failures"):
+            _save_results_and_publish_selection(
+                match_dtos=[_dto()],
+                resume_fingerprint="fp-123",
+                matching_config=SimpleNamespace(),
+                prepared_selection=_prepared_selection_result(_dto()),
+                task_id="task-1",
+            )
 
-        assert save_result.failed_count == 1
-        assert selection_run_id is None
         mock_refresh.assert_not_called()
         mock_publish.assert_not_called()
 
@@ -1704,10 +1778,8 @@ class TestSaveMatchesBatch:
             status="active",
             job_content_hash="hash-1",
         )
-        repo = SimpleNamespace(
-            db=MagicMock(),
-            get_existing_match=MagicMock(return_value=existing),
-        )
+        repo = _publication_repo()
+        repo.match.get_existing_match.return_value = existing
         mock_uow.return_value = _uow(repo)
 
         result = _save_matches_batch(
@@ -1736,9 +1808,8 @@ class TestSaveMatchesBatch:
             job_content_hash="old-hash",
             invalidated_reason=None,
         )
-        repo = SimpleNamespace(
-            get_existing_match=MagicMock(return_value=existing),
-        )
+        repo = _publication_repo()
+        repo.match.get_existing_match.return_value = existing
         mock_uow.return_value = _uow(repo)
         mock_save.return_value = SimpleNamespace(id="new-match-1")
 
@@ -1757,7 +1828,8 @@ class TestSaveMatchesBatch:
     @patch("services.scorer_matcher.pipeline.save_match_to_db")
     @patch("services.scorer_matcher.pipeline.job_uow")
     def test_save_matches_batch_saves_new_match(self, mock_uow, mock_save):
-        repo = SimpleNamespace(get_existing_match=MagicMock(return_value=None))
+        repo = _publication_repo()
+        repo.match.get_existing_match.return_value = None
         mock_uow.return_value = _uow(repo)
         mock_save.return_value = SimpleNamespace(id="match-1")
 

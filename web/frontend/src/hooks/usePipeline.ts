@@ -20,6 +20,7 @@ async function pollResumeProcessing(taskId: string): Promise<ResumeStatusRespons
 export const usePipeline = () => {
     const queryClient = useQueryClient();
     const [pendingTaskId, setPendingTaskId] = React.useState<string | null>(null);
+    const [terminalStatus, setTerminalStatus] = React.useState<PipelineStatusResponse | null>(null);
     const [pendingResumeTaskId, setPendingResumeTaskId] = React.useState<string | null>(null);
     const [isUploading, setIsUploading] = React.useState(false);
     const [isRunningPreflight, setIsRunningPreflight] = React.useState(false);
@@ -37,7 +38,7 @@ export const usePipeline = () => {
     });
 
     // Use pendingTaskId from mutation first, then fall back to activePipeline
-    const taskIdForSSE = pendingTaskId ?? activePipeline?.task_id ?? null;
+    const taskIdForSSE = pendingTaskId ?? terminalStatus?.task_id ?? activePipeline?.task_id ?? null;
     const {
         status: sseStatus,
         connectionState,
@@ -45,8 +46,35 @@ export const usePipeline = () => {
         retry: retrySSE
     } = usePipelineEvents(taskIdForSSE);
 
+    const trackTask = React.useCallback((taskId: string) => {
+        setTerminalStatus((previous) => previous?.task_id === taskId ? previous : null);
+        setPendingTaskId(taskId);
+    }, []);
+
+    React.useEffect(() => {
+        if (
+            pendingTaskId === null
+            && terminalStatus !== null
+            && activePipeline?.task_id !== undefined
+            && activePipeline.task_id !== terminalStatus.task_id
+            && ['pending', 'running', 'cancellation_requested', 'persisting'].includes(activePipeline.status)
+        ) {
+            setTerminalStatus(null);
+        }
+    }, [activePipeline?.status, activePipeline?.task_id, pendingTaskId, terminalStatus]);
+
+    const visibleTaskId = pendingTaskId ?? terminalStatus?.task_id ?? activePipeline?.task_id ?? null;
+    const visibleSseStatus = sseStatus?.task_id === visibleTaskId ? sseStatus : null;
+    const visibleTerminalStatus = terminalStatus?.task_id === visibleTaskId ? terminalStatus : null;
+    const visibleActivePipeline = activePipeline?.task_id === visibleTaskId ? activePipeline : null;
+
     const optimisticPendingStatus = React.useMemo<PipelineStatusResponse | null>(() => {
-        if (pendingTaskId === null || sseStatus !== null || activePipeline !== null) {
+        if (
+            pendingTaskId === null
+            || visibleSseStatus !== null
+            || visibleActivePipeline !== null
+            || connectionState === 'failed'
+        ) {
             return null;
         }
         return {
@@ -57,9 +85,12 @@ export const usePipeline = () => {
             stats: {},
             warnings: [],
         };
-    }, [activePipeline, pendingTaskId, sseStatus]);
+    }, [connectionState, pendingTaskId, visibleActivePipeline, visibleSseStatus]);
 
-    const effectiveStatus = sseStatus ?? activePipeline ?? optimisticPendingStatus;
+    const effectiveStatus = visibleSseStatus
+        ?? visibleTerminalStatus
+        ?? visibleActivePipeline
+        ?? optimisticPendingStatus;
 
     // Poll resume processing status after explicit upload with a background task
     const { data: resumeProcessingStatus } = useQuery({
@@ -77,7 +108,7 @@ export const usePipeline = () => {
 
     React.useEffect(() => {
         if (resumeProcessingStatus?.matching_task_id) {
-            setPendingTaskId(resumeProcessingStatus.matching_task_id);
+            trackTask(resumeProcessingStatus.matching_task_id);
             queryClient.invalidateQueries({ queryKey: ['pipeline', 'active'] });
         }
         if (
@@ -88,6 +119,7 @@ export const usePipeline = () => {
         }
     }, [
         queryClient,
+        trackTask,
         resumeProcessingStatus?.matching_task_id,
         resumeProcessingStatus?.status,
     ]);
@@ -96,7 +128,7 @@ export const usePipeline = () => {
         mutationFn: () => pipelineApi.runMatching(),
         onSuccess: (response) => {
             if (response.data?.task_id) {
-                setPendingTaskId(response.data.task_id);
+                trackTask(response.data.task_id);
             }
             queryClient.invalidateQueries({ queryKey: ['pipeline', 'active'] });
         },
@@ -125,19 +157,21 @@ export const usePipeline = () => {
 
     React.useEffect(() => {
         if (
-            sseStatus?.status === 'completed' ||
-            sseStatus?.status === 'failed' ||
-            sseStatus?.status === 'cancelled'
+            visibleSseStatus?.status === 'completed' ||
+            visibleSseStatus?.status === 'failed' ||
+            visibleSseStatus?.status === 'cancelled'
         ) {
             queryClient.invalidateQueries({ queryKey: ['matches'] });
             queryClient.invalidateQueries({ queryKey: ['stats'] });
             queryClient.invalidateQueries({ queryKey: ['pipeline', 'active'] });
-            setPendingTaskId(null);
+            setTerminalStatus(visibleSseStatus);
+            setPendingTaskId((current) => current === visibleSseStatus.task_id ? null : current);
         }
-    }, [sseStatus?.status, queryClient]);
+    }, [queryClient, visibleSseStatus]);
 
     const handleClearTask = React.useCallback(() => {
         setPendingTaskId(null);
+        setTerminalStatus(null);
         clearTaskMutation.mutate();
     }, [clearTaskMutation]);
 
@@ -156,7 +190,7 @@ export const usePipeline = () => {
             if (preflight.status === 'ready_already_known') {
                 const selectResp = await pipelineApi.selectResume(hash, file.name);
                 if (selectResp.data.matching_task_id) {
-                    setPendingTaskId(selectResp.data.matching_task_id);
+                    trackTask(selectResp.data.matching_task_id);
                     queryClient.invalidateQueries({ queryKey: ['pipeline', 'active'] });
                 }
                 return {
@@ -186,7 +220,7 @@ export const usePipeline = () => {
                 setPendingResumeTaskId(uploadResp.data.task_id);
             }
             if (uploadResp.data.matching_task_id) {
-                setPendingTaskId(uploadResp.data.matching_task_id);
+                trackTask(uploadResp.data.matching_task_id);
                 queryClient.invalidateQueries({ queryKey: ['pipeline', 'active'] });
             }
 
@@ -197,7 +231,7 @@ export const usePipeline = () => {
         } finally {
             setIsUploading(false);
         }
-    }, [queryClient]);
+    }, [queryClient, trackTask]);
 
     /**
      * Run the matching pipeline using the backend eligibility decision as the source of truth.
@@ -236,13 +270,13 @@ export const usePipeline = () => {
                     setPendingResumeTaskId(uploadResp.data.task_id);
                     const resumeStatus = await pollResumeProcessing(uploadResp.data.task_id);
                     if (resumeStatus?.matching_task_id) {
-                        setPendingTaskId(resumeStatus.matching_task_id);
+                        trackTask(resumeStatus.matching_task_id);
                         queryClient.invalidateQueries({ queryKey: ['pipeline', 'active'] });
                         return;
                     }
                 }
                 if (uploadResp.data.matching_task_id) {
-                    setPendingTaskId(uploadResp.data.matching_task_id);
+                    trackTask(uploadResp.data.matching_task_id);
                     queryClient.invalidateQueries({ queryKey: ['pipeline', 'active'] });
                     return;
                 }
@@ -261,7 +295,7 @@ export const usePipeline = () => {
         } finally {
             setIsRunningPreflight(false);
         }
-    }, [pendingResumeTaskId, queryClient, runPipelineMutation]);
+    }, [pendingResumeTaskId, queryClient, runPipelineMutation, trackTask]);
 
     return {
         activePipeline,

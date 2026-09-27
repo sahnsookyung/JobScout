@@ -22,6 +22,12 @@ from fastapi.testclient import TestClient
 OWNER_ID = "00000000-0000-0000-0000-000000000001"
 
 
+@pytest.fixture(autouse=True)
+def stub_durable_matching_lookup():
+    with patch("web.backend.routers.pipeline.read_matching_state", return_value=None):
+        yield
+
+
 @pytest.fixture
 def pipeline_client():
     from web.backend.routers.pipeline import router

@@ -1,6 +1,7 @@
 """Unit tests for core/scorer/persistence.py"""
 
 import pytest
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 from sqlalchemy.exc import IntegrityError
 
@@ -89,6 +90,8 @@ def make_execute_chain(*scalar_values):
 
 def make_repo(execute_side_effects=None):
     mock_db = MagicMock()
+    mock_db.info = {}
+    mock_db.get.return_value = SimpleNamespace(tenant_id=None)
     if execute_side_effects is not None:
         mock_db.execute.side_effect = execute_side_effects
     repo = MagicMock()
@@ -319,6 +322,7 @@ class TestSaveMatchToDb:
         m = MagicMock()
         m.id = kwargs.get("id", "match-id-existing")
         m.is_hidden = kwargs.get("is_hidden", False)
+        m.tenant_id = kwargs.get("tenant_id")
         m.status = "active"
         return m
 
@@ -433,8 +437,8 @@ class TestSaveMatchToDb:
 
     # --- race condition ---
 
-    def test_race_condition_integrity_error_handled(self):
-        """IntegrityError on first flush → rollback, refetch existing, update in place."""
+    def test_race_condition_integrity_error_handled_in_savepoint(self):
+        """An insert conflict refetches a scoped row without rolling back the UOW."""
         existing_after_race = self._make_existing_match(id="race-match-id")
         repo = make_repo()
         repo.db.execute.side_effect = self._make_execute_iter(
@@ -450,10 +454,37 @@ class TestSaveMatchToDb:
 
         result = save_match_to_db(make_dto(), repo)
 
-        repo.db.rollback.assert_called_once()
+        repo.db.begin_nested.assert_called_once()
+        repo.db.rollback.assert_not_called()
         assert result is existing_after_race
         # Second flush should succeed
         assert repo.db.flush.call_count == 2
+
+    def test_commit_false_leaves_transaction_for_the_caller(self):
+        repo = make_repo()
+        repo.db.execute.side_effect = self._make_execute_iter(None, None)
+
+        save_match_to_db(make_dto(), repo, commit=False)
+
+        repo.db.commit.assert_not_called()
+
+    def test_global_catalog_match_stays_global_in_tenant_transaction(self):
+        from database.models import JobMatch as RealJobMatch
+
+        repo = make_repo()
+        repo.db.execute.side_effect = self._make_execute_iter(None, None)
+        repo.db.get.return_value = SimpleNamespace(tenant_id=None)
+
+        result = save_match_to_db(
+            make_dto(),
+            repo,
+            tenant_id="tenant-1",
+            commit=False,
+        )
+
+        assert isinstance(result, RealJobMatch)
+        assert result.tenant_id is None
+        repo.db.commit.assert_not_called()
 
     # --- requirements deletion on update ---
 
