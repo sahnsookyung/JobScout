@@ -8,6 +8,7 @@ Usage:
 """
 
 import asyncio
+from contextlib import nullcontext
 import pytest
 import threading
 from types import SimpleNamespace
@@ -15,6 +16,15 @@ from typing import Generator
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 
 from fastapi.testclient import TestClient
+
+
+@pytest.fixture(autouse=True)
+def stub_durable_matching_state():
+    """Consumer tests isolate storage; durable transaction tests cover the adapter."""
+    with patch("services.scorer_matcher.main.record_matching_state", side_effect=lambda task, state: state) as recorder, \
+         patch("services.scorer_matcher.main.read_matching_state", return_value=None), \
+         patch("services.scorer_matcher.main.matching_execution_lock", side_effect=lambda task: nullcontext()):
+        yield recorder
 
 
 @pytest.fixture
@@ -556,13 +566,13 @@ class TestMatcherConsumer:
 
         assert success is False
         assert result["status"] == "failed"
-        assert "Pipeline failed" in result.get("error", "")
+        assert result["error"] == "matching_failed"
         failed_state = mock_set_state.call_args_list[-1].args[1]
         assert failed_state["status"] == "failed"
         assert failed_state["step"] == "initializing"
         assert failed_state["task_type"] == "matching"
         assert failed_state["resume_fingerprint"] == "fp-123"
-        assert failed_state["error"] == "Pipeline failed"
+        assert failed_state["error"] == "matching_failed"
         assert failed_state["stats"] == {}
         assert failed_state["updated_at"]
 

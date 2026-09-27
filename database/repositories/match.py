@@ -12,6 +12,18 @@ from database.models import (
 from database.repositories.base import BaseRepository
 
 logger = logging.getLogger(__name__)
+_TENANT_ID_UNSET = object()
+
+def _tenant_match_scope(tenant_id: Any, *, include_global_matches: bool = True):
+    global_match = and_(
+        JobMatch.tenant_id.is_(None),
+        JobPost.tenant_id.is_(None),
+    )
+    if tenant_id is None:
+        return global_match
+    if not include_global_matches:
+        return JobMatch.tenant_id == tenant_id
+    return or_(JobMatch.tenant_id == tenant_id, global_match)
 
 
 class MatchRepository(BaseRepository):
@@ -35,12 +47,18 @@ class MatchRepository(BaseRepository):
         resume_fingerprint: str,
         load_job_post: bool = False,
         owner_id: Any = SYSTEM_OWNER_ID,
+        *,
+        tenant_id: Any = _TENANT_ID_UNSET,
     ) -> Optional[JobMatch]:
         stmt = select(JobMatch).where(
             JobMatch.owner_id == owner_id,
             JobMatch.job_post_id == job_post_id,
             JobMatch.resume_fingerprint == resume_fingerprint
         )
+        if tenant_id is not _TENANT_ID_UNSET:
+            stmt = stmt.join(JobPost, JobPost.id == JobMatch.job_post_id).where(
+                _tenant_match_scope(tenant_id)
+            )
         if load_job_post:
             stmt = stmt.options(joinedload(JobMatch.job_post))
         return self.db.execute(stmt).scalar_one_or_none()
@@ -264,10 +282,19 @@ class MatchRepository(BaseRepository):
 
         return stmt
 
-    def activate_matches_by_ids(self, match_ids: List[Any]) -> int:
+    def activate_matches_by_ids(
+        self,
+        match_ids: List[Any],
+        *,
+        tenant_id: Any = _TENANT_ID_UNSET,
+    ) -> int:
         if not match_ids:
             return 0
         stmt = select(JobMatch).where(JobMatch.id.in_(match_ids))
+        if tenant_id is not _TENANT_ID_UNSET:
+            stmt = stmt.join(JobPost, JobPost.id == JobMatch.job_post_id).where(
+                _tenant_match_scope(tenant_id)
+            )
         matches = self.db.execute(stmt).scalars().all()
         for match in matches:
             match.status = 'active'
@@ -313,11 +340,17 @@ class MatchRepository(BaseRepository):
         resume_fingerprint: str,
         active_job_ids: List[Any] | set[Any] | frozenset[Any],
         reason: str = "Resume changed",
+        *,
+        tenant_id: Any = _TENANT_ID_UNSET,
     ) -> int:
         stmt = select(JobMatch).where(
             JobMatch.resume_fingerprint == resume_fingerprint,
             JobMatch.status == 'active',
         )
+        if tenant_id is not _TENANT_ID_UNSET:
+            stmt = stmt.join(JobPost, JobPost.id == JobMatch.job_post_id).where(
+                _tenant_match_scope(tenant_id, include_global_matches=False)
+            )
         matches = self.db.execute(stmt).scalars().all()
         keep_ids = {str(job_id) for job_id in active_job_ids}
         matches_to_invalidate = [

@@ -126,4 +126,16 @@ describe('pipelineApi', () => {
             upload_id: 'upload-1',
         });
     });
+
+    it('forwards an AbortSignal for cancellable status polling', async () => {
+        mockGet.mockResolvedValueOnce({ data: { task_id: 'task-2', status: 'running' } });
+        const { pipelineApi } = await import('../pipelineApi');
+        const controller = new AbortController();
+
+        await pipelineApi.getPipelineStatus('task-2', controller.signal);
+
+        expect(mockGet).toHaveBeenCalledWith('/pipeline/status/task-2', {
+            signal: controller.signal,
+        });
+    });
 });

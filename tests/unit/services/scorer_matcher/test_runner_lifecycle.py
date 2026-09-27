@@ -125,7 +125,7 @@ def test_run_matching_pipeline_fails_if_ready_resume_disappears_before_matching(
         result = run_matching_pipeline(ctx)
 
     assert result.success is False
-    assert "Resume not found in database" in result.error
+    assert result.error == "Matching pipeline failed"
 
 
 def test_run_matching_pipeline_fails_if_stored_ready_resume_cannot_be_validated():
@@ -155,7 +155,7 @@ def test_run_matching_pipeline_fails_if_stored_ready_resume_cannot_be_validated(
         result = run_matching_pipeline(ctx)
 
     assert result.success is False
-    assert "Failed to parse stored ready resume" in result.error
+    assert result.error == "Matching pipeline failed"
 
 
 def test_run_matching_pipeline_uses_latest_ready_resume_and_reaches_save_boundary():

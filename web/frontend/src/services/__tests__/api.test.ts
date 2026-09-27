@@ -237,6 +237,21 @@ describe('apiClient', () => {
             expect(getItem).toHaveBeenCalledWith('jobscout_auth');
         });
 
+        it('sends progress polls with the verified tenant header on the status route', () => {
+            setVerifiedTenantId('00000000-0000-4000-8000-000000000204');
+            const mockConfig = {
+                method: 'get',
+                url: '/pipeline/status/task-1',
+                headers: {} as Record<string, string>,
+            };
+
+            const { requestHandler } = getMockHandlers();
+            const result = requestHandler.fulfilled(mockConfig);
+
+            expect(result.headers['X-Tenant-Id']).toBe('00000000-0000-4000-8000-000000000204');
+            expect(result.url).toBe('/pipeline/status/task-1');
+        });
+
         it('should omit csrf headers on mutation requests when the cookie is absent', () => {
             Object.defineProperty(globalThis.document, 'cookie', {
                 value: 'theme=dark',

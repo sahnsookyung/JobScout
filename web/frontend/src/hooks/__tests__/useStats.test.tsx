@@ -284,8 +284,12 @@ describe('usePipeline', () => {
 
     it('isRunning is true when SSE status is running', async () => {
         const { usePipelineEvents } = await import('../usePipelineEvents');
+        const { pipelineApi } = await import('@/services/pipelineApi');
+        (pipelineApi.getActivePipeline as any).mockResolvedValue({
+            data: { task_id: 'pipeline-task', status: 'running' },
+        });
         (usePipelineEvents as any).mockReturnValue({
-            status: { status: 'running', step: 'matching' },
+            status: { task_id: 'pipeline-task', status: 'running', step: 'matching' },
             connectionState: 'connected',
             error: null,
             retry: vi.fn(),
@@ -293,13 +297,18 @@ describe('usePipeline', () => {
 
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
 
+        await waitFor(() => expect(result.current.isLoading).toBe(false));
         expect(result.current.isRunning).toBe(true);
     });
 
     it('isRunning is true when SSE status is pending', async () => {
         const { usePipelineEvents } = await import('../usePipelineEvents');
+        const { pipelineApi } = await import('@/services/pipelineApi');
+        (pipelineApi.getActivePipeline as any).mockResolvedValue({
+            data: { task_id: 'pipeline-task', status: 'pending' },
+        });
         (usePipelineEvents as any).mockReturnValue({
-            status: { status: 'pending', step: 'initializing' },
+            status: { task_id: 'pipeline-task', status: 'pending', step: 'initializing' },
             connectionState: 'connecting',
             error: null,
             retry: vi.fn(),
@@ -307,13 +316,18 @@ describe('usePipeline', () => {
 
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
 
+        await waitFor(() => expect(result.current.isLoading).toBe(false));
         expect(result.current.isRunning).toBe(true);
     });
 
     it('isRunning is false when SSE status is completed', async () => {
         const { usePipelineEvents } = await import('../usePipelineEvents');
+        const { pipelineApi } = await import('@/services/pipelineApi');
+        (pipelineApi.getActivePipeline as any).mockResolvedValue({
+            data: { task_id: 'pipeline-task', status: 'running' },
+        });
         (usePipelineEvents as any).mockReturnValue({
-            status: { status: 'completed', matches_count: 10 },
+            status: { task_id: 'pipeline-task', status: 'completed', matches_count: 10 },
             connectionState: 'connected',
             error: null,
             retry: vi.fn(),
@@ -321,6 +335,7 @@ describe('usePipeline', () => {
 
         const { result } = renderHook(() => usePipeline(), { wrapper: createWrapper() });
 
+        await waitFor(() => expect(result.current.isLoading).toBe(false));
         expect(result.current.isRunning).toBe(false);
     });
 
@@ -425,6 +440,10 @@ describe('usePipeline', () => {
 
     it('invalidates matches and stats on pipeline completion', async () => {
         const { usePipelineEvents } = await import('../usePipelineEvents');
+        const { pipelineApi } = await import('@/services/pipelineApi');
+        (pipelineApi.getActivePipeline as any).mockResolvedValue({
+            data: { task_id: 'pipeline-task', status: 'running' },
+        });
         
         // Start with null status
         (usePipelineEvents as any).mockReturnValue({
@@ -441,7 +460,7 @@ describe('usePipeline', () => {
 
         // Update to completed status
         (usePipelineEvents as any).mockReturnValue({
-            status: { status: 'completed', matches_count: 10 },
+            status: { task_id: 'pipeline-task', status: 'completed', matches_count: 10 },
             connectionState: 'connected',
             error: null,
             retry: vi.fn(),

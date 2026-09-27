@@ -14,6 +14,9 @@ import type { PipelineStats, ProcessingFailure, ProcessingProgress, ProcessingWa
 
 export interface StatusBannerProps {
     status: string;
+    progressConnectionState?: 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'failed';
+    progressError?: string | null;
+    onRetryProgress?: () => void;
     step?: string;
     phase?: string | null;
     progress?: ProcessingProgress | null;
@@ -87,6 +90,9 @@ function emptyStateMessage(stats: PipelineStats | undefined, savedCount: number,
 
 export const StatusBanner: React.FC<StatusBannerProps> = ({
     status,
+    progressConnectionState,
+    progressError,
+    onRetryProgress,
     step,
     phase,
     progress,
@@ -113,7 +119,7 @@ export const StatusBanner: React.FC<StatusBannerProps> = ({
 
     const stepLabel = step ? (STEP_LABELS[step] ?? 'Processing') : 'Starting up';
     const currentPhase = phase ?? (isCompleted ? 'completed' : step ?? 'initializing');
-    const timelineIndex = PHASE_INDEX[currentPhase] ?? (isActive ? 1 : 0);
+    const timelineIndex = PHASE_INDEX[currentPhase] ?? (isActive ? -1 : 0);
     const saved = saved_count ?? numStat(stats, 'matches_saved');
     const selected = matches_count ?? numStat(stats, 'matches_selected');
     const notified = notified_count ?? numStat(stats, 'notifications_sent');
@@ -163,6 +169,28 @@ export const StatusBanner: React.FC<StatusBannerProps> = ({
                 )}
                 {isPersisting && (
                     <p className="mt-1 text-[13px] text-ink-soft">Past the save boundary — finishing safely.</p>
+                )}
+
+                {progressConnectionState === 'reconnecting' && (
+                    <p className="mt-2 text-[13px] text-ink-soft" role="status" aria-live="polite">
+                        {progressError ?? 'Progress updates were interrupted. Retrying…'}
+                    </p>
+                )}
+                {progressConnectionState === 'failed' && (
+                    <div className="mt-2 flex flex-wrap items-center gap-3" role="alert">
+                        <p className="text-[13px] text-warn">
+                            {progressError ?? 'Progress updates are unavailable. The run may still be processing.'}
+                        </p>
+                        {onRetryProgress && (
+                            <button
+                                type="button"
+                                className="text-[13px] font-medium text-accent underline underline-offset-2"
+                                onClick={onRetryProgress}
+                            >
+                                Retry progress updates
+                            </button>
+                        )}
+                    </div>
                 )}
 
                 <div className="mt-4 grid gap-2 sm:grid-cols-7">

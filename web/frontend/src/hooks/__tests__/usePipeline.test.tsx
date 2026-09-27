@@ -19,6 +19,7 @@ vi.mock('@/services/pipelineApi', () => ({
         stopMatching: vi.fn(),
         uploadResume: vi.fn(),
         getResumeStatus: vi.fn(),
+        getPipelineStatus: vi.fn(),
     },
 }));
 
@@ -31,25 +32,6 @@ vi.mock('@/utils/indexedDB', () => ({
 vi.mock('@/utils/fileUtils', () => ({
     computeFileHash: vi.fn().mockResolvedValue('mock-hash-abc123'),
 }));
-
-// Mock EventSource
-class MockEventSource {
-    static readonly CONNECTING = 0;
-    static readonly OPEN = 1;
-    static readonly CLOSED = 2;
-    readonly CONNECTING = 0;
-    readonly OPEN = 1;
-    readonly CLOSED = 2;
-    onopen: (() => void) | null = null;
-    onmessage: ((event: MessageEvent) => void) | null = null;
-    onerror: (() => void) | null = null;
-    constructor(public url: string) {}
-    close(): void {
-        // Mock implementation - required by EventSource interface
-    }
-}
-
-vi.stubGlobal('EventSource', MockEventSource);
 
 const createWrapper = () => {
     const queryClient = new QueryClient({
@@ -77,6 +59,9 @@ describe('usePipeline', () => {
                 message: 'Upload required',
             },
         } as never);
+        vi.mocked(pipelineApi.getPipelineStatus).mockImplementation(
+            () => new Promise(() => {}) as never
+        );
     });
 
     describe('hook initialization', () => {
@@ -521,8 +506,8 @@ describe('usePipeline', () => {
         });
     });
 
-    describe('SSE connection', () => {
-        it('should create EventSource when task_id exists', async () => {
+    describe('progress polling', () => {
+        it('polls the authenticated status endpoint for the active task', async () => {
             vi.mocked(pipelineApi.getActivePipeline).mockResolvedValue({
                 data: { task_id: 'sse-task', status: 'running' },
             } as never);
@@ -531,9 +516,10 @@ describe('usePipeline', () => {
                 wrapper: createWrapper(),
             });
 
-            await waitFor(() => {
-                expect(result.current.connectionState).toBeDefined();
-            });
+            await waitFor(() => expect(pipelineApi.getPipelineStatus).toHaveBeenCalledWith(
+                'sse-task', expect.any(AbortSignal)
+            ));
+            expect(result.current.connectionState).toBe('connecting');
         });
 
         it('should provide retrySSE function', () => {
@@ -542,6 +528,56 @@ describe('usePipeline', () => {
             });
 
             expect(typeof result.current.retrySSE).toBe('function');
+        });
+
+        it('retains a terminal result after the active-task query clears', async () => {
+            vi.mocked(pipelineApi.getActivePipeline)
+                .mockResolvedValueOnce({
+                    data: { task_id: 'finished-task', status: 'running' },
+                } as never)
+                .mockResolvedValue({ data: null } as never);
+            vi.mocked(pipelineApi.getPipelineStatus).mockResolvedValue({
+                data: {
+                    task_id: 'finished-task',
+                    status: 'completed',
+                    saved_count: 8,
+                },
+            } as never);
+
+            const { result } = renderHook(() => usePipeline(), {
+                wrapper: createWrapper(),
+            });
+
+            await waitFor(() => expect(result.current.status).toMatchObject({
+                task_id: 'finished-task',
+                status: 'completed',
+                saved_count: 8,
+            }));
+            await waitFor(() => expect(pipelineApi.getActivePipeline).toHaveBeenCalledTimes(2));
+            expect(result.current.status?.status).toBe('completed');
+            expect(result.current.isRunning).toBe(false);
+        });
+
+        it('shows transport authorization failure without inventing a failed task', async () => {
+            vi.mocked(pipelineApi.getResumeEligibility).mockResolvedValue({
+                data: { can_run: true, status: 'ready', message: 'Resume ready' },
+            } as never);
+            vi.mocked(pipelineApi.runMatching).mockResolvedValue({
+                data: { task_id: 'auth-task' },
+            } as never);
+            vi.mocked(pipelineApi.getPipelineStatus).mockRejectedValue({
+                response: { status: 401 },
+            });
+
+            const { result } = renderHook(() => usePipeline(), {
+                wrapper: createWrapper(),
+            });
+            await act(async () => result.current.runPipeline());
+
+            await waitFor(() => expect(result.current.connectionState).toBe('failed'));
+            expect(result.current.sseError).toContain('session expired');
+            expect(result.current.status).toBeNull();
+            expect(result.current.isRunning).toBe(false);
         });
     });
 

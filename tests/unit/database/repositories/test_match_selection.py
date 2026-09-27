@@ -64,6 +64,7 @@ def test_publish_selection_run_is_idempotent_for_task_id():
         owner_id="user-1",
         resume_fingerprint="fp-1",
         task_id="task-1",
+        tenant_id=None,
     )
     session.add.assert_not_called()
 
@@ -122,7 +123,7 @@ def test_get_latest_current_run_for_owner_can_filter_by_tenant():
     assert repo.get_latest_current_run_for_owner("user-1", tenant_id="tenant-1") is expected
 
     sql = str(session.execute.call_args.args[0])
-    assert "job_post" in sql
+    assert "match_selection_run.tenant_id" in sql
     assert "tenant_id" in sql
 
 
@@ -136,7 +137,9 @@ def test_get_committed_run_for_task_executes_task_scoped_query():
         owner_id="user-1",
         resume_fingerprint="fp-1",
         task_id="task-1",
+        tenant_id="tenant-1",
     ) is expected
+    assert "match_selection_run.tenant_id" in str(session.execute.call_args.args[0])
 
 
 def test_get_items_for_run_returns_ordered_items():
@@ -180,8 +183,8 @@ def test_get_items_for_run_can_filter_by_tenant():
     repo.get_items_for_run("run-1", tier="all", tenant_id="tenant-1")
 
     sql = str(session.execute.call_args.args[0])
-    assert "job_post" in sql
-    assert "tenant_id" in sql
+    assert "match_selection_run" in sql
+    assert "match_selection_run.tenant_id" in sql
 
 
 def test_count_items_for_run_by_tier_groups_rows():

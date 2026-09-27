@@ -9,9 +9,9 @@ Supports both ScoredJobMatch ORM objects and MatchResultDTO data transfer object
 
 import logging
 
-from sqlalchemy import select, delete, func
+from sqlalchemy import and_, select, delete, func, or_
 
-from database.models import JobMatch, JobMatchRequirement, SYSTEM_OWNER_ID
+from database.models import JobMatch, JobMatchRequirement, JobPost, SYSTEM_OWNER_ID
 from core.scorer.models import ScoredJobMatch
 from core.matcher.dto import MatchResultDTO
 from core.utils import _to_native_types
@@ -19,6 +19,15 @@ from core.utils import _to_native_types
 logger = logging.getLogger(__name__)
 
 ScoredMatch = ScoredJobMatch | MatchResultDTO
+
+def _tenant_match_scope(tenant_id):
+    global_match = and_(
+        JobMatch.tenant_id.is_(None),
+        JobPost.tenant_id.is_(None),
+    )
+    if tenant_id is None:
+        return global_match
+    return or_(JobMatch.tenant_id == tenant_id, global_match)
 
 
 def _to_float(value):
@@ -189,11 +198,22 @@ def _apply_match_values(match_record: JobMatch, values) -> None:
     match_record.calculated_at = values['calculated_at']
 
 
-def _find_existing_match(repo, job_id: str, resume_fingerprint: str, owner_id):
-    existing_stmt = select(JobMatch).where(
-        JobMatch.owner_id == owner_id,
-        JobMatch.job_post_id == job_id,
-        JobMatch.resume_fingerprint == resume_fingerprint,
+def _find_existing_match(
+    repo,
+    job_id: str,
+    resume_fingerprint: str,
+    owner_id,
+    tenant_id,
+):
+    existing_stmt = (
+        select(JobMatch)
+        .join(JobPost, JobPost.id == JobMatch.job_post_id)
+        .where(
+            JobMatch.owner_id == owner_id,
+            JobMatch.job_post_id == job_id,
+            JobMatch.resume_fingerprint == resume_fingerprint,
+            _tenant_match_scope(tenant_id),
+        )
     )
     existing = repo.db.execute(existing_stmt).scalar_one_or_none()
     return existing_stmt, existing
@@ -204,17 +224,36 @@ def _resolve_hidden_state(
     job_id: str,
     existing: JobMatch | None,
     owner_id,
+    tenant_id,
 ) -> bool:
     if existing:
         return existing.is_hidden
 
-    hidden_stmt = select(JobMatch).where(
-        JobMatch.owner_id == owner_id,
-        JobMatch.job_post_id == job_id,
-        JobMatch.is_hidden.is_(True),
-    ).limit(1)
+    hidden_stmt = (
+        select(JobMatch)
+        .join(JobPost, JobPost.id == JobMatch.job_post_id)
+        .where(
+            JobMatch.owner_id == owner_id,
+            JobMatch.job_post_id == job_id,
+            JobMatch.is_hidden.is_(True),
+            _tenant_match_scope(tenant_id),
+        )
+        .limit(1)
+    )
     hidden_match = repo.db.execute(hidden_stmt).scalar_one_or_none()
     return bool(hidden_match)
+
+def _match_record_tenant_id(repo, job_id: str, requested_tenant_id, existing):
+    if existing is not None:
+        return existing.tenant_id
+
+    job_post = repo.db.get(JobPost, job_id)
+    if job_post is None:
+        raise ValueError("Job post is unavailable in the current tenant")
+    job_tenant_id = job_post.tenant_id
+    if job_tenant_id is not None and str(job_tenant_id) != str(requested_tenant_id):
+        raise ValueError("Job post does not belong to the current tenant")
+    return job_tenant_id
 
 
 def _create_match_record(
@@ -274,19 +313,31 @@ def _upsert_match_record(
         owner_id=owner_id,
         tenant_id=tenant_id,
     )
-    repo.db.add(match_record)
     return match_record
 
-
-def _flush_match_record(repo, match_record: JobMatch, existing_stmt, job_id: str) -> tuple[JobMatch, bool]:
+def _flush_match_record(
+    repo,
+    match_record: JobMatch,
+    existing_stmt,
+    *,
+    is_new_record: bool,
+) -> tuple[JobMatch, bool]:
     from sqlalchemy.exc import IntegrityError
 
     try:
-        repo.db.flush()
+        if is_new_record:
+            # Keep a conflicting insert local to a savepoint so prior writes
+            # remain rollbackable by the publication's outer transaction.
+            with repo.db.begin_nested():
+                repo.db.add(match_record)
+                repo.db.flush()
+        else:
+            repo.db.flush()
         return match_record, False
     except IntegrityError:
-        repo.db.rollback()
-        logger.warning("Race condition detected for job %s, refetching existing match", job_id)
+        if not is_new_record:
+            raise
+        logger.warning("Concurrent match insert detected; checking tenant-scoped row")
         existing = repo.db.execute(existing_stmt).scalar_one_or_none()
         if not existing:
             raise
@@ -333,6 +384,7 @@ def save_match_to_db(
     *,
     owner_id=SYSTEM_OWNER_ID,
     tenant_id=None,
+    commit: bool = True,
 ) -> JobMatch:
     """
     Save scored match to database.
@@ -350,7 +402,8 @@ def save_match_to_db(
         JobMatch record that was created or updated
     """
     owner_id = owner_id or repo.db.info.get("jobscout.user_id") or SYSTEM_OWNER_ID
-    tenant_id = tenant_id or repo.db.info.get("jobscout.tenant_id")
+    if tenant_id is None:
+        tenant_id = repo.db.info.get("jobscout.tenant_id")
     job_data = _extract_job_data(scored_match)
     job_id = job_data['id']
     job_content_hash = job_data['content_hash']
@@ -361,10 +414,18 @@ def save_match_to_db(
         job_id,
         scored_match.resume_fingerprint,
         owner_id,
+        tenant_id,
     )
     values = _build_match_values(scores, matched_reqs, missing_reqs, job_content_hash)
     values['job_post_id'] = job_id
-    is_hidden = _resolve_hidden_state(repo, job_id, existing, owner_id)
+    is_hidden = _resolve_hidden_state(repo, job_id, existing, owner_id, tenant_id)
+    is_new_record = existing is None or is_stale_replacement
+    record_tenant_id = _match_record_tenant_id(
+        repo,
+        job_id,
+        tenant_id,
+        existing,
+    )
     match_record = _upsert_match_record(
         repo,
         scored_match,
@@ -373,16 +434,16 @@ def save_match_to_db(
         is_hidden,
         is_stale_replacement,
         owner_id=owner_id,
-        tenant_id=tenant_id,
+        tenant_id=record_tenant_id,
     )
     match_record, reused_existing_record = _flush_match_record(
         repo,
         match_record,
         existing_stmt,
-        job_id,
+        is_new_record=is_new_record,
     )
-    should_replace_requirements = not is_stale_replacement and (
-        existing is not None or reused_existing_record
+    should_replace_requirements = reused_existing_record or (
+        existing is not None and not is_stale_replacement
     )
     match_record.status = 'active'
     _apply_match_values(match_record, values)
@@ -391,7 +452,8 @@ def save_match_to_db(
     _delete_existing_requirements(repo, match_record, should_replace_requirements)
     _persist_requirement_matches(repo, match_record, matched_reqs, missing_reqs)
 
-    repo.db.commit()
+    if commit:
+        repo.db.commit()
 
     pref = scores['preference_score']
     logger.info(

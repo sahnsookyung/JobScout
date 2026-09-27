@@ -138,10 +138,11 @@ describe('StatusBanner', () => {
     };
 
     it('renders pending status with initializing copy', () => {
-        render(<StatusBanner status="pending" step="initializing" />);
+        const { container } = render(<StatusBanner status="pending" step="initializing" phase="initializing" />);
         expect(screen.getByText('Active')).toBeInTheDocument();
         expect(screen.getByText('Starting up')).toBeInTheDocument();
         expect(screen.getByText('Starting your match run.')).toBeInTheDocument();
+        expect(container.querySelector('.ring-1')).toBeNull();
     });
 
     it('renders running status copy', () => {
@@ -199,6 +200,30 @@ describe('StatusBanner', () => {
         rerender(<StatusBanner status="persisting" step="saving_results" />);
         expect(screen.getByText('Finishing')).toBeInTheDocument();
         expect(screen.getByText('Past the save boundary — finishing safely.')).toBeInTheDocument();
+    });
+
+    it('shows progress reconnects and provides a retry after transport failure', () => {
+        const retry = vi.fn();
+        const { rerender } = render(
+            <StatusBanner
+                status="running"
+                progressConnectionState="reconnecting"
+                progressError="Progress connection lost. Retrying (1/5)…"
+            />
+        );
+        expect(screen.getByRole('status')).toHaveTextContent('Progress connection lost. Retrying (1/5)…');
+
+        rerender(
+            <StatusBanner
+                status="running"
+                progressConnectionState="failed"
+                progressError="Your session expired. Sign in again to view run progress."
+                onRetryProgress={retry}
+            />
+        );
+        expect(screen.getByRole('alert')).toHaveTextContent('Your session expired. Sign in again to view run progress.');
+        fireEvent.click(screen.getByRole('button', { name: 'Retry progress updates' }));
+        expect(retry).toHaveBeenCalledOnce();
     });
 
     it('shows the current step for running states', () => {

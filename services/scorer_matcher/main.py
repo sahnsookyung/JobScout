@@ -16,7 +16,7 @@ import logging
 import os
 import threading
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
@@ -28,6 +28,7 @@ from core.config_loader import load_config
 from core.app_context import AppContext
 from core.metrics import bind_worker_running
 from core.metrics_router import router as metrics_router
+from core.matching_run_state import matching_execution_lock, matching_failure_code, read_matching_state, record_matching_state
 from core.stream_consumer import StreamConsumerWithCompletion, validate_message
 from core.redis_streams import (
     CHANNEL_MATCHING_DONE,
@@ -266,12 +267,29 @@ def _maybe_enqueue_next_matching_page(
     tenant_id: Optional[str],
     result: Optional[object],
     stats: dict,
+    upload_id: Optional[str] = None,
+    pipeline_run_id: Optional[str] = None,
 ) -> list[dict[str, str]]:
     pending_matching = int(stats.get("jobs_pending_matching") or 0)
     if not resume_fingerprint or pending_matching <= 0:
         return []
     if not result or not getattr(result, "success", False) or getattr(result, "cancelled", False):
         return []
+
+    next_page = max(1, int(current_page)) + 1
+    next_task_id = f"{parent_task_id}-match-page-{next_page}"
+    lock_key = f"matching:page:{parent_task_id}:{next_page}:lock"
+    if getattr(result, "replayed", False) is True:
+        # A replay may observe an already queued continuation; it must not enqueue
+        # another page or claim new progress based on its recomputed inputs.
+        try:
+            existing = get_redis_client().get(lock_key)
+            if existing in {next_task_id, next_task_id.encode()}:
+                return [{"code": "matching_backlog_page_queued",
+                         "pending_matching": str(pending_matching), "next_task_id": next_task_id}]
+        except Exception:
+            logger.warning("Unable to verify replay continuation")
+        return [{"code": "matching_backlog_no_progress", "pending_matching": str(pending_matching)}]
 
     saved_count = int(getattr(result, "saved_count", 0) or 0)
     if saved_count <= 0:
@@ -280,9 +298,6 @@ def _maybe_enqueue_next_matching_page(
             "pending_matching": str(pending_matching),
         }]
 
-    next_page = max(1, int(current_page)) + 1
-    next_task_id = f"{parent_task_id}-match-page-{next_page}"
-    lock_key = f"matching:page:{parent_task_id}:{next_page}:lock"
     try:
         redis_client = get_redis_client()
         if not redis_client.set(
@@ -307,6 +322,10 @@ def _maybe_enqueue_next_matching_page(
             payload["owner_id"] = owner_id
         if tenant_id is not None:
             payload["tenant_id"] = tenant_id
+        if upload_id is not None:
+            payload["resume_upload_id"] = upload_id
+        if pipeline_run_id is not None:
+            payload["pipeline_run_id"] = pipeline_run_id
         enqueue_job(STREAM_MATCHING, payload)
         return [{
             "code": "matching_backlog_page_enqueued",
@@ -359,9 +378,14 @@ class MatcherConsumer(StreamConsumerWithCompletion):
         return "persisting" if step == "saving_results" else "cancellation_requested"
 
     @staticmethod
-    def _write_task_state(task_id: str, state: dict, *, warning_message: str) -> None:
+    def _write_task_state(
+        task_id: str, state: dict, *, warning_message: str, durable: bool = True,
+    ) -> None:
+        state = _serialize_task_state(state)
+        if durable:
+            state = record_matching_state(task_id, state)
         try:
-            set_task_state(task_id, _serialize_task_state(state), ttl=3600)
+            set_task_state(task_id, state, ttl=3600)
         except Exception:
             logger.warning(warning_message, task_id, exc_info=True)
 
@@ -412,7 +436,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                 "notified_count": notified_count,
                 "execution_time": execution_time,
             },
-            "error": result.error if result and (result.cancelled or not result.success) else None,
+            "error": matching_failure_code(last_step) if final_status == "failed" else None,
             **stale_metadata,
         }
 
@@ -432,7 +456,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
             "owner_id": owner_id,
             "upload_id": upload_id,
             "resume_fingerprint": resume_fingerprint,
-            "error": str(error),
+            "error": matching_failure_code(last_step),
             "updated_at": _utc_now_iso(),
             "stats": _job_preparation_stats(resume_fingerprint, owner_id=owner_id),
         }
@@ -474,13 +498,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
 
         last_step = "initializing"
         task_stop_event = threading.Event()
-        initial_stats = _job_preparation_stats(
-            resume_fingerprint,
-            owner_id=owner_id,
-            matching_page=matching_page,
-            matching_page_size=matching_page_size,
-        )
-        backfill_warnings = _maybe_enqueue_preparation_backfill(task_id, initial_stats)
+        backfill_warnings = []
 
         def _update_task_state(step: str) -> None:
             nonlocal last_step
@@ -504,6 +522,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                     "task_id": task_id,
                     "parent_task_id": parent_task_id,
                     "owner_id": owner_id,
+                    "tenant_id": tenant_id,
                     "upload_id": upload_id,
                     "resume_fingerprint": resume_fingerprint,
                     "updated_at": _utc_now_iso(),
@@ -511,83 +530,128 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                     "warnings": backfill_warnings,
                 },
                 warning_message="Failed to write running task state for %s",
+                durable=not bool(msg.get("pipeline_run_id")),
             )
 
         try:
-            _update_task_state(last_step)
-            run_kwargs = {}
-            if owner_id is not None:
-                run_kwargs["owner_id"] = owner_id
-                if task_id is not None:
-                    run_kwargs["task_id"] = task_id
-            if tenant_id is not None:
-                run_kwargs["tenant_id"] = tenant_id
+            async with AsyncExitStack() as execution:
+                if not msg.get("pipeline_run_id"):
+                    await execution.enter_async_context(matching_execution_lock(state_task_id))
+                if not msg.get("pipeline_run_id"):
+                    previous = read_matching_state(state_task_id, owner_id=owner_id, tenant_id=tenant_id)
+                    if previous and previous["status"] in {"completed", "failed", "cancelled"}:
+                        self._write_task_state(
+                            state_task_id, previous, durable=False,
+                            warning_message="Failed to project existing matching outcome for %s",
+                        )
+                        return previous["status"] == "completed", {
+                            "status": previous["status"],
+                            "resume_fingerprint": resume_fingerprint,
+                            "matches_count": int((previous.get("stats") or {}).get("matches_saved") or 0),
+                        }
+                initial_stats = _job_preparation_stats(
+                    resume_fingerprint,
+                    owner_id=owner_id,
+                    matching_page=matching_page,
+                    matching_page_size=matching_page_size,
+                )
+                backfill_warnings = _maybe_enqueue_preparation_backfill(task_id, initial_stats)
+                _update_task_state(last_step)
+                run_kwargs = {}
+                if owner_id is not None:
+                    run_kwargs["owner_id"] = owner_id
+                    if task_id is not None:
+                        run_kwargs["task_id"] = task_id
+                if tenant_id is not None:
+                    run_kwargs["tenant_id"] = tenant_id
 
-            result = await asyncio.to_thread(
-                _run_matching_pipeline_sync,
-                self.ctx,
-                task_stop_event,
-                resume_fingerprint,
-                _update_task_state,
-                **run_kwargs,
-            )
+                matching_work = asyncio.create_task(asyncio.to_thread(
+                    _run_matching_pipeline_sync,
+                    self.ctx,
+                    task_stop_event,
+                    resume_fingerprint,
+                    _update_task_state,
+                    **run_kwargs,
+                ))
+                try:
+                    result = await asyncio.shield(matching_work)
+                except asyncio.CancelledError:
+                    # to_thread cannot stop its thread. Drain it before releasing
+                    # the parent lock, including during worker shutdown.
+                    task_stop_event.set()
+                    await matching_work
+                    raise
 
-            saved_count = result.saved_count if result else 0
-            logger.info(
-                "✅ Matching job done: task_id=%s, matches=%d",
-                task_id, saved_count,
-            )
+                saved_count = result.saved_count if result else 0
+                logger.info(
+                    "✅ Matching job done: task_id=%s, matches=%d",
+                    task_id, saved_count,
+                )
 
-            if result and result.cancelled:
-                final_status = "cancelled"
-            elif result and not result.success:
-                final_status = "failed"
-            else:
-                final_status = "completed"
-            final_stats = _job_preparation_stats(
-                resume_fingerprint,
-                owner_id=owner_id,
-                matching_page=matching_page + 1,
-                matching_page_size=matching_page_size,
-            )
-            matching_page_warnings = _maybe_enqueue_next_matching_page(
-                parent_task_id=parent_task_id,
-                current_page=matching_page,
-                resume_fingerprint=resume_fingerprint,
-                owner_id=owner_id,
-                tenant_id=tenant_id,
-                result=result,
-                stats=final_stats,
-            )
-            terminal_state = self._terminal_task_state(
-                final_status=final_status,
-                last_step=last_step,
-                owner_id=owner_id,
-                upload_id=upload_id,
-                resume_fingerprint=resume_fingerprint,
-                result=result,
-                stats=final_stats,
-                extra_warnings=backfill_warnings + matching_page_warnings,
-            )
-            terminal_state["task_id"] = task_id
-            terminal_state["parent_task_id"] = parent_task_id
-            self._write_task_state(
-                state_task_id,
-                terminal_state,
-                warning_message="Failed to write completed task state for %s",
-            )
+                if result and result.cancelled:
+                    final_status = "cancelled"
+                elif result and not result.success:
+                    final_status = "failed"
+                else:
+                    final_status = "completed"
+                final_stats = _job_preparation_stats(
+                    resume_fingerprint,
+                    owner_id=owner_id,
+                    matching_page=matching_page + 1,
+                    matching_page_size=matching_page_size,
+                )
+                matching_page_warnings = _maybe_enqueue_next_matching_page(
+                    parent_task_id=parent_task_id,
+                    current_page=matching_page,
+                    resume_fingerprint=resume_fingerprint,
+                    owner_id=owner_id,
+                    tenant_id=tenant_id,
+                    result=result,
+                    stats=final_stats,
+                    upload_id=upload_id,
+                    pipeline_run_id=msg.get("pipeline_run_id"),
+                )
+                # The parent stays active until the final page has published.
+                if any(w["code"] in {"matching_backlog_page_enqueued", "matching_backlog_page_queued"}
+                       for w in matching_page_warnings):
+                    final_status = "running"
+                elif any(w["code"] in {"matching_backlog_no_progress", "matching_backlog_enqueue_failed"}
+                         for w in matching_page_warnings):
+                    final_status = "failed"
+                terminal_state = self._terminal_task_state(
+                    final_status=final_status,
+                    last_step=last_step,
+                    owner_id=owner_id,
+                    upload_id=upload_id,
+                    resume_fingerprint=resume_fingerprint,
+                    result=result,
+                    stats=final_stats,
+                    extra_warnings=backfill_warnings + matching_page_warnings,
+                )
+                terminal_state["task_id"] = task_id
+                terminal_state["parent_task_id"] = parent_task_id
+                terminal_state["tenant_id"] = tenant_id
+                self._write_task_state(
+                    state_task_id,
+                    terminal_state,
+                    warning_message="Failed to write completed task state for %s",
+                    durable=not bool(msg.get("pipeline_run_id")),
+                )
 
-            clear_task_cancellation_requested(task_id)
-            if state_task_id != task_id:
-                clear_task_cancellation_requested(state_task_id)
-            success = bool(result and result.success and not result.cancelled) if result else True
-            return success, {
-                "status": final_status,
-                "resume_fingerprint": resume_fingerprint,
-                "matches_count": saved_count,
-            }
+                if final_status != "running":
+                    clear_task_cancellation_requested(task_id)
+                    if state_task_id != task_id:
+                        clear_task_cancellation_requested(state_task_id)
+                success = final_status not in {"failed", "cancelled"}
+                return success, {
+                    # Queue completion describes this page; the parent projection above
+                    # remains running until its backlog is exhausted.
+                    "status": "completed" if final_status == "running" else final_status,
+                    "resume_fingerprint": resume_fingerprint,
+                    "matches_count": saved_count,
+                }
         except Exception as e:
-            logger.exception("❌ Matching failed: task_id=%s, error=%s", task_id, type(e).__name__)
+            logger.error("Matching failed: task_id=%s, error_type=%s", task_id, type(e).__name__)
             failed_state = self._failed_task_state(
                 last_step=last_step,
                 owner_id=owner_id,
@@ -597,15 +661,22 @@ class MatcherConsumer(StreamConsumerWithCompletion):
             )
             failed_state["task_id"] = task_id
             failed_state["parent_task_id"] = parent_task_id
-            self._write_task_state(
-                state_task_id,
-                failed_state,
-                warning_message="Failed to write failed task state for %s",
-            )
+            failed_state["tenant_id"] = tenant_id
+            try:
+                self._write_task_state(
+                    state_task_id,
+                    failed_state,
+                    warning_message="Failed to write failed task state for %s",
+                    durable=not bool(msg.get("pipeline_run_id")),
+                )
+            except Exception:
+                # A database outage must still be visible through the live status API.
+                logger.error("Failed to persist matching outcome for %s", state_task_id)
+                set_task_state(state_task_id, _serialize_task_state(failed_state), ttl=3600)
             clear_task_cancellation_requested(task_id)
             if state_task_id != task_id:
                 clear_task_cancellation_requested(state_task_id)
-            return False, {"status": "failed", "error": str(e)}
+            return False, {"status": "failed", "error": matching_failure_code(last_step)}
 
 
 # ---------------------------------------------------------------------------

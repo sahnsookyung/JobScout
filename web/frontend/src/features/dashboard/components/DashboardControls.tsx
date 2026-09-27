@@ -47,6 +47,9 @@ export const DashboardControls: React.FC<DashboardControlsProps> = ({
         resumeProcessingStep,
         resumeProcessingStatus,
         uploadResume,
+        connectionState,
+        sseError,
+        retrySSE,
     } = usePipeline();
     const { policy } = usePolicy();
     const effectivePolicy = policy ?? POLICY_PRESET_VALUES.balanced;
@@ -107,6 +110,7 @@ export const DashboardControls: React.FC<DashboardControlsProps> = ({
     const showStatusBanner = (
         isRunningStatus || isCancellationRequested || isPersistingStatus
         || isCompletedStatus || isFailedStatus || isCancelledStatus
+        || connectionState === 'reconnecting' || connectionState === 'failed'
     );
 
     return (
@@ -142,7 +146,28 @@ export const DashboardControls: React.FC<DashboardControlsProps> = ({
                     <JobInventoryPanel stats={stats} />
                 </Suspense>
             ) : null}
-            {showStatusBanner && statusData && <StatusBanner {...statusData} />}
+            {showStatusBanner && statusData && (
+                <StatusBanner
+                    {...statusData}
+                    progressConnectionState={connectionState}
+                    progressError={sseError}
+                    onRetryProgress={retrySSE}
+                />
+            )}
+            {!statusData && connectionState === 'failed' && (
+                <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-rule pt-6" role="alert">
+                    <p className="text-[13px] text-warn">
+                        {sseError ?? 'Progress updates are unavailable. The run may still be processing.'}
+                    </p>
+                    <button
+                        type="button"
+                        className="text-[13px] font-medium text-accent underline underline-offset-2"
+                        onClick={retrySSE}
+                    >
+                        Retry progress updates
+                    </button>
+                </div>
+            )}
         </DashboardWrapper>
     );
 };

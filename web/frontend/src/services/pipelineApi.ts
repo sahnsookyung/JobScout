@@ -35,8 +35,12 @@ export const pipelineApi = {
     processJobs: () =>
         apiClient.post<PipelineTaskResponse>('/pipeline/process-jobs'),
 
-    getPipelineStatus: (taskId: string) =>
-        apiClient.get<PipelineStatusResponse>(`/pipeline/status/${taskId}`),
+    getPipelineStatus: (taskId: string, signal?: AbortSignal) => {
+        const url = `/pipeline/status/${taskId}`;
+        return signal
+            ? apiClient.get<PipelineStatusResponse>(url, { signal })
+            : apiClient.get<PipelineStatusResponse>(url);
+    },
 
     getActivePipeline: () =>
         apiClient.get<PipelineStatusResponse | null>('/pipeline/active'),
