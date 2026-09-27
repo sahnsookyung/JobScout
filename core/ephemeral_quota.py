@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from core.llm.budget_policy import admin_budget_exempt
 from core.metrics import record_public_security_event
 from core.redis_streams import get_redis_client
 
@@ -64,6 +65,16 @@ def consume_ephemeral_quota(
     if limit <= 0:
         record_public_security_event("quota_exhausted")
         raise EphemeralQuotaExceeded(f"{operation} is disabled for public testing accounts.")
+
+    # Scheduled analysis can outlive the browser session's Redis exemption.
+    # Verify only the server-installed operation owner, not another tenant member.
+    from database.database import current_database_user_id
+
+    try:
+        if current_database_user_id() == owner_key and admin_budget_exempt():
+            return None
+    except Exception as exc:
+        raise EphemeralQuotaUnavailable("Admin quota identity verification is unavailable.") from exc
 
     quota_key = f"jobscout-cloud:account-quota:{owner_key}:{operation}"
     index_key = f"{USER_QUOTA_INDEX_PREFIX}:{owner_key}"
