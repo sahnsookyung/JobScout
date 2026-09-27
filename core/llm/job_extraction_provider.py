@@ -100,7 +100,7 @@ def build_job_extraction_provider(config: LlmConfig, default_provider: LLMProvid
     ))
     fallback_runtime = runtime_llm_config_from_etl(config).model_copy(update={
         "timeout_seconds": routing.timeout_seconds,
-        "max_output_tokens": routing.max_output_tokens, "retry_max_attempts": 1,
+        "max_output_tokens": routing.fallback_max_output_tokens, "retry_max_attempts": 1,
         "requirements_system_prompt": JOB_EXTRACTION_PROMPT,
     })
     fallback = build_llm_provider(fallback_runtime)

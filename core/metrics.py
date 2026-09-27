@@ -90,6 +90,7 @@ _LLM_JUDGE_ERROR_CATEGORIES = frozenset(
         "invalid_auth",
         "invalid_request",
         "schema_error",
+        "output_truncated",
         "unsupported_model",
         "input_too_large",
         "provider_quota",

@@ -41,6 +41,7 @@ etl:
     extraction_url: "" # Not used for Ollama/OpenAI
     provider: "openai_compatible" # OpenAI-compatible runtime (Ollama, OpenAI, or any compatible endpoint)
     extraction_model: "qwen3:14b"
+    extraction_max_output_tokens: 4096
     extraction_temperature: 0.5  # Temperature for extraction. 0.0 = "deterministic", but the results are not great. Research suggests we need a higher temperature than 0.
     
     # Embedding
@@ -190,8 +191,8 @@ matching:
           api_key_env: "NVIDIA_API_KEY"
           structured_output_mode: "json_schema"
           timeout_seconds: 60
-          max_input_tokens: 262144
-          max_output_tokens: 4096
+          max_input_tokens: 229376
+          # NVIDIA judge defaults to 32768 output tokens; override here to pin another cap.
           requests_per_minute: 40
           rate_limit_max_wait_seconds: 90
           fallback_on_rate_limit: false
@@ -245,7 +246,7 @@ matching:
       structured_output_mode: "json_schema"
       timeout_seconds: 60
       max_input_tokens: 64000
-      max_output_tokens: 16384
+      max_output_tokens: 32768
       requests_per_minute: 40
       rate_limit_max_wait_seconds: 90
       fallback_on_rate_limit: false

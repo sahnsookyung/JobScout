@@ -48,17 +48,6 @@ end
 return {1, 'ok', requests, tokens}
 """
 
-_RESERVE_ADDITIONAL_REQUEST_SCRIPT = """
-local requests = tonumber(redis.call('GET', KEYS[1]) or '0')
-local request_limit = tonumber(ARGV[1])
-if requests + 1 > request_limit then
-  return {0, requests}
-end
-requests = redis.call('INCR', KEYS[1])
-redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
-return {1, requests}
-"""
-
 _RECONCILE_SCRIPT = """
 local current = tonumber(redis.call('GET', KEYS[1]) or '0')
 local reserved = tonumber(ARGV[1])
@@ -91,9 +80,17 @@ class GlobalLlmBudgetReservation:
     reset_at: int
 
 
-_PREPAID_REQUEST_UNITS: ContextVar[int] = ContextVar(
-    "jobscout_global_llm_prepaid_request_units",
-    default=0,
+@dataclass
+class _BudgetOperation:
+    estimated_tokens: int
+    prepaid_reservation: GlobalLlmBudgetReservation
+    current_reservation: Optional[GlobalLlmBudgetReservation] = None
+    attempts: int = 0
+
+
+_ACTIVE_BUDGET_OPERATION: ContextVar[Optional[_BudgetOperation]] = ContextVar(
+    "jobscout_global_llm_budget_operation",
+    default=None,
 )
 _BUDGET_LANE: ContextVar[str] = ContextVar(
     "jobscout_global_llm_budget_lane",
@@ -239,43 +236,41 @@ def reserve_global_llm_budget(
     )
 
 
-def consume_global_llm_request(*, client: Any | None = None) -> None:
+def consume_global_llm_request(
+    *, client: Any | None = None, estimated_tokens: int | None = None
+) -> None:
     """Count one actual provider attempt, including retries and batch chunks."""
     if not global_llm_budget_enabled():
         return
 
-    prepaid = _PREPAID_REQUEST_UNITS.get()
-    if prepaid > 0:
-        _PREPAID_REQUEST_UNITS.set(prepaid - 1)
+    operation = _ACTIVE_BUDGET_OPERATION.get()
+    if operation is not None:
+        if estimated_tokens is not None and (
+            not isinstance(estimated_tokens, int)
+            or isinstance(estimated_tokens, bool)
+            or estimated_tokens <= 0
+        ):
+            raise GlobalLlmBudgetUnavailable("Invalid provider request token estimate.")
+        if operation.attempts == 0:
+            reservation = operation.prepaid_reservation
+            if estimated_tokens is not None and estimated_tokens > reservation.reserved_tokens:
+                raise GlobalLlmBudgetUnavailable(
+                    "Provider request estimate exceeds its prepaid token reservation."
+                )
+        else:
+            # A retry or batch chunk can consume tokens even when the prior
+            # attempt failed without returning usage. Reserve it independently.
+            reservation = reserve_global_llm_budget(
+                estimated_tokens or operation.estimated_tokens,
+                client=client,
+            )
+        operation.current_reservation = reservation
+        operation.attempts += 1
         return
 
-    request_limit = _positive_env("JOBSCOUT_CLOUD_GLOBAL_LLM_REQUESTS_PER_DAY")
-    effective_request_limit = _request_limit_for_current_lane(request_limit)
-    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    requests_key = f"jobscout-cloud:llm-budget:{day}:requests"
-    resolved_client = client or get_redis_client()
-    reset_at = _next_utc_day_timestamp()
-    try:
-        raw = resolved_client.eval(
-            _RESERVE_ADDITIONAL_REQUEST_SCRIPT,
-            1,
-            requests_key,
-            effective_request_limit,
-            _seconds_until_next_utc_day(),
-        )
-    except Exception as exc:
-        raise GlobalLlmBudgetUnavailable("Global LLM budget backend is unavailable.") from exc
-    current_requests = int(raw[1])
-    set_global_llm_budget_usage(
-        "requests",
-        current_requests,
-        request_limit,
-        reset_at=reset_at,
+    raise GlobalLlmBudgetUnavailable(
+        "Provider requests require a BudgetedLLMProvider reservation when the global budget is enabled."
     )
-    if int(raw[0]) != 1:
-        record_public_security_event("global_budget_exhausted")
-        scope = "Background daily" if _BUDGET_LANE.get() == "background" else "Global daily"
-        raise GlobalLlmBudgetExceeded(f"{scope} LLM requests budget exhausted.", reset_at=reset_at)
 
 
 def ensure_global_llm_budget_available(
@@ -335,7 +330,7 @@ def _provider_actual_tokens(provider: LLMProvider) -> int | None:
         parsed = int(value)
     except (TypeError, ValueError):
         return None
-    return parsed if parsed >= 0 else None
+    return parsed if parsed > 0 else None
 
 
 def reconcile_global_llm_budget(
@@ -348,6 +343,13 @@ def reconcile_global_llm_budget(
     actual_tokens = _provider_actual_tokens(provider)
     if actual_tokens is None:
         return
+    _reconcile_reservation_tokens(reservation, actual_tokens)
+
+
+def _reconcile_reservation_tokens(
+    reservation: GlobalLlmBudgetReservation,
+    actual_tokens: int,
+) -> None:
     try:
         adjusted_tokens = reservation.client.eval(
             _RECONCILE_SCRIPT,
@@ -368,9 +370,20 @@ def reconcile_global_llm_budget(
         ) from exc
 
 
-def _estimate_tokens(*values: Any, output_reserve: int = 0) -> int:
-    character_count = sum(len(str(value)) for value in values if value is not None)
-    return max(character_count // 4, 1) + max(output_reserve, 0)
+def reconcile_current_global_llm_request_usage(actual_tokens: int | None) -> None:
+    """Reconcile the current attempt once, when a provider response reports usage."""
+    operation = _ACTIVE_BUDGET_OPERATION.get()
+    if operation is None or operation.current_reservation is None:
+        return
+    try:
+        parsed = int(actual_tokens)
+    except (TypeError, ValueError):
+        return
+    if parsed <= 0:
+        return
+    reservation = operation.current_reservation
+    _reconcile_reservation_tokens(reservation, parsed)
+    operation.current_reservation = None
 
 
 class BudgetedLLMProvider(LLMProvider):
@@ -382,15 +395,35 @@ class BudgetedLLMProvider(LLMProvider):
     def __getattr__(self, name: str) -> Any:
         return getattr(self.provider, name)
 
+    def _estimate_operation_tokens(self, operation: str, *args: Any, **kwargs: Any) -> int:
+        if not global_llm_budget_enabled():
+            return 1
+        estimator = getattr(self.provider, "estimate_budget_tokens", None)
+        if not callable(estimator):
+            raise GlobalLlmBudgetUnavailable(
+                "Global LLM budget requires a provider request token estimate."
+            )
+        estimated = estimator(operation, *args, **kwargs)
+        if not isinstance(estimated, int) or isinstance(estimated, bool):
+            raise GlobalLlmBudgetUnavailable(
+                "Provider returned an invalid global LLM token estimate."
+            )
+        if estimated <= 0:
+            raise GlobalLlmBudgetUnavailable(
+                "Provider returned an invalid global LLM token estimate."
+            )
+        return estimated
+
     def _run_with_budget(self, estimated_tokens: int, operation: Callable[[], Any]) -> Any:
         reservation = reserve_global_llm_budget(estimated_tokens)
-        context_token = _PREPAID_REQUEST_UNITS.set(1 if reservation is not None else 0)
+        budget_operation = (
+            _BudgetOperation(estimated_tokens, reservation) if reservation is not None else None
+        )
+        context_token = _ACTIVE_BUDGET_OPERATION.set(budget_operation)
         try:
-            result = operation()
+            return operation()
         finally:
-            _PREPAID_REQUEST_UNITS.reset(context_token)
-        reconcile_global_llm_budget(reservation, self.provider)
-        return result
+            _ACTIVE_BUDGET_OPERATION.reset(context_token)
 
     def extract_structured_data(
         self,
@@ -399,12 +432,12 @@ class BudgetedLLMProvider(LLMProvider):
         system_prompt: Optional[str] = None,
         user_message: Optional[str] = None,
     ) -> Dict[str, Any]:
-        estimated_tokens = _estimate_tokens(
+        estimated_tokens = self._estimate_operation_tokens(
+            "extract_structured_data",
             text,
             schema_spec,
-            system_prompt,
-            user_message,
-            output_reserve=4096,
+            system_prompt=system_prompt,
+            user_message=user_message,
         )
         return self._run_with_budget(
             estimated_tokens,
@@ -418,24 +451,26 @@ class BudgetedLLMProvider(LLMProvider):
 
     def extract_resume_data(self, text: str) -> Dict[str, Any]:
         return self._run_with_budget(
-            _estimate_tokens(text, output_reserve=4096),
+            self._estimate_operation_tokens("extract_resume_data", text),
             lambda: self.provider.extract_resume_data(text),
         )
 
     def extract_requirements_data(self, text: str) -> Dict[str, Any]:
         return self._run_with_budget(
-            _estimate_tokens(text, output_reserve=4096),
+            self._estimate_operation_tokens("extract_requirements_data", text),
             lambda: self.provider.extract_requirements_data(text),
         )
 
     def generate_embedding(self, text: str) -> List[float]:
         return self._run_with_budget(
-            _estimate_tokens(text),
+            self._estimate_operation_tokens("generate_embedding", text),
             lambda: self.provider.generate_embedding(text),
         )
 
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        if not texts:
+            return []
         return self._run_with_budget(
-            _estimate_tokens(*texts),
+            self._estimate_operation_tokens("generate_embeddings_batch", texts),
             lambda: self.provider.generate_embeddings_batch(texts),
         )

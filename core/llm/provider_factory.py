@@ -48,6 +48,7 @@ def runtime_llm_config_from_etl(config: LlmConfig) -> RuntimeLLMConfig:
         api_secret=config.api_secret,
         headers=config.extraction_headers,
         model=config.extraction_model,
+        max_output_tokens=config.extraction_max_output_tokens,
         temperature=config.extraction_temperature,
         structured_output_mode=config.structured_output_mode,
         embedding_model=config.embedding_model,
@@ -69,6 +70,7 @@ def runtime_llm_config_from_preference(config: PreferenceModelConfig) -> Runtime
         model=config.model,
         temperature=config.temperature,
         timeout_seconds=config.timeout_seconds,
+        max_output_tokens=config.max_output_tokens,
         structured_output_mode=config.structured_output_mode,
         embedding_model=config.embedding_model,
         embedding_dimensions=config.embedding_dimensions,
@@ -89,6 +91,7 @@ def runtime_llm_config_from_fit(config: SemanticFitLlmConfig) -> RuntimeLLMConfi
         model=config.model,
         temperature=config.temperature,
         timeout_seconds=config.timeout_seconds,
+        max_output_tokens=config.max_output_tokens,
     )
 
 
@@ -102,6 +105,7 @@ def runtime_llm_config_from_match_judge(config: LlmJudgeRuntimeConfig) -> Runtim
         model=config.model,
         temperature=config.temperature,
         timeout_seconds=config.timeout_seconds,
+        max_output_tokens=config.max_output_tokens,
         structured_output_mode=config.structured_output_mode,
     )
 
