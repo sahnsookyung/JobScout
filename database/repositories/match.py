@@ -1,7 +1,7 @@
 import logging
 from typing import List, Optional, Any
 from sqlalchemy import String, and_, cast, func, or_, select
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 from database.models import (
     JobMatch,
@@ -125,8 +125,12 @@ class MatchRepository(BaseRepository):
             .join(JobPost, JobPost.id == JobMatch.job_post_id)
             .where(*self._reusable_match_filters(resume_fingerprint, tenant_id=tenant_id))
             .options(
-                joinedload(JobMatch.job_post),
-                joinedload(JobMatch.requirement_matches).joinedload(
+                # Cached scores need no vectors. Load the collection separately
+                # so each requirement does not duplicate the full job payload.
+                joinedload(JobMatch.job_post).defer(
+                    JobPost.summary_embedding, raiseload=True
+                ),
+                selectinload(JobMatch.requirement_matches).raiseload(
                     JobMatchRequirement.requirement
                 ),
             )

@@ -129,11 +129,14 @@ def _job_preparation_stats(
     owner_id: Optional[str] = None,
     matching_page: Optional[int] = None,
     matching_page_size: Optional[int] = None,
+    tenant_id: Optional[str] = None,
 ) -> dict:
     """Return user-safe active job preparation counts for pipeline visibility."""
     try:
         with job_uow() as repo:
             active_filter = JobPost.status == "active"
+            if tenant_id is not None:
+                active_filter = active_filter & (JobPost.tenant_id == tenant_id)
             jobs_seen = repo.db.scalar(
                 select(func.count(JobPost.id)).where(active_filter)
             ) or 0
@@ -166,10 +169,11 @@ def _job_preparation_stats(
             }
             if resume_fingerprint:
                 candidate_preferences = load_candidate_preferences(repo, owner_id)
-                processed_fresh = repo.count_reusable_matches_for_resume(resume_fingerprint)
+                processed_fresh = repo.count_reusable_matches_for_resume(resume_fingerprint, tenant_id=tenant_id)
                 pending_matching = repo.count_pending_matching_jobs(
                     resume_fingerprint,
                     candidate_preferences=candidate_preferences,
+                    tenant_id=tenant_id,
                 )
                 stats.update(
                     {
@@ -291,8 +295,10 @@ def _maybe_enqueue_next_matching_page(
             logger.warning("Unable to verify replay continuation")
         return [{"code": "matching_backlog_no_progress", "pending_matching": str(pending_matching)}]
 
-    saved_count = int(getattr(result, "saved_count", 0) or 0)
-    if saved_count <= 0:
+    processed_count = getattr(result, "backlog_processed_count", None)
+    if not isinstance(processed_count, int):
+        processed_count = int(getattr(result, "saved_count", 0) or 0)
+    if processed_count <= 0:
         return [{
             "code": "matching_backlog_no_progress",
             "pending_matching": str(pending_matching),
@@ -400,6 +406,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
         result: Optional[object],
         stats: Optional[dict] = None,
         extra_warnings: Optional[list[dict[str, str]]] = None,
+        tenant_id: Optional[str] = None,
     ) -> dict:
         matches_count = result.matches_count if result else 0
         saved_count = result.saved_count if result else 0
@@ -407,7 +414,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
         execution_time = result.execution_time if result else 0.0
         stale_metadata = _compute_stale_result_metadata(owner_id, upload_id)
         resolved_stats = {
-            **(stats or _job_preparation_stats(resume_fingerprint, owner_id=owner_id)),
+            **(stats or _job_preparation_stats(resume_fingerprint, owner_id=owner_id, tenant_id=tenant_id)),
             "candidates_considered": matches_count,
             "matches_selected": matches_count,
             "matches_saved": saved_count,
@@ -448,6 +455,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
         upload_id: Optional[str],
         resume_fingerprint: Optional[str],
         error: Exception,
+        tenant_id: Optional[str] = None,
     ) -> dict:
         return {
             "status": "failed",
@@ -458,7 +466,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
             "resume_fingerprint": resume_fingerprint,
             "error": matching_failure_code(last_step),
             "updated_at": _utc_now_iso(),
-            "stats": _job_preparation_stats(resume_fingerprint, owner_id=owner_id),
+            "stats": _job_preparation_stats(resume_fingerprint, owner_id=owner_id, tenant_id=tenant_id),
         }
 
     async def _do_process(self, msg_id: str, msg: dict) -> tuple[bool, dict]:
@@ -508,6 +516,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                 owner_id=owner_id,
                 matching_page=matching_page,
                 matching_page_size=matching_page_size,
+                tenant_id=tenant_id,
             )
             self._write_task_state(
                 state_task_id,
@@ -554,6 +563,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                     owner_id=owner_id,
                     matching_page=matching_page,
                     matching_page_size=matching_page_size,
+                    tenant_id=tenant_id,
                 )
                 backfill_warnings = _maybe_enqueue_preparation_backfill(task_id, initial_stats)
                 _update_task_state(last_step)
@@ -599,6 +609,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                     owner_id=owner_id,
                     matching_page=matching_page + 1,
                     matching_page_size=matching_page_size,
+                    tenant_id=tenant_id,
                 )
                 matching_page_warnings = _maybe_enqueue_next_matching_page(
                     parent_task_id=parent_task_id,
@@ -618,6 +629,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                 elif any(w["code"] in {"matching_backlog_no_progress", "matching_backlog_enqueue_failed"}
                          for w in matching_page_warnings):
                     final_status = "failed"
+                    last_step = "scoring"
                 terminal_state = self._terminal_task_state(
                     final_status=final_status,
                     last_step=last_step,
@@ -627,6 +639,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                     result=result,
                     stats=final_stats,
                     extra_warnings=backfill_warnings + matching_page_warnings,
+                    tenant_id=tenant_id,
                 )
                 terminal_state["task_id"] = task_id
                 terminal_state["parent_task_id"] = parent_task_id
@@ -658,6 +671,7 @@ class MatcherConsumer(StreamConsumerWithCompletion):
                 upload_id=upload_id,
                 resume_fingerprint=resume_fingerprint,
                 error=e,
+                tenant_id=tenant_id,
             )
             failed_state["task_id"] = task_id
             failed_state["parent_task_id"] = parent_task_id

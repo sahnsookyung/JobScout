@@ -116,3 +116,44 @@ async def test_completed_parent_is_reprojected_without_duplicate_matching():
     assert redis.call_args.args[1] == state
     matching.assert_not_called()
     backfill.assert_not_called()
+
+
+@pytest.mark.parametrize("processed,pending,expected", [
+    (0, 29, "matching_backlog_no_progress"),
+    (1, 29, "matching_backlog_page_enqueued"),
+    (0, 0, None),
+])
+def test_cached_writes_do_not_count_as_backlog_progress(processed, pending, expected):
+    with patch("services.scorer_matcher.main.get_redis_client") as redis, \
+         patch("services.scorer_matcher.main.enqueue_job") as enqueue:
+        redis.return_value.set.return_value = True
+        warnings = _maybe_enqueue_next_matching_page(
+            parent_task_id="parent", current_page=1, resume_fingerprint="resume",
+            owner_id="owner", tenant_id="tenant",
+            result=SimpleNamespace(success=True, cancelled=False, saved_count=100,
+                                   backlog_processed_count=processed),
+            stats={"jobs_pending_matching": pending},
+        )
+    assert (warnings[0]["code"] if warnings else None) == expected
+    assert enqueue.call_count == int(expected == "matching_backlog_page_enqueued")
+
+
+def test_preparation_stats_use_retrieval_tenant_for_every_count():
+    from unittest.mock import MagicMock
+    from services.scorer_matcher.main import _job_preparation_stats
+    repo = MagicMock()
+    repo.db.scalar.return_value = 0
+    repo.count_reusable_matches_for_resume.return_value = 12
+    repo.count_pending_matching_jobs.return_value = 0
+    with patch("services.scorer_matcher.main.job_uow") as scope, \
+         patch("services.scorer_matcher.main.load_candidate_preferences", return_value={}):
+        scope.return_value.__enter__.return_value = repo
+        stats = _job_preparation_stats("resume", owner_id="owner", tenant_id="selected-tenant")
+    assert stats["jobs_pending_matching"] == 0 and stats["matching_backlog_complete"]
+    repo.count_reusable_matches_for_resume.assert_called_once_with("resume", tenant_id="selected-tenant")
+    repo.count_pending_matching_jobs.assert_called_once_with("resume", tenant_id="selected-tenant", candidate_preferences={})
+    assert len(repo.db.scalar.call_args_list) == 4
+    for call in repo.db.scalar.call_args_list:
+        statement = call.args[0]
+        assert "job_post.tenant_id =" in str(statement)
+        assert "selected-tenant" in statement.compile().params.values()

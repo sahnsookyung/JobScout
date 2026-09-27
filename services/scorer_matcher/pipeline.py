@@ -57,6 +57,7 @@ class SaveMatchesBatchResult:
     active_job_ids: frozenset[str]
     job_match_ids_by_job_id: dict[str, str]
     replayed: bool = False
+    backlog_processed_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -111,6 +112,7 @@ class MatchingPipelineResult:
     execution_time: float = 0.0
     cancelled: bool = False
     replayed: bool = False
+    backlog_processed_count: int = 0
 
 
 def _resolve_ranking_context(owner_id: object | None = None) -> RankingContext:
@@ -189,6 +191,7 @@ def _success_result(
     execution_time: float,
     *,
     replayed: bool = False,
+    backlog_processed_count: int = 0,
 ) -> MatchingPipelineResult:
     """Build a successful pipeline result."""
     return MatchingPipelineResult(
@@ -198,6 +201,7 @@ def _success_result(
         notified_count=notified_count,
         execution_time=execution_time,
         replayed=replayed,
+        backlog_processed_count=backlog_processed_count,
     )
 
 
@@ -331,6 +335,7 @@ def _finish_pipeline_result(
     pipeline_start_time: float,
     *,
     replayed: bool = False,
+    backlog_processed_count: int = 0,
 ) -> MatchingPipelineResult:
     """Build the final pipeline result after completion logging."""
     execution_time = time.time() - pipeline_start_time
@@ -354,6 +359,7 @@ def _finish_pipeline_result(
         notified_count=notified_count,
         execution_time=execution_time,
         replayed=replayed,
+        backlog_processed_count=backlog_processed_count,
     )
 
 
@@ -480,6 +486,7 @@ def run_matching_pipeline(
             stop_event,
             pipeline_start_time,
             replayed=save_batch_result.replayed,
+            backlog_processed_count=save_batch_result.backlog_processed_count,
         )
 
     except Exception as e:
@@ -1391,7 +1398,7 @@ def _persisted_requirement_to_dto(req) -> RequirementMatchDTO:
         )
     return RequirementMatchDTO(
         requirement=JobRequirementDTO(
-            id=str(req.requirement.id),
+            id=str(req.job_requirement_unit_id),
             req_type=req.req_type,
         ),
         evidence=evidence,
@@ -1577,6 +1584,7 @@ def _save_matches_batch(
 
     tenant_id = _effective_tenant_id(repo, tenant_id)
     saved_count = 0
+    backlog_processed_count = 0
     active_job_ids: set[str] = set()
     job_match_ids_by_job_id: dict[str, str] = {}
     for dto in scored_match_dtos:
@@ -1588,6 +1596,10 @@ def _save_matches_batch(
                 tenant_id=tenant_id,
             )
 
+            # Refreshing cached selection scores is a write, but it does not
+            # consume pending work and must not justify another matching page.
+            if existing is None or existing.job_content_hash != dto.job.content_hash:
+                backlog_processed_count += 1
             if existing and existing.status == 'active':
                 if existing.job_content_hash != dto.job.content_hash:
                     existing.status = 'stale'
@@ -1653,6 +1665,7 @@ def _save_matches_batch(
     return SaveMatchesBatchResult(
         saved_count=saved_count,
         failed_count=0,
+        backlog_processed_count=backlog_processed_count,
         active_job_ids=frozenset(active_job_ids),
         job_match_ids_by_job_id=job_match_ids_by_job_id,
     )
