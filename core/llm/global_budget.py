@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from core.llm.interfaces import LLMProvider
+from core.llm.budget_policy import admin_budget_exempt
 from core.metrics import record_public_security_event, set_global_llm_budget_usage
 from core.redis_streams import get_redis_client
 
@@ -19,10 +20,10 @@ local tokens = tonumber(redis.call('GET', KEYS[2]) or '0')
 local request_limit = tonumber(ARGV[1])
 local token_limit = tonumber(ARGV[2])
 local reserve_tokens = tonumber(ARGV[3])
-if requests + 1 > request_limit then
+if request_limit >= 0 and requests + 1 > request_limit then
   return {0, 'requests', requests, tokens}
 end
-if tokens + reserve_tokens > token_limit then
+if token_limit >= 0 and tokens + reserve_tokens > token_limit then
   return {0, 'tokens', requests, tokens}
 end
 requests = redis.call('INCR', KEYS[1])
@@ -78,6 +79,7 @@ class GlobalLlmBudgetReservation:
     reserved_tokens: int
     token_limit: int
     reset_at: int
+    usage_scope: str = "limited"
 
 
 @dataclass
@@ -196,12 +198,38 @@ def reserve_global_llm_budget(
 ) -> GlobalLlmBudgetReservation | None:
     if not global_llm_budget_enabled():
         return None
+    return _reserve_budget_for_scope(estimated_tokens, client=client, usage_scope=_current_usage_scope())
+
+
+def _current_usage_scope() -> str:
+    if (
+        _BUDGET_LANE.get() == "background"
+        and os.getenv("JOBSCOUT_CLOUD_CATALOG_LLM_BUDGET_EXEMPT", "false").lower() == "true"
+    ):
+        return "catalog"
+    try:
+        return "admin" if admin_budget_exempt() else "limited"
+    except Exception as exc:
+        raise GlobalLlmBudgetUnavailable("AI budget identity verification is unavailable.") from exc
+
+
+def _reserve_budget_for_scope(
+    estimated_tokens: int, *, client: Any | None, usage_scope: str
+) -> GlobalLlmBudgetReservation:
+    """Account exempt work separately without weakening ordinary-user ceilings."""
     request_limit = _positive_env("JOBSCOUT_CLOUD_GLOBAL_LLM_REQUESTS_PER_DAY")
     effective_request_limit = _request_limit_for_current_lane(request_limit)
     token_limit = _positive_env("JOBSCOUT_CLOUD_GLOBAL_LLM_TOKENS_PER_DAY")
     day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    requests_key = f"jobscout-cloud:llm-budget:{day}:requests"
-    tokens_key = f"jobscout-cloud:llm-budget:{day}:tokens"
+    key_prefix = (
+        f"jobscout-cloud:llm-budget:{day}"
+        if usage_scope == "limited"
+        else f"jobscout-cloud:llm-usage:{usage_scope}:{day}"
+    )
+    requests_key = f"{key_prefix}:requests"
+    tokens_key = f"{key_prefix}:tokens"
+    if usage_scope != "limited":
+        effective_request_limit = token_limit = -1
     resolved_client = client or get_redis_client()
     reserved_tokens = max(int(estimated_tokens), 1)
     reset_at = _next_utc_day_timestamp()
@@ -218,7 +246,7 @@ def reserve_global_llm_budget(
         )
     except Exception as exc:
         raise GlobalLlmBudgetUnavailable("Global LLM budget backend is unavailable.") from exc
-    exhausted_bucket = _record_global_llm_capacity_result(
+    exhausted_bucket = None if usage_scope != "limited" else _record_global_llm_capacity_result(
         raw=raw,
         request_limit=request_limit,
         token_limit=token_limit,
@@ -233,6 +261,7 @@ def reserve_global_llm_budget(
         reserved_tokens=reserved_tokens,
         token_limit=token_limit,
         reset_at=reset_at,
+        usage_scope=usage_scope,
     )
 
 
@@ -260,9 +289,10 @@ def consume_global_llm_request(
         else:
             # A retry or batch chunk can consume tokens even when the prior
             # attempt failed without returning usage. Reserve it independently.
-            reservation = reserve_global_llm_budget(
+            reservation = _reserve_budget_for_scope(
                 estimated_tokens or operation.estimated_tokens,
                 client=client,
+                usage_scope=operation.prepaid_reservation.usage_scope,
             )
         operation.current_reservation = reservation
         operation.attempts += 1
@@ -281,6 +311,9 @@ def ensure_global_llm_budget_available(
 ) -> None:
     """Fail closed when an interactive operation cannot fit in today's budget."""
     if not global_llm_budget_enabled():
+        return
+
+    if _current_usage_scope() != "limited":
         return
 
     request_limit = _positive_env("JOBSCOUT_CLOUD_GLOBAL_LLM_REQUESTS_PER_DAY")
@@ -358,12 +391,13 @@ def _reconcile_reservation_tokens(
             reservation.reserved_tokens,
             actual_tokens,
         )
-        set_global_llm_budget_usage(
-            "tokens",
-            int(adjusted_tokens),
-            reservation.token_limit,
-            reset_at=reservation.reset_at,
-        )
+        if reservation.usage_scope == "limited":
+            set_global_llm_budget_usage(
+                "tokens",
+                int(adjusted_tokens),
+                reservation.token_limit,
+                reset_at=reservation.reset_at,
+            )
     except Exception as exc:
         raise GlobalLlmBudgetUnavailable(
             "Global LLM budget reconciliation backend is unavailable."

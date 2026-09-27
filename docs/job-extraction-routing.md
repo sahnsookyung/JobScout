@@ -73,3 +73,24 @@ it is not a guaranteed production capacity tier. See the model's API trial terms
 Rollback: set `JOB_EXTRACTION_NVIDIA_FIRST=false` and recreate application workers
 through the normal gated deployment. This restores the previous ETL provider and
 does not alter jobs, retry timestamps, credentials, or budget counters.
+
+
+### Optional personal-deployment budget exemptions
+
+Daily cloud request/token caps remain enabled for ordinary users. Set
+`JOBSCOUT_CLOUD_ADMIN_LLM_BUDGET_EXEMPT=true` to exempt the current verified,
+active platform administrator whose protected database record matches
+`JOBSCOUT_CLOUD_PLATFORM_ADMIN_EMAIL`. The operation must have the server-installed
+owner context; shared tenant membership and system ownership do not confer this
+exemption. Queued work rechecks the account when executed.
+
+`JOBSCOUT_CLOUD_CATALOG_LLM_BUDGET_EXEMPT=true` separately exempts scheduled job
+extraction and job embedding in the existing background catalog lane. Both options
+default to false. Neither removes provider quotas, rate limits, bounded retries,
+process/concurrency safeguards or per-request model context/output limits.
+
+Exempt attempts, including retries and fallback, are recorded under separate
+`jobscout-cloud:llm-usage:{admin|catalog}:{UTC-date}:{requests|tokens}` Redis keys.
+Known provider token usage replaces the estimate; failed attempts without usage
+retain their reservation. The ordinary 200/20/2,000,000 allowance is never reset or
+consumed by exempt work. Accounting and identity lookup failures fail closed.
