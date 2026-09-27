@@ -21,6 +21,11 @@ _worker_user_id: ContextVar[str | None] = ContextVar("jobscout_worker_user_id", 
 _worker_tenant_id: ContextVar[str | None] = ContextVar("jobscout_worker_tenant_id", default=None)
 
 
+def current_database_user_id() -> str | None:
+    """Return the server-installed request/message owner, never a tenant owner."""
+    return _worker_user_id.get()
+
+
 class ContextSession(Session):
     """Session carrying transaction-scoped identity for PostgreSQL RLS."""
 
