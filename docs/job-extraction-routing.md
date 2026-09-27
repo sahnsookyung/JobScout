@@ -2,8 +2,10 @@
 
 Set `JOB_EXTRACTION_NVIDIA_FIRST=true` to use NVIDIA NIM for job-description
 extraction, with the existing `etl.llm` endpoint (Cerebras on OCI) as fallback.
-The default for standalone JobScout is disabled. Resume extraction, generic
-structured requests, and the existing embedding model and batch API are unchanged.
+The default for standalone JobScout is disabled. Resume parsing and generic
+structured requests keep their existing provider routing, with an explicit 4096
+output-token cap. Job-specific resume tailoring is a separate NVIDIA route with a
+32768 output-token cap. The embedding model and batch API are unchanged.
 
 The personal evaluation deployment uses `nvidia/nemotron-3-super-120b-a12b`,
 JSON Schema output, and disabled reasoning. The job-specific prompt matches the
@@ -16,11 +18,25 @@ loader can use `NVIDIA_API_KEY`; verify that key's model entitlement before enab
 the route. Never assume a working key for another NVIDIA model grants access.
 `NVIDIA_EXTRACTION_MODEL` selects the model without changing judging or resume models.
 
-Each provider makes one attempt, with a 60-second timeout, no local rate-limit
-sleep, and at most 4096 output tokens. `NVIDIA_EXTRACTION_REQUESTS_PER_MINUTE`
-defaults to 10; lower it if the account's limit requires it. Timeout and output
-bounds are configurable through `JOB_EXTRACTION_PROVIDER_TIMEOUT_SECONDS` and
-`JOB_EXTRACTION_MAX_OUTPUT_TOKENS`.
+Each provider makes one attempt, with a 60-second timeout and no local rate-limit
+sleep. NVIDIA extraction allows up to 32768 output tokens; the ETL fallback
+allows 4096. `NVIDIA_EXTRACTION_REQUESTS_PER_MINUTE` defaults to 10; lower it if
+the account's limit requires it. Timeout and output bounds are configurable through
+`JOB_EXTRACTION_PROVIDER_TIMEOUT_SECONDS`, `JOB_EXTRACTION_MAX_OUTPUT_TOKENS`, and
+`JOB_EXTRACTION_FALLBACK_MAX_OUTPUT_TOKENS`. Generic ETL and resume parsing use
+the separate `ETL_LLM_EXTRACTION_MAX_OUTPUT_TOKENS` cap (4096 by default).
+The 32768 NVIDIA ceiling matches the hosted [Nemotron Super API limit](https://docs.api.nvidia.com/nim/reference/nvidia-nemotron-3-super-120b-a12b-infer).
+The smaller fallback default also limits its token-per-minute reservation on
+Cerebras; its [rate limits vary by account tier](https://inference-docs.cerebras.ai/support/rate-limits).
+
+The NVIDIA match judge defaults to 32768 output tokens and 229376 estimated
+input tokens. `NVIDIA_MAX_CONTEXT` is its total context allowance (262144 by
+default); the loader leaves room for the selected output cap and rejects a
+context allowance that leaves no input room. `NVIDIA_MAX_INPUT_TOKENS` can lower
+the judge input allowance independently. These two settings do not alter resume
+tailoring, which defaults to 64000 estimated input tokens and 32768 output tokens.
+Use `RESUME_GENERATION_MAX_INPUT_TOKENS` and
+`RESUME_GENERATION_MAX_OUTPUT_TOKENS` to set that route explicitly.
 
 Timeouts, 429 throttles, 5xx responses, invalid extraction output, and provider
 quota failures can select the next provider. Authentication and configuration
@@ -28,12 +44,20 @@ errors remain visible. A 402 or explicitly daily/insufficient-quota 429 defers
 that provider/model for one hour in Redis, surviving worker restarts. When the
 chain fails, the durable job retry policy owns subsequent retries; the worker
 does not repeat the whole chain three times immediately.
+When a response ends with `finish_reason=length`, it is classified as
+`output_truncated`; incomplete JSON is never persisted as an extraction.
 
-All actual provider attempts still consume the shared request budget. The
-200-request daily ceiling, 20-request interactive reserve, token ceiling and UTC
-reset remain unchanged. Global budget errors propagate with their reset time;
-switching providers never bypasses those limits. Token accounting can include
-conservative reservations for failed calls and is not a monetary bill.
+All actual provider attempts still consume the shared request budget. Each
+attempt reserves its configured output cap plus an estimate for the prompt and
+schema before the request. Reported response usage reconciles the reservation,
+including when JSON parsing fails. Failures with unknown usage retain their
+reservation. The 200-request daily ceiling, 20-request interactive reserve,
+2,000,000-token ceiling and UTC reset remain unchanged. Global budget errors
+propagate with their reset time; switching providers never bypasses those limits.
+Prompt-token estimates are approximate and are not tokenizer-enforced context
+guarantees. When global budgeting is enabled, calls must use the factory's
+`BudgetedLLMProvider`; direct service calls fail closed. Missing or zero reported
+usage retains the reservation. Token accounting is not a monetary bill.
 
 ## Verification and operations
 

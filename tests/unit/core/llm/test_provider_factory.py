@@ -39,6 +39,7 @@ def test_runtime_llm_config_from_etl_maps_embedding_fields():
 
     assert runtime_config.provider == "openai_compatible"
     assert runtime_config.model == "gpt-etl"
+    assert runtime_config.max_output_tokens == 4096
     assert runtime_config.structured_output_mode == "json_object"
     assert runtime_config.embedding_model == "embed-model"
     assert runtime_config.embedding_dimensions == 768
@@ -60,6 +61,7 @@ def test_runtime_llm_config_from_preference_maps_timeout_and_embeddings():
     runtime_config = runtime_llm_config_from_preference(config)
 
     assert runtime_config.model == "gpt-preferences"
+    assert runtime_config.max_output_tokens == 4096
     assert runtime_config.timeout_seconds == 45
     assert runtime_config.embedding_model == "embed-model"
     assert runtime_config.embedding_dimensions == 512
@@ -93,6 +95,7 @@ def test_runtime_llm_config_from_fit_maps_llm_fields():
     assert runtime_config.model == "gpt-fit"
     assert runtime_config.temperature == 0.1
     assert runtime_config.timeout_seconds == 12
+    assert runtime_config.max_output_tokens == 4096
 
 
 def test_runtime_llm_config_from_match_judge_maps_groq_fields():
@@ -113,6 +116,7 @@ def test_runtime_llm_config_from_match_judge_maps_groq_fields():
     assert runtime_config.api_key == "groq-key"
     assert runtime_config.model == "openai/gpt-oss-20b"
     assert runtime_config.timeout_seconds == 18
+    assert runtime_config.max_output_tokens == 4096
     assert runtime_config.structured_output_mode == "auto"
 
 

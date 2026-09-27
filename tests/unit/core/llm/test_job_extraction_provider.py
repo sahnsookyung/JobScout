@@ -163,12 +163,13 @@ def test_nvidia_sampling_reaches_api_without_changing_fallback(monkeypatch):
             with patch.object(service.client.chat.completions, 'create') as create:
                 service._create_chat_completion([{'role': 'user', 'content': 'job'}], None)
                 kwargs = create.call_args.kwargs
-                assert kwargs['max_tokens'] == 4096
                 if service is primary:
+                    assert kwargs['max_tokens'] == 32768
                     assert kwargs['temperature'] == 1.0
                     assert kwargs['top_p'] == 0.95
                     assert kwargs['extra_body']['chat_template_kwargs']['enable_thinking'] is False
                 else:
+                    assert kwargs['max_tokens'] == 4096
                     assert kwargs['temperature'] == 0.2
                     assert 'top_p' not in kwargs
     finally:

@@ -1746,6 +1746,8 @@ class MatchLlmEvaluationService:
             return "llm_judge_invalid_request"
         if category == "schema_error":
             return "llm_judge_invalid_schema_response"
+        if category == "output_truncated":
+            return "llm_judge_output_truncated"
         if category == "unsupported_model":
             return "llm_judge_unsupported_model"
         return "llm_judge_failed"

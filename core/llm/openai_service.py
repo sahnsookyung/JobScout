@@ -23,7 +23,13 @@ from tenacity import (
     wait_exponential,
 )
 from tenacity import RetryCallState
-from core.llm.global_budget import consume_global_llm_request
+from core.llm.errors import LLMOutputTruncatedError
+from core.llm.global_budget import (
+    GlobalLlmBudgetUnavailable,
+    consume_global_llm_request,
+    global_llm_budget_enabled,
+    reconcile_current_global_llm_request_usage,
+)
 from core.llm.interfaces import LLMProvider
 from core.llm.system_prompts import (
     DEFAULT_EXTRACTION_SYSTEM_PROMPT,
@@ -47,6 +53,7 @@ LLM_RATE_LIMIT_WAIT_CAP_SECONDS = max(
     float(os.getenv("LLM_RATE_LIMIT_WAIT_CAP_SECONDS", "30")),
 )
 OPENAI_CLIENT_MAX_RETRIES = max(0, int(os.getenv("OPENAI_CLIENT_MAX_RETRIES", "0")))
+MAX_EMBEDDING_BATCH_SIZE = 32
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +307,9 @@ class OpenAIService(LLMProvider):
         requirements_system_prompt: Optional[str] = None,
     ):
         # Build extraction client
-        client_kwargs = {"max_retries": OPENAI_CLIENT_MAX_RETRIES}
+        # All budgeted retries must pass through our per-attempt accounting.
+        client_retries = 0 if global_llm_budget_enabled() else OPENAI_CLIENT_MAX_RETRIES
+        client_kwargs = {"max_retries": client_retries}
         if timeout_seconds:
             client_kwargs["timeout"] = timeout_seconds
         if api_key:
@@ -317,7 +326,7 @@ class OpenAIService(LLMProvider):
 
         # Build embedding client (separate if different endpoint or headers)
         if embedding_base_url or embedding_api_key or embedding_api_secret or embedding_headers:
-            embedding_client_kwargs = {"max_retries": OPENAI_CLIENT_MAX_RETRIES}
+            embedding_client_kwargs = {"max_retries": client_retries}
             if timeout_seconds:
                 embedding_client_kwargs["timeout"] = timeout_seconds
             if embedding_api_key:
@@ -349,21 +358,65 @@ class OpenAIService(LLMProvider):
     def _record_usage(self, response: Any) -> int | None:
         usage = getattr(response, "usage", None)
         total_tokens = getattr(usage, "total_tokens", None) if usage is not None else None
-        if total_tokens is None and usage is not None:
-            prompt_tokens = getattr(usage, "prompt_tokens", None)
-            completion_tokens = getattr(usage, "completion_tokens", None)
-            if prompt_tokens is not None or completion_tokens is not None:
-                total_tokens = int(prompt_tokens or 0) + int(completion_tokens or 0)
         try:
+            if total_tokens is None and usage is not None:
+                prompt_tokens = getattr(usage, "prompt_tokens", None)
+                completion_tokens = getattr(usage, "completion_tokens", None)
+                if prompt_tokens is not None or completion_tokens is not None:
+                    total_tokens = int(prompt_tokens or 0) + int(completion_tokens or 0)
             parsed = int(total_tokens)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             self.last_usage = None
             return None
-        if parsed < 0:
+        if parsed <= 0:
             self.last_usage = None
             return None
         self.last_usage = {"total_tokens": parsed}
+        reconcile_current_global_llm_request_usage(parsed)
         return parsed
+
+    def estimate_budget_tokens(self, operation: str, *args: Any, **kwargs: Any) -> int:
+        """Estimate the actual prompt plus the complete configured output allowance.
+
+        Character counts are an approximation, not a tokenizer guarantee. Include
+        schema guidance even in auto mode so a format fallback remains covered.
+        """
+        if operation in {"generate_embedding", "generate_embeddings_batch"}:
+            texts = [args[0]] if operation == "generate_embedding" else args[0][:MAX_EMBEDDING_BATCH_SIZE]
+            return max(math.ceil(sum(len(text) for text in texts) / 4), 1)
+        cap = self.max_output_tokens
+        if not isinstance(cap, int) or isinstance(cap, bool) or cap <= 0:
+            raise GlobalLlmBudgetUnavailable("Structured LLM calls require a finite output token cap.")
+        text = args[0]
+        if operation == "extract_resume_data":
+            schema_spec = RESUME_SCHEMA
+            system_prompt = RESUME_EXTRACTION_SYSTEM_PROMPT
+            user_message = f"Extract the structured resume data following the schema.\n\nResume:\n{text}"
+        elif operation == "extract_requirements_data":
+            schema_spec = EXTRACTION_SCHEMA
+            system_prompt = self.requirements_system_prompt or REQUIREMENTS_EXTRACTION_SYSTEM_PROMPT
+            user_message = (
+                f"<JOB_DESCRIPTION>\n{text}\n</JOB_DESCRIPTION>\n\n"
+                "Extract qualification requirements and the job offerings profile."
+            )
+        elif operation == "extract_structured_data":
+            schema_spec = args[1]
+            system_prompt = kwargs.get("system_prompt")
+            user_message = kwargs.get("user_message")
+            if system_prompt is None:
+                system_prompt = DEFAULT_EXTRACTION_SYSTEM_PROMPT
+            if user_message is None:
+                user_message = f"Extract the data into the requested JSON format.\n\nDescription:\n{text}"
+        else:
+            raise ValueError(f"Unsupported budget operation: {operation}")
+        _, _, schema = _unwrap_schema_spec(schema_spec)
+        messages = self._messages_with_schema_guidance(
+            [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_message}],
+            schema,
+        )
+        # Include framing overhead; the actual response usage is reconciled later.
+        prompt_tokens = math.ceil(sum(len(message["content"]) for message in messages) / 4) + 64
+        return prompt_tokens + cap
 
     @_llm_retry()
     def extract_structured_data(
@@ -450,10 +503,17 @@ class OpenAIService(LLMProvider):
 
         try:
             content = response.choices[0].message.content
-            self._record_usage(response)
             data = _parse_structured_json_content(content)
-        except (json.JSONDecodeError, IndexError, AttributeError, ValueError):
-            logger.exception("Failed to parse structured data response")
+        except (json.JSONDecodeError, IndexError, AttributeError, ValueError) as exc:
+            choices = getattr(response, "choices", None)
+            logger.warning(
+                "Invalid structured LLM output: model=%s finish_reason=%s total_tokens=%s error_type=%s json_position=%s",
+                self.extraction_model,
+                getattr(choices[0], "finish_reason", None) if choices else None,
+                self.last_usage.get("total_tokens") if self.last_usage else None,
+                type(exc).__name__,
+                exc.pos if isinstance(exc, json.JSONDecodeError) else None,
+            )
             raise
 
         thought_process = data.get("thought_process", "No reasoning provided.")
@@ -479,13 +539,25 @@ class OpenAIService(LLMProvider):
             kwargs["top_p"] = self.model_config["extraction_top_p"]
         if self.enable_thinking is not None:
             kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": self.enable_thinking}}
+        self.last_usage = None
         consume_global_llm_request()
-        return self.client.chat.completions.create(
+        response = self.client.chat.completions.create(
             model=self.extraction_model,
             messages=messages,
             temperature=self.extraction_temperature,
             **kwargs,
         )
+        self._record_usage(response)
+        choices = getattr(response, "choices", None)
+        if choices and getattr(choices[0], "finish_reason", None) == "length":
+            logger.warning(
+                "Truncated structured LLM output: model=%s finish_reason=length max_tokens=%s total_tokens=%s",
+                self.extraction_model,
+                self.max_output_tokens,
+                self.last_usage.get("total_tokens") if self.last_usage else None,
+            )
+            raise LLMOutputTruncatedError("Provider output reached its token limit (finish_reason=length).")
+        return response
 
     @staticmethod
     def _messages_with_schema_guidance(
@@ -559,6 +631,7 @@ class OpenAIService(LLMProvider):
     def generate_embedding(self, text: str) -> List[float]:
         """Generate embedding vector for text."""
         client = self.embedding_client if self.embedding_client else self.client
+        self.last_usage = None
         consume_global_llm_request()
         response = client.embeddings.create(
             input=text, model=self.embedding_model, dimensions=self.embedding_dimensions
@@ -569,34 +642,35 @@ class OpenAIService(LLMProvider):
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for multiple texts in a single API call.
 
-        Sends texts in chunks of up to 100 to stay within API limits.
+        Sends texts in chunks of up to 32 to stay within API limits.
         Returns embeddings in the same order as the input texts.
         """
         if not texts:
             return []
 
-        _MAX_BATCH = 32
         client = self.embedding_client if self.embedding_client else self.client
         results: List[List[float]] = []
         total_tokens = 0
         usage_available = True
 
-        for i in range(0, len(texts), _MAX_BATCH):
-            chunk = texts[i : i + _MAX_BATCH]
+        for i in range(0, len(texts), MAX_EMBEDDING_BATCH_SIZE):
+            chunk = texts[i : i + MAX_EMBEDDING_BATCH_SIZE]
 
             @_llm_retry()
             def _call(chunk=chunk):
-                consume_global_llm_request()
+                self.last_usage = None
+                consume_global_llm_request(
+                    estimated_tokens=self.estimate_budget_tokens("generate_embeddings_batch", chunk)
+                )
                 return client.embeddings.create(
                     input=chunk, model=self.embedding_model, dimensions=self.embedding_dimensions
                 )
 
             response = _call()
+            chunk_tokens = self._record_usage(response)
             results.extend(
                 _validate_embedding_vector(item.embedding) for item in response.data
             )
-            usage = getattr(response, "usage", None)
-            chunk_tokens = getattr(usage, "total_tokens", None) if usage is not None else None
             if chunk_tokens is None:
                 usage_available = False
             else:

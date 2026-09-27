@@ -21,8 +21,11 @@ GROQ_OPENAI_COMPATIBLE_BASE_URL = "https://api.groq.com/openai/v1"
 CEREBRAS_OPENAI_COMPATIBLE_BASE_URL = "https://api.cerebras.ai/v1"
 NVIDIA_DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 NVIDIA_RESUME_GENERATION_MODEL = "mistralai/mistral-medium-3.5-128b"
-NVIDIA_RESUME_MAX_OUTPUT_TOKENS = 16_384
-NVIDIA_DEFAULT_MAX_INPUT_TOKENS = 262_144
+NVIDIA_MAX_OUTPUT_TOKENS = 32_768
+NVIDIA_RESUME_MAX_OUTPUT_TOKENS = NVIDIA_MAX_OUTPUT_TOKENS
+DEFAULT_LLM_MAX_OUTPUT_TOKENS = 4_096
+NVIDIA_DEFAULT_CONTEXT_WINDOW_TOKENS = 262_144
+NVIDIA_DEFAULT_MAX_INPUT_TOKENS = NVIDIA_DEFAULT_CONTEXT_WINDOW_TOKENS - NVIDIA_MAX_OUTPUT_TOKENS
 NVIDIA_DEFAULT_REQUESTS_PER_MINUTE = 40
 NVIDIA_DEFAULT_RATE_LIMIT_MAX_WAIT_SECONDS = 90
 GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
@@ -100,7 +103,8 @@ class JobExtractionRoutingConfig(BaseModel):
     nvidia_model: str = Field(default="nvidia/nemotron-3-super-120b-a12b", min_length=1, max_length=200)
     nvidia_api_key: Optional[str] = Field(default=None, repr=False, exclude=True)
     timeout_seconds: int = Field(default=60, ge=1, le=120)
-    max_output_tokens: int = Field(default=4096, ge=256, le=4096)
+    max_output_tokens: int = Field(default=NVIDIA_MAX_OUTPUT_TOKENS, ge=256, le=NVIDIA_MAX_OUTPUT_TOKENS)
+    fallback_max_output_tokens: int = Field(default=DEFAULT_LLM_MAX_OUTPUT_TOKENS, ge=256)
     requests_per_minute: int = Field(default=10, ge=1, le=40)
 
 
@@ -111,6 +115,7 @@ class LlmConfig(BaseModel):
     api_secret: Optional[str] = None
     extraction_headers: Optional[Dict[str, str]] = None
     extraction_model: Optional[str] = "gpt-4o-mini"
+    extraction_max_output_tokens: int = Field(default=DEFAULT_LLM_MAX_OUTPUT_TOKENS, ge=1)
     extraction_labels: Optional[List[str]] = None
     structured_output_mode: Optional[Literal["auto", "json_schema", "json_object"]] = None
     embedding_model: str = "text-embedding-3-small"
@@ -133,6 +138,7 @@ class PreferenceModelConfig(BaseModel):
     model: Optional[str] = None
     temperature: float = 0.0
     timeout_seconds: int = 30
+    max_output_tokens: int = Field(default=DEFAULT_LLM_MAX_OUTPUT_TOKENS, ge=1)
     max_input_tokens: int = 2048
     structured_output_mode: Optional[Literal["auto", "json_schema", "json_object"]] = None
     embedding_model: str = "text-embedding-3-small"
@@ -310,6 +316,7 @@ class LlmJudgeProviderRuntimeConfig(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         del __context
+        explicit_max_output_tokens = "max_output_tokens" in self.model_fields_set
         self.name = str(self.name or self.provider).strip().lower() or self.provider
         if self.api_key_env and not str(self.api_key or "").strip():
             self.api_key = os.getenv(str(self.api_key_env).strip()) or None
@@ -318,15 +325,31 @@ class LlmJudgeProviderRuntimeConfig(BaseModel):
                 self.base_url = NVIDIA_OPENAI_COMPATIBLE_BASE_URL
             if not str(self.model or "").strip():
                 self.model = os.getenv("NVIDIA_MODEL") or NVIDIA_DEFAULT_MODEL
-            default_max_input_tokens = (
-                int(self.max_input_tokens)
-                if "max_input_tokens" in self.model_fields_set
-                else NVIDIA_DEFAULT_MAX_INPUT_TOKENS
-            )
-            self.max_input_tokens = _env_positive_int(
-                ("NVIDIA_MAX_CONTEXT", "NVIDIA_MAX_INPUT_TOKENS"),
-                default_max_input_tokens,
-            )
+            if self.max_output_tokens is None:
+                self.max_output_tokens = NVIDIA_MAX_OUTPUT_TOKENS
+            if self.name == "nvidia" and not explicit_max_output_tokens:
+                self.max_output_tokens = _env_positive_int(
+                    ("NVIDIA_MAX_OUTPUT_TOKENS",), self.max_output_tokens
+                )
+            if self.name == "nvidia":
+                default_max_input_tokens = (
+                    int(self.max_input_tokens)
+                    if "max_input_tokens" in self.model_fields_set
+                    else NVIDIA_DEFAULT_MAX_INPUT_TOKENS
+                )
+                requested_max_input_tokens = _env_positive_int(
+                    ("NVIDIA_MAX_INPUT_TOKENS",), default_max_input_tokens
+                )
+                context_window_tokens = _env_positive_int(
+                    ("NVIDIA_MAX_CONTEXT",), NVIDIA_DEFAULT_CONTEXT_WINDOW_TOKENS
+                )
+                available_input_tokens = context_window_tokens - int(self.max_output_tokens)
+                if available_input_tokens <= 0:
+                    raise ValueError(
+                        "NVIDIA_MAX_CONTEXT must exceed NVIDIA judge max_output_tokens "
+                        "to leave room for input"
+                    )
+                self.max_input_tokens = min(requested_max_input_tokens, available_input_tokens)
             default_requests_per_minute = (
                 int(self.requests_per_minute)
                 if "requests_per_minute" in self.model_fields_set
@@ -362,6 +385,8 @@ class LlmJudgeProviderRuntimeConfig(BaseModel):
                 self.model = os.getenv("CEREBRAS_MODEL") or CEREBRAS_DEFAULT_MODEL
             if self.structured_output_mode == "auto":
                 self.structured_output_mode = "json_object"
+        if self.max_output_tokens is None:
+            self.max_output_tokens = DEFAULT_LLM_MAX_OUTPUT_TOKENS
         _validate_llm_judge_provider_base_url(
             provider=self.provider,
             base_url=self.base_url,
@@ -380,6 +405,11 @@ class LlmJudgeProviderRuntimeConfig(BaseModel):
             if self.max_output_tokens <= 0:
                 raise ValueError(
                     f"matching.llm_judge.runtime.providers[{self.name}].max_output_tokens must be positive when set"
+                )
+            if self.provider == "nvidia" and self.max_output_tokens > NVIDIA_MAX_OUTPUT_TOKENS:
+                raise ValueError(
+                    f"matching.llm_judge.runtime.providers[{self.name}].max_output_tokens "
+                    f"must not exceed {NVIDIA_MAX_OUTPUT_TOKENS} for NVIDIA"
                 )
         if self.requests_per_minute is not None:
             self.requests_per_minute = int(self.requests_per_minute)
@@ -428,6 +458,7 @@ class LlmJudgeRuntimeConfig(BaseModel):
     timeout_seconds: int = 60
     structured_output_mode: Literal["auto", "json_schema", "json_object"] = "auto"
     max_input_tokens: int = CEREBRAS_DEFAULT_MAX_INPUT_TOKENS
+    max_output_tokens: int = Field(default=DEFAULT_LLM_MAX_OUTPUT_TOKENS, ge=1)
     providers: List[LlmJudgeProviderRuntimeConfig] = Field(
         default_factory=_default_llm_judge_provider_chain
     )
@@ -672,6 +703,7 @@ class SemanticFitLlmConfig(BaseModel):
     temperature: float = 0.0
     timeout_seconds: int = 20
     max_input_tokens: int = 4000
+    max_output_tokens: int = Field(default=DEFAULT_LLM_MAX_OUTPUT_TOKENS, ge=1)
 
     def model_post_init(self, __context: Any) -> None:
         del __context
@@ -1003,11 +1035,13 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["ETL_EMBEDDING_API_KEY"], ["etl", "llm", "embedding_api_key"]),
     (["ETL_EMBEDDING_API_SECRET"], ["etl", "llm", "embedding_api_secret"]),
     (["ETL_LLM_EXTRACTION_MODEL"], ["etl", "llm", "extraction_model"]),
+    (["ETL_LLM_EXTRACTION_MAX_OUTPUT_TOKENS"], ["etl", "llm", "extraction_max_output_tokens"]),
     (["JOB_EXTRACTION_NVIDIA_FIRST"], ["etl", "llm", "job_routing", "enabled"]),
     (["NVIDIA_EXTRACTION_MODEL"], ["etl", "llm", "job_routing", "nvidia_model"]),
     (["NVIDIA_EXTRACTION_API_KEY", "NVIDIA_API_KEY"], ["etl", "llm", "job_routing", "nvidia_api_key"]),
     (["JOB_EXTRACTION_PROVIDER_TIMEOUT_SECONDS"], ["etl", "llm", "job_routing", "timeout_seconds"]),
     (["JOB_EXTRACTION_MAX_OUTPUT_TOKENS"], ["etl", "llm", "job_routing", "max_output_tokens"]),
+    (["JOB_EXTRACTION_FALLBACK_MAX_OUTPUT_TOKENS"], ["etl", "llm", "job_routing", "fallback_max_output_tokens"]),
     (["NVIDIA_EXTRACTION_REQUESTS_PER_MINUTE"], ["etl", "llm", "job_routing", "requests_per_minute"]),
     (
         ["ETL_LLM_EXTRACTION_STRUCTURED_OUTPUT_MODE", "ETL_LLM_STRUCTURED_OUTPUT_MODE"],
@@ -1119,6 +1153,7 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     ),
     (["RESUME_GENERATION_ENABLED"], ["matching", "resume_generation", "enabled"]),
     (["RESUME_GENERATION_MODEL"], ["matching", "resume_generation", "runtime", "model"]),
+    (["RESUME_GENERATION_MAX_INPUT_TOKENS"], ["matching", "resume_generation", "runtime", "max_input_tokens"]),
     (
         ["RESUME_GENERATION_TIMEOUT_SECONDS"],
         ["matching", "resume_generation", "runtime", "timeout_seconds"],

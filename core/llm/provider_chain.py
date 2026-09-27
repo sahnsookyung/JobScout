@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, List
 
 from core.config_loader import LlmJudgeProviderRuntimeConfig, LlmJudgeRuntimeConfig
 from core.llm.interfaces import LLMProvider
+from core.llm.errors import LLMOutputTruncatedError
 from core.llm.global_budget import GlobalLlmBudgetExceeded, GlobalLlmBudgetUnavailable
 from core.llm.provider_factory import RuntimeLLMConfig, build_llm_provider
 from core.llm.provider_rate_limiter import (
@@ -65,6 +66,8 @@ def _status_code(exc: BaseException) -> int | None:
 
 def classify_llm_provider_error(exc: BaseException) -> str:
     """Map provider exceptions to bounded categories used for fallback decisions."""
+    if isinstance(exc, LLMOutputTruncatedError):
+        return "output_truncated"
     status_code = _status_code(exc)
     message = str(exc).lower()
     class_name = exc.__class__.__name__.lower()
@@ -346,7 +349,10 @@ class LLMProviderChain(LLMProvider):
                         llm_error_is_transient(last_category)
                         or last_category == "input_too_large"
                         or last_category == "provider_quota"
-                        or (last_category == "schema_error" and candidate.fallback_on_invalid_output)
+                        or (
+                            last_category in {"schema_error", "output_truncated"}
+                            and candidate.fallback_on_invalid_output
+                        )
                     )
                     and (last_category != "rate_limit" or candidate.fallback_on_rate_limit)
                 )

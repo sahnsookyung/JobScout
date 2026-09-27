@@ -847,7 +847,7 @@ class TestConfigLoader(unittest.TestCase):
             {
                 "NVIDIA_API_KEY": "nvidia-key",
                 "NVIDIA_MODEL": "nvidia-model",
-                "NVIDIA_MAX_CONTEXT": "12000",
+                "NVIDIA_MAX_CONTEXT": "50000",
                 "NVIDIA_REQUESTS_PER_MINUTE": "37",
                 "NVIDIA_RATE_LIMIT_MAX_WAIT_SECONDS": "12",
                 "NVIDIA_FALLBACK_ON_RATE_LIMIT": "true",
@@ -864,7 +864,8 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(providers[0].base_url, "https://integrate.api.nvidia.com/v1")
         self.assertEqual(providers[0].api_key, "nvidia-key")
         self.assertEqual(providers[0].model, "nvidia-model")
-        self.assertEqual(providers[0].max_input_tokens, 12000)
+        self.assertEqual(providers[0].max_input_tokens, 17232)
+        self.assertEqual(providers[0].max_output_tokens, 32768)
         self.assertEqual(providers[0].requests_per_minute, 37)
         self.assertEqual(providers[0].rate_limit_max_wait_seconds, 12)
         self.assertTrue(providers[0].fallback_on_rate_limit)
@@ -878,7 +879,7 @@ class TestConfigLoader(unittest.TestCase):
         nvidia = config.providers[0]
         self.assertEqual(nvidia.provider, "nvidia")
         self.assertEqual(nvidia.model, "nvidia/nemotron-3-ultra-550b-a55b")
-        self.assertEqual(nvidia.max_input_tokens, 262144)
+        self.assertEqual(nvidia.max_input_tokens, 229376)
         self.assertEqual(nvidia.requests_per_minute, 40)
         self.assertEqual(nvidia.rate_limit_max_wait_seconds, 90)
         self.assertFalse(nvidia.fallback_on_rate_limit)
@@ -890,8 +891,78 @@ class TestConfigLoader(unittest.TestCase):
         providers = config.matching.llm_judge.runtime.providers
         self.assertEqual(
             {provider.name: provider.max_output_tokens for provider in providers},
-            {"nvidia": 4096, "groq": 4096, "cerebras": 4096},
+            {"nvidia": 32768, "groq": 4096, "cerebras": 4096},
         )
+
+    def test_extraction_output_caps_have_separate_env_overrides(self):
+        with patch.dict(os.environ, {
+            "ETL_LLM_EXTRACTION_MAX_OUTPUT_TOKENS": "1024",
+            "JOB_EXTRACTION_MAX_OUTPUT_TOKENS": "16384",
+            "JOB_EXTRACTION_FALLBACK_MAX_OUTPUT_TOKENS": "2048",
+        }, clear=True):
+            config = load_config("config.yaml").etl.llm
+
+        self.assertEqual(config.extraction_max_output_tokens, 1024)
+        self.assertEqual(config.job_routing.max_output_tokens, 16384)
+        self.assertEqual(config.job_routing.fallback_max_output_tokens, 2048)
+
+    def test_nvidia_extraction_output_cap_rejects_more_than_hosted_limit(self):
+        with patch.dict(os.environ, {
+            "JOB_EXTRACTION_MAX_OUTPUT_TOKENS": "32769",
+        }, clear=True):
+            with self.assertRaises(ValidationError):
+                load_config("config.yaml")
+
+    def test_nvidia_judge_context_leaves_output_headroom_without_changing_resume_input(self):
+        with patch.dict(os.environ, {
+            "NVIDIA_MAX_CONTEXT": "262144",
+            "NVIDIA_MAX_INPUT_TOKENS": "262144",
+            "NVIDIA_MAX_OUTPUT_TOKENS": "32768",
+        }, clear=True):
+            config = load_config("config.yaml")
+
+        judge = config.matching.llm_judge.runtime.providers[0]
+        resume = config.matching.resume_generation.runtime
+        self.assertEqual(judge.max_input_tokens, 229376)
+        self.assertEqual(judge.max_output_tokens, 32768)
+        self.assertEqual(resume.max_input_tokens, 64000)
+        self.assertEqual(resume.max_output_tokens, 32768)
+
+    def test_nvidia_judge_context_must_leave_input_room(self):
+        with patch.dict(os.environ, {
+            "NVIDIA_MAX_CONTEXT": "32768",
+        }, clear=True):
+            with self.assertRaisesRegex(ValidationError, "must exceed NVIDIA judge max_output_tokens"):
+                load_config("config.yaml")
+
+    def test_nvidia_judge_explicit_output_cap_is_not_overridden_by_default_env(self):
+        with patch.dict(os.environ, {
+            "NVIDIA_MAX_OUTPUT_TOKENS": "32768",
+        }, clear=True):
+            provider = LlmJudgeProviderRuntimeConfig(
+                name="nvidia", provider="nvidia", max_output_tokens=8192,
+            )
+
+        self.assertEqual(provider.max_output_tokens, 8192)
+        self.assertEqual(provider.max_input_tokens, 229376)
+
+    def test_nvidia_judge_default_output_cap_accepts_env_override(self):
+        with patch.dict(os.environ, {
+            "NVIDIA_MAX_OUTPUT_TOKENS": "8192",
+        }, clear=True):
+            config = load_config("config.yaml")
+
+        judge = config.matching.llm_judge.runtime.providers[0]
+        self.assertEqual(judge.max_output_tokens, 8192)
+
+    def test_resume_generation_input_cap_has_separate_env_override(self):
+        with patch.dict(os.environ, {
+            "NVIDIA_MAX_CONTEXT": "262144",
+            "RESUME_GENERATION_MAX_INPUT_TOKENS": "50000",
+        }, clear=True):
+            config = load_config("config.yaml")
+
+        self.assertEqual(config.matching.resume_generation.runtime.max_input_tokens, 50000)
 
     def test_resume_generation_defaults_to_nvidia_mistral(self):
         with patch.dict(os.environ, {"NVIDIA_API_KEY": "nvidia-key"}, clear=True):
@@ -902,7 +973,8 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(config.runtime.api_key, "nvidia-key")
         self.assertEqual(config.runtime.model, "mistralai/mistral-medium-3.5-128b")
         self.assertEqual(config.runtime.structured_output_mode, "json_schema")
-        self.assertEqual(config.runtime.max_output_tokens, 16_384)
+        self.assertEqual(config.runtime.max_output_tokens, 32_768)
+        self.assertEqual(config.runtime.max_input_tokens, 64_000)
         self.assertEqual(config.prompt_version, "resume_tailoring_v3")
 
     def test_match_llm_judge_runtime_respects_explicit_nvidia_context_cap(self):
