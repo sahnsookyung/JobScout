@@ -39,7 +39,7 @@ web = [
     "fastapi>=0.138.0",
     "uvicorn>=0.40.0",
     "pydantic>=2.12.5",
-    "python-multipart>=0.0.31",
+    "python-multipart>=0.0.32",
     "slowapi>=0.1.10",
     "python-dotenv>=1.2.2",
 ]
