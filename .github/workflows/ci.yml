@@ -13,7 +13,7 @@
 #   Compensating controls: action pinned to immutable commit SHA; uv binary
 #   version also explicitly pinned via the `version:` input.
 #   Exception must be reviewed quarterly (policy §31.3).
-#   Action SHA: 22695119d769bdb6f7032ad67b9bca0ef8c4a174 — verified 2026-03-30
+#   Action SHA: c18668ad3cf93ea998bef934396af7bb5c839dc7 — verified 2026-10-11
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: CI
@@ -57,8 +57,8 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v8.2.0 — verified 2026-06-21
-        uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3
+        # astral-sh/setup-uv v10.2.0 — verified 2026-10-11
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
         with:
           version: "0.11.2"
 
@@ -106,8 +106,8 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v8.2.0 — verified 2026-06-21
-        uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3
+        # astral-sh/setup-uv v10.2.0 — verified 2026-10-11
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
         with:
           version: "0.11.2"
 
@@ -144,8 +144,8 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v8.2.0 — verified 2026-06-21
-        uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3
+        # astral-sh/setup-uv v10.2.0 — verified 2026-10-11
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
         with:
           version: "0.11.2"
 
@@ -182,8 +182,8 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v8.2.0 — verified 2026-06-21
-        uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3
+        # astral-sh/setup-uv v10.2.0 — verified 2026-10-11
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
         with:
           version: "0.11.2"
 
@@ -276,8 +276,8 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v8.2.0 — verified 2026-06-21
-        uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3
+        # astral-sh/setup-uv v10.2.0 — verified 2026-10-11
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
         with:
           version: "0.11.2"
 
@@ -376,8 +376,8 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v8.2.0 — verified 2026-06-21
-        uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3
+        # astral-sh/setup-uv v10.2.0 — verified 2026-10-11
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
         with:
           version: "0.11.2"
 

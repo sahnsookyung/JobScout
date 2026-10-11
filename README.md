@@ -10,7 +10,7 @@ JobScout is an AI-assisted job search workshop. It ingests jobs, preserves the b
 - Stores the fullest available job description with source/completeness metadata so later snippets do not overwrite richer postings.
 - Extracts job requirements and compares them against resume evidence units, skills, projects, and experience.
 - Ranks matches with deterministic scoring, preference filters, hidden/excluded states, and configurable result policies.
-- Runs an optional independent LLM second-pass review against the job description and resume evidence.
+- Runs an optional independent LLM second-pass review on the top-K matches automatically or on an individual match on demand.
 - Shows why each job matched, which requirements are covered, what is missing, and whether an LLM result is current enough to affect ordering.
 - Generates tailored resume drafts from the selected job, the resume profile, and match evidence.
 - Supports notifications, source health checks, local development, and cloud deployment paths.
@@ -35,6 +35,19 @@ Provider management appears first so source configuration and health are visible
 Each result opens into a details modal with deterministic score cards, semantic-fit metadata, requirement coverage, LLM review status, resume draft actions, and the original posting.
 
 ![Match details](docs/assets/readme-match-details.png)
+
+### LLM-Assisted Manual Review
+
+The **Second-pass relevance review** panel helps you inspect a match before deciding whether to apply. The LLM reads the job description and resume evidence independently of the deterministic fit score, then returns a relevance score, confidence, verdict, summary, transferable strengths, gaps, and requirement-level verdicts.
+
+You can run this review in two ways:
+
+1. **Automatically on top-K results.** In **Preferences → LLM second pass**, enable LLM judging and **Auto top-N**, choose **Top N**, and apply the settings. Top N is the review window (K): after matching publishes a selection, the highest-ranked primary matches are queued for review. The default is 5, with a configurable maximum of 10; per-run and daily limits still apply. Current cached reviews are reused.
+2. **On demand for an individual match.** Open **Match details → Second-pass relevance review** and use the sparkle **Generate LLM evaluation** button. This also works for matches outside the automatic top-K window. Use **Regenerate** to replace a cached review, or **Retry** for a retryable failure. The panel updates as the queued review runs; **Refresh** only fetches its latest status.
+
+The highlighted panel below is the LLM review pass. Its score is separate from the deterministic **Fit** score above it. Fresh, successful reviews can affect ordering within the configured Top N window when LLM ordering is enabled; stale reviews remain visible for inspection but are ignored for ordering.
+
+![Match details with the LLM second-pass review highlighted, showing its score, confidence, verdict, transferable strengths, and gaps](docs/assets/readme-llm-review.png)
 
 ### Full Job Descriptions
 
@@ -67,7 +80,7 @@ LLM_AS_A_JUDGE_MODEL=gpt-oss-120b
 LLM_AS_A_JUDGE_BASE_URL=https://api.cerebras.ai/v1
 ```
 
-The runtime configuration lives under `matching.llm_judge` in `config.yaml`. Hosted or OCI deployments must receive the same secret and runtime variables through their environment configuration.
+The runtime configuration lives under `matching.llm_judge` in `config.yaml`. Enable the judge with `MATCH_LLM_JUDGE_ENABLED=true`, configure provider credentials, and run Redis and the LLM evaluation worker for queued reviews. Automatic top-N review is opt-in via the settings described [above](#llm-assisted-manual-review); its default is controlled by `matching.llm_judge.auto_enqueue_enabled`. Hosted or OCI deployments must receive the same secret and runtime variables through their environment configuration.
 
 ## Architecture
 
