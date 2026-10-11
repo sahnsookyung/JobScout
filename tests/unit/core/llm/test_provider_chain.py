@@ -168,6 +168,42 @@ def test_provider_chain_does_not_fallback_after_terminal_auth_failure() -> None:
     assert circuit.failures == []
 
 
+@pytest.mark.parametrize("status_code", [404, 410])
+def test_provider_chain_falls_back_after_unavailable_model(status_code: int) -> None:
+    error = RuntimeError("The model has reached its end of life and is no longer available.")
+    error.status_code = status_code
+    primary = _Provider(error=error)
+    fallback = _Provider(response={"score": 90})
+    circuit = _Circuit()
+    chain = LLMProviderChain(
+        [_candidate("nvidia", primary), _candidate("groq", fallback)],
+        circuit_breaker=circuit,
+    )
+
+    assert chain.extract_structured_data("SAFE PAYLOAD", {}) == {"score": 90}
+    assert primary.calls == 1
+    assert fallback.calls == 1
+    assert chain.last_attempts[0]["error_category"] == "unsupported_model"
+    assert chain.last_attempts[0]["retryable"] is False
+    assert chain.last_success["provider"] == "groq"
+    assert circuit.failures == []
+    assert circuit.successes == [("groq", "groq-model")]
+
+
+def test_provider_chain_retired_model_without_fallback_is_not_retryable() -> None:
+    error = RuntimeError("The model has reached its end of life and is no longer available.")
+    error.status_code = 410
+    primary = _Provider(error=error)
+    chain = LLMProviderChain([_candidate("nvidia", primary)], circuit_breaker=_Circuit())
+
+    with pytest.raises(LLMProviderChainError) as exc_info:
+        chain.extract_structured_data("SAFE PAYLOAD", {})
+
+    assert exc_info.value.error_category == "unsupported_model"
+    assert exc_info.value.retryable is False
+    assert primary.calls == 1
+
+
 def test_provider_chain_does_not_fallback_after_rate_limit_by_default() -> None:
     error = RuntimeError("tokens per minute")
     error.status_code = 429
@@ -322,6 +358,7 @@ def test_provider_chain_skips_entries_without_provider_credentials(monkeypatch) 
         (500, "server error", "server_error"),
         (413, "request too large", "input_too_large"),
         (404, "model not found", "unsupported_model"),
+        (410, "The model has reached its end of life and is no longer available.", "unsupported_model"),
         (400, "bad request", "invalid_request"),
     ],
 )

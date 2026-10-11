@@ -92,7 +92,7 @@ def classify_llm_provider_error(exc: BaseException) -> str:
         return "server_error"
     if status_code in {401, 403} or "invalid api key" in message or "unauthorized" in message:
         return "invalid_auth"
-    if status_code == 404 or "unsupported model" in message or "model not found" in message:
+    if status_code in {404, 410} or "unsupported model" in message or "model not found" in message:
         return "unsupported_model"
     if status_code in {400, 422}:
         return "invalid_request"
@@ -349,6 +349,8 @@ class LLMProviderChain(LLMProvider):
                         llm_error_is_transient(last_category)
                         or last_category == "input_too_large"
                         or last_category == "provider_quota"
+                        # Missing or retired models cannot recover on this provider.
+                        or last_category == "unsupported_model"
                         or (
                             last_category in {"schema_error", "output_truncated"}
                             and candidate.fallback_on_invalid_output
