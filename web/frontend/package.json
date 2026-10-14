@@ -22,7 +22,7 @@
         "clsx": "^2.1.1",
         "lucide-react": "^1.28.0",
         "react": "^19.2.7",
-        "react-dom": "^19.2.7",
+        "react-dom": "^19.3.0",
         "sonner": "^2.0.8",
         "tailwind-merge": "^3.6.0"
     },
@@ -35,7 +35,7 @@
         "@testing-library/user-event": "^14.6.1",
         "@types/node": "^26.6.2",
         "@types/react": "^19.2.17",
-        "@types/react-dom": "^19.0.0",
+        "@types/react-dom": "^19.3.0",
         "@typescript-eslint/eslint-plugin": "^8.62.0",
         "@typescript-eslint/parser": "^8.70.1",
         "@vitejs/plugin-react": "^6.0.5",
