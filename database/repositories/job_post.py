@@ -712,6 +712,9 @@ class JobPostRepository(BaseRepository):
         }
 
         for req in requirements:
+            req_text = req.get('text')
+            if not isinstance(req_text, str) or not req_text.strip():
+                continue
             tags = {
                 'skills': req.get('related_skills', []),
                 'category': req.get('category'),
@@ -721,7 +724,6 @@ class JobPostRepository(BaseRepository):
             raw_req_type = req.get('req_type', 'must_have')
             mapped_req_type = req_type_mapping.get(raw_req_type, 'required')
 
-            req_text = req.get('text', '')
             min_years, years_context = self._extract_years_from_requirement(req_text)
 
             jru = JobRequirementUnit(

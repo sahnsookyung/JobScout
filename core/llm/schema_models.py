@@ -203,6 +203,14 @@ class Profile(BaseModel):
     certifications: List[CertificationItem] = Field(description="Professional certifications")
     languages: List[LanguageItem] = Field(description="Language proficiencies")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _backfill_legacy_contact(cls, value: Any) -> Any:
+        """Load stored profiles predating contact extraction without inventing identity."""
+        if isinstance(value, dict) and "contact" not in value:
+            return {**value, "contact": {}}
+        return value
+
 
 class Extraction(BaseModel):
     """Metadata about the extraction process."""
