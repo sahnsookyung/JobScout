@@ -1,0 +1,1351 @@
+{
+  "version": 1,
+  "label_status": "draft_synthetic_requires_human_adjudication",
+  "description": "Fixed contrast sets; each family expands into en-en, ja-ja, en-ja, ja-en cases. Grade 2 fully satisfies the explicit query, 1 partially relevant, 0 does not satisfy it. This is an embedding component benchmark, not an eligibility or notification benchmark.",
+  "families": [
+    {
+      "id": "python_api",
+      "split": "calibration",
+      "task": "evidence",
+      "slice": "negation",
+      "query": {
+        "en": "Production experience building Python REST APIs.",
+        "ja": "PythonでREST APIを本番開発した経験。"
+      },
+      "candidates": [
+        {
+          "id": "python_api-1",
+          "grade": 2,
+          "text": {
+            "en": "Built and operated Python REST APIs for three years.",
+            "ja": "PythonのREST APIを3年間開発・本番運用した。"
+          },
+          "reason": "Explicit production Python REST API experience."
+        },
+        {
+          "id": "python_api-2",
+          "grade": 1,
+          "text": {
+            "en": "Completed a Python REST API tutorial; no production deployment.",
+            "ja": "PythonのREST API教材を修了。本番導入経験はない。"
+          },
+          "reason": "Tutorial only; production experience is absent."
+        },
+        {
+          "id": "python_api-3",
+          "grade": 0,
+          "text": {
+            "en": "Built Java REST APIs in production; never used Python.",
+            "ja": "JavaのREST APIを本番開発した。Pythonは使用したことがない。"
+          },
+          "reason": "Explicitly excludes the required language."
+        },
+        {
+          "id": "python_api-4",
+          "grade": 0,
+          "text": {
+            "en": "Designed print advertisements for local shops.",
+            "ja": "地元店舗の紙媒体広告をデザインした。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "management",
+      "split": "calibration",
+      "task": "evidence",
+      "slice": "responsibility",
+      "query": {
+        "en": "Managed at least five direct reports, including performance reviews.",
+        "ja": "5人以上の直属部下を管理し、人事評価を担当した経験。"
+      },
+      "candidates": [
+        {
+          "id": "management-1",
+          "grade": 2,
+          "text": {
+            "en": "Managed six direct reports and conducted their performance reviews.",
+            "ja": "直属部下6人を管理し、人事評価を実施した。"
+          },
+          "reason": "Six direct reports and reviews explicitly satisfy both conditions."
+        },
+        {
+          "id": "management-2",
+          "grade": 1,
+          "text": {
+            "en": "Mentored six engineers but had no direct reports or review authority.",
+            "ja": "エンジニア6人を指導したが、直属部下や人事評価権限はなかった。"
+          },
+          "reason": "Mentoring is relevant but is not line management."
+        },
+        {
+          "id": "management-3",
+          "grade": 0,
+          "text": {
+            "en": "Attended performance reviews as an individual contributor.",
+            "ja": "個人貢献者として自分の人事評価面談に参加した。"
+          },
+          "reason": "Being reviewed is not managing others."
+        },
+        {
+          "id": "management-4",
+          "grade": 0,
+          "text": {
+            "en": "Created illustrations for a children’s book.",
+            "ja": "児童書のイラストを制作した。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "aws_years",
+      "split": "calibration",
+      "task": "evidence",
+      "slice": "numeric",
+      "query": {
+        "en": "At least three years operating production AWS infrastructure.",
+        "ja": "AWS本番インフラの運用経験が3年以上あること。"
+      },
+      "candidates": [
+        {
+          "id": "aws_years-1",
+          "grade": 2,
+          "text": {
+            "en": "Operated production AWS infrastructure for four years.",
+            "ja": "AWS本番インフラを4年間運用した。"
+          },
+          "reason": "Four years exceeds three."
+        },
+        {
+          "id": "aws_years-2",
+          "grade": 1,
+          "text": {
+            "en": "Operated production AWS infrastructure for two years.",
+            "ja": "AWS本番インフラを2年間運用した。"
+          },
+          "reason": "Relevant but below the explicit duration."
+        },
+        {
+          "id": "aws_years-3",
+          "grade": 0,
+          "text": {
+            "en": "Studied AWS documentation for four years without operating infrastructure.",
+            "ja": "AWSの資料を4年間学習したが、インフラ運用経験はない。"
+          },
+          "reason": "Study duration is not production operation."
+        },
+        {
+          "id": "aws_years-4",
+          "grade": 0,
+          "text": {
+            "en": "Edited food photography for a magazine.",
+            "ja": "雑誌の料理写真を編集した。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "sql_optimization",
+      "split": "calibration",
+      "task": "evidence",
+      "slice": "paraphrase",
+      "query": {
+        "en": "Experience diagnosing slow SQL queries and optimizing query execution plans.",
+        "ja": "遅いSQLクエリを調査し、実行計画を最適化した経験。"
+      },
+      "candidates": [
+        {
+          "id": "sql_optimization-1",
+          "grade": 2,
+          "text": {
+            "en": "Used EXPLAIN ANALYZE to identify sequential scans, added indexes, and reduced query latency.",
+            "ja": "EXPLAIN ANALYZEで全表走査を特定し、索引追加でクエリ遅延を削減した。"
+          },
+          "reason": "Concrete query-plan analysis and optimization."
+        },
+        {
+          "id": "sql_optimization-2",
+          "grade": 1,
+          "text": {
+            "en": "Wrote SQL SELECT queries for monthly reports.",
+            "ja": "月次レポート用のSQL SELECT文を作成した。"
+          },
+          "reason": "SQL use without optimization evidence."
+        },
+        {
+          "id": "sql_optimization-3",
+          "grade": 0,
+          "text": {
+            "en": "Optimized the wording of survey questions; no database work.",
+            "ja": "アンケート質問の表現を改善した。データベース業務はない。"
+          },
+          "reason": "Question wording is not SQL optimization."
+        },
+        {
+          "id": "sql_optimization-4",
+          "grade": 0,
+          "text": {
+            "en": "Repaired bicycles in a neighborhood store.",
+            "ja": "近所の店で自転車を修理した。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "spark_airflow",
+      "split": "holdout",
+      "task": "evidence",
+      "slice": "negation",
+      "query": {
+        "en": "Production experience building Spark pipelines orchestrated with Airflow.",
+        "ja": "SparkパイプラインをAirflowで制御して本番運用した経験。"
+      },
+      "candidates": [
+        {
+          "id": "spark_airflow-1",
+          "grade": 2,
+          "text": {
+            "en": "Built and operated Spark data pipelines scheduled by Airflow for four years.",
+            "ja": "AirflowでスケジュールするSparkデータパイプラインを4年間開発・本番運用した。"
+          },
+          "reason": "Both required technologies used in production."
+        },
+        {
+          "id": "spark_airflow-2",
+          "grade": 1,
+          "text": {
+            "en": "Built production Spark pipelines; Airflow was handled by another team.",
+            "ja": "Sparkパイプラインを本番開発した。Airflowは別チームが担当した。"
+          },
+          "reason": "Spark experience, but no personal Airflow evidence."
+        },
+        {
+          "id": "spark_airflow-3",
+          "grade": 0,
+          "text": {
+            "en": "Use Python for small scripts but have no Spark or Airflow production experience.",
+            "ja": "Pythonで小さなスクリプトを書くが、SparkやAirflowの本番経験はない。"
+          },
+          "reason": "Explicit denial despite matching keywords."
+        },
+        {
+          "id": "spark_airflow-4",
+          "grade": 0,
+          "text": {
+            "en": "Prepared invoices and maintained office supplies.",
+            "ja": "請求書を作成し、事務用品を管理した。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "kubernetes",
+      "split": "holdout",
+      "task": "evidence",
+      "slice": "negation",
+      "query": {
+        "en": "Hands-on operation of Kubernetes clusters in production.",
+        "ja": "Kubernetesクラスタを自ら本番運用した経験。"
+      },
+      "candidates": [
+        {
+          "id": "kubernetes-1",
+          "grade": 2,
+          "text": {
+            "en": "Operated Kubernetes clusters, upgraded nodes, and resolved production incidents.",
+            "ja": "Kubernetesクラスタを運用し、ノード更新と本番障害対応を行った。"
+          },
+          "reason": "Direct hands-on operations."
+        },
+        {
+          "id": "kubernetes-2",
+          "grade": 1,
+          "text": {
+            "en": "Deployed a local Kubernetes cluster for a personal demo.",
+            "ja": "個人デモのためローカルにKubernetesクラスタを構築した。"
+          },
+          "reason": "Hands-on but not production."
+        },
+        {
+          "id": "kubernetes-3",
+          "grade": 0,
+          "text": {
+            "en": "Our company uses Kubernetes, but my role never involved operating it.",
+            "ja": "会社ではKubernetesを使用しているが、自分は運用に関わっていない。"
+          },
+          "reason": "Employer capability is not personal experience."
+        },
+        {
+          "id": "kubernetes-4",
+          "grade": 0,
+          "text": {
+            "en": "Translated travel brochures for tourists.",
+            "ja": "観光客向け旅行パンフレットを翻訳した。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "jlpt",
+      "split": "holdout",
+      "task": "evidence",
+      "slice": "numeric",
+      "query": {
+        "en": "A passed JLPT N2 or N1 certification.",
+        "ja": "JLPT N2またはN1に合格していること。"
+      },
+      "candidates": [
+        {
+          "id": "jlpt-1",
+          "grade": 2,
+          "text": {
+            "en": "Passed JLPT N2 in July and use Japanese at work.",
+            "ja": "7月にJLPT N2に合格し、職場で日本語を使用している。"
+          },
+          "reason": "N2 passed."
+        },
+        {
+          "id": "jlpt-2",
+          "grade": 1,
+          "text": {
+            "en": "Passed JLPT N3 and am preparing for N2.",
+            "ja": "JLPT N3に合格し、N2の受験準備をしている。"
+          },
+          "reason": "N3 and preparation do not establish N2."
+        },
+        {
+          "id": "jlpt-3",
+          "grade": 0,
+          "text": {
+            "en": "Translate JLPT N2 course advertisements; have never taken the exam.",
+            "ja": "JLPT N2講座の広告を翻訳しているが、試験は受けたことがない。"
+          },
+          "reason": "Exam keywords without certification."
+        },
+        {
+          "id": "jlpt-4",
+          "grade": 0,
+          "text": {
+            "en": "Maintain refrigeration equipment in warehouses.",
+            "ja": "倉庫の冷蔵設備を保守している。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "react_years",
+      "split": "holdout",
+      "task": "evidence",
+      "slice": "numeric",
+      "query": {
+        "en": "At least five years of professional React development.",
+        "ja": "Reactを用いた業務開発経験が5年以上あること。"
+      },
+      "candidates": [
+        {
+          "id": "react_years-1",
+          "grade": 2,
+          "text": {
+            "en": "Developed React applications professionally for six years.",
+            "ja": "Reactアプリケーションの業務開発を6年間行った。"
+          },
+          "reason": "Six professional years satisfies five."
+        },
+        {
+          "id": "react_years-2",
+          "grade": 1,
+          "text": {
+            "en": "Developed React applications professionally for four years.",
+            "ja": "Reactアプリケーションの業務開発を4年間行った。"
+          },
+          "reason": "Four years does not meet five."
+        },
+        {
+          "id": "react_years-3",
+          "grade": 0,
+          "text": {
+            "en": "Have six years in recruiting React developers, without coding experience.",
+            "ja": "React開発者の採用を6年間担当したが、コーディング経験はない。"
+          },
+          "reason": "Recruitment is not software development."
+        },
+        {
+          "id": "react_years-4",
+          "grade": 0,
+          "text": {
+            "en": "Conducted wildlife population surveys.",
+            "ja": "野生動物の個体数調査を行った。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "oncall",
+      "split": "holdout",
+      "task": "evidence",
+      "slice": "responsibility",
+      "query": {
+        "en": "Personally led on-call response to production outages.",
+        "ja": "本番障害のオンコール対応を自ら主導した経験。"
+      },
+      "candidates": [
+        {
+          "id": "oncall-1",
+          "grade": 2,
+          "text": {
+            "en": "Led on-call incident response, coordinated mitigation, and wrote postmortems.",
+            "ja": "オンコール障害対応を主導し、復旧調整と事後分析を担当した。"
+          },
+          "reason": "Direct incident leadership."
+        },
+        {
+          "id": "oncall-2",
+          "grade": 1,
+          "text": {
+            "en": "Observed the on-call team during training; did not lead incidents.",
+            "ja": "研修でオンコールチームを見学したが、障害対応を主導していない。"
+          },
+          "reason": "Observation only."
+        },
+        {
+          "id": "oncall-3",
+          "grade": 0,
+          "text": {
+            "en": "Scheduled interviews for on-call engineers; no operational responsibilities.",
+            "ja": "オンコールエンジニアの採用面接を調整した。運用責任はなかった。"
+          },
+          "reason": "Administrative support is not incident response."
+        },
+        {
+          "id": "oncall-4",
+          "grade": 0,
+          "text": {
+            "en": "Designed packaging for cosmetic products.",
+            "ja": "化粧品のパッケージをデザインした。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "terraform",
+      "split": "holdout",
+      "task": "evidence",
+      "slice": "paraphrase",
+      "query": {
+        "en": "Managed infrastructure as code with Terraform.",
+        "ja": "Terraformを用いてコードでインフラを管理した経験。"
+      },
+      "candidates": [
+        {
+          "id": "terraform-1",
+          "grade": 2,
+          "text": {
+            "en": "Authored HCL modules, reviewed terraform plans, and applied versioned infrastructure changes.",
+            "ja": "HCLモジュールを作成し、terraform planをレビューして、版管理したインフラ変更を適用した。"
+          },
+          "reason": "Concrete Terraform workflow without copying the query."
+        },
+        {
+          "id": "terraform-2",
+          "grade": 1,
+          "text": {
+            "en": "Provisioned cloud resources manually through the AWS console.",
+            "ja": "AWSコンソールからクラウドリソースを手動作成した。"
+          },
+          "reason": "Related infrastructure work without Terraform."
+        },
+        {
+          "id": "terraform-3",
+          "grade": 0,
+          "text": {
+            "en": "Wrote a product comparison mentioning Terraform but never used it.",
+            "ja": "Terraformに言及する製品比較記事を書いたが、使用経験はない。"
+          },
+          "reason": "Mentioning the tool does not establish use."
+        },
+        {
+          "id": "terraform-4",
+          "grade": 0,
+          "text": {
+            "en": "Coached a school basketball team.",
+            "ja": "学校のバスケットボールチームを指導した。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "sql_not_nosql",
+      "split": "holdout",
+      "task": "evidence",
+      "slice": "adjacent_skill",
+      "query": {
+        "en": "Designed relational schemas and transactions in PostgreSQL.",
+        "ja": "PostgreSQLでリレーショナルスキーマとトランザクションを設計した経験。"
+      },
+      "candidates": [
+        {
+          "id": "sql_not_nosql-1",
+          "grade": 2,
+          "text": {
+            "en": "Designed PostgreSQL relational schemas, foreign keys, and ACID transactions.",
+            "ja": "PostgreSQLのリレーショナルスキーマ、外部キー、ACIDトランザクションを設計した。"
+          },
+          "reason": "Both specified PostgreSQL responsibilities."
+        },
+        {
+          "id": "sql_not_nosql-2",
+          "grade": 1,
+          "text": {
+            "en": "Queried PostgreSQL reports but did not design schemas or transactions.",
+            "ja": "PostgreSQLでレポートを照会したが、スキーマやトランザクション設計はしていない。"
+          },
+          "reason": "Relevant exposure with missing responsibility."
+        },
+        {
+          "id": "sql_not_nosql-3",
+          "grade": 0,
+          "text": {
+            "en": "Designed MongoDB document collections; never worked with PostgreSQL.",
+            "ja": "MongoDBのドキュメントコレクションを設計した。PostgreSQL経験はない。"
+          },
+          "reason": "Adjacent database type explicitly lacks PostgreSQL."
+        },
+        {
+          "id": "sql_not_nosql-4",
+          "grade": 0,
+          "text": {
+            "en": "Directed a community theater production.",
+            "ja": "地域劇団の公演を演出した。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "java_not_javascript",
+      "split": "holdout",
+      "task": "evidence",
+      "slice": "adjacent_skill",
+      "query": {
+        "en": "Backend development using Java and Spring Boot.",
+        "ja": "JavaとSpring Bootを用いたバックエンド開発経験。"
+      },
+      "candidates": [
+        {
+          "id": "java_not_javascript-1",
+          "grade": 2,
+          "text": {
+            "en": "Built backend services with Java and Spring Boot.",
+            "ja": "JavaとSpring Bootでバックエンドサービスを構築した。"
+          },
+          "reason": "Both requested technologies."
+        },
+        {
+          "id": "java_not_javascript-2",
+          "grade": 1,
+          "text": {
+            "en": "Built Java command-line tools, without Spring Boot experience.",
+            "ja": "Javaのコマンドラインツールを開発した。Spring Boot経験はない。"
+          },
+          "reason": "Only one requested technology."
+        },
+        {
+          "id": "java_not_javascript-3",
+          "grade": 0,
+          "text": {
+            "en": "Built JavaScript services with Node.js; no Java or Spring Boot experience.",
+            "ja": "JavaScriptとNode.jsでサービスを開発した。JavaやSpring Boot経験はない。"
+          },
+          "reason": "Similar names, different technologies."
+        },
+        {
+          "id": "java_not_javascript-4",
+          "grade": 0,
+          "text": {
+            "en": "Managed irrigation for a vegetable farm.",
+            "ja": "野菜農場の灌漑を管理した。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "security",
+      "split": "holdout",
+      "task": "evidence",
+      "slice": "ownership",
+      "query": {
+        "en": "Personally remediated vulnerabilities found by penetration testing.",
+        "ja": "侵入テストで発見された脆弱性を自ら修正した経験。"
+      },
+      "candidates": [
+        {
+          "id": "security-1",
+          "grade": 2,
+          "text": {
+            "en": "Fixed SQL injection and authorization flaws identified during penetration tests.",
+            "ja": "侵入テストで判明したSQLインジェクションと認可の欠陥を修正した。"
+          },
+          "reason": "Concrete remediation performed personally."
+        },
+        {
+          "id": "security-2",
+          "grade": 1,
+          "text": {
+            "en": "Read penetration-test reports and assigned fixes to developers; did not implement fixes.",
+            "ja": "侵入テスト報告を読み開発者に修正を割り当てたが、自分では修正していない。"
+          },
+          "reason": "Coordination without personal remediation."
+        },
+        {
+          "id": "security-3",
+          "grade": 0,
+          "text": {
+            "en": "Sold penetration-testing subscriptions and managed renewals.",
+            "ja": "侵入テストサービスの契約販売と更新管理を担当した。"
+          },
+          "reason": "Sales is not remediation."
+        },
+        {
+          "id": "security-4",
+          "grade": 0,
+          "text": {
+            "en": "Restored historical oil paintings.",
+            "ja": "歴史的な油絵を修復した。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "ml_deployment",
+      "split": "holdout",
+      "task": "evidence",
+      "slice": "production",
+      "query": {
+        "en": "Deployed machine-learning models to serve real-time production predictions.",
+        "ja": "機械学習モデルを導入し、本番でリアルタイム予測を提供した経験。"
+      },
+      "candidates": [
+        {
+          "id": "ml_deployment-1",
+          "grade": 2,
+          "text": {
+            "en": "Deployed trained models behind prediction APIs, monitored latency, and handled live traffic.",
+            "ja": "学習済みモデルを予測APIとして導入し、遅延監視と実トラフィック処理を行った。"
+          },
+          "reason": "Serving live traffic establishes production deployment."
+        },
+        {
+          "id": "ml_deployment-2",
+          "grade": 1,
+          "text": {
+            "en": "Trained models in a notebook and evaluated them on a static test dataset.",
+            "ja": "ノートブックでモデルを学習し、固定テストデータで評価した。"
+          },
+          "reason": "Training and offline evaluation only."
+        },
+        {
+          "id": "ml_deployment-3",
+          "grade": 0,
+          "text": {
+            "en": "Presented slides about real-time machine learning but never built or deployed models.",
+            "ja": "リアルタイム機械学習のスライドを発表したが、モデル開発や導入経験はない。"
+          },
+          "reason": "Discussion without implementation."
+        },
+        {
+          "id": "ml_deployment-4",
+          "grade": 0,
+          "text": {
+            "en": "Maintained attendance records at a sports club.",
+            "ja": "スポーツクラブの出席記録を管理した。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "optional_skill",
+      "split": "holdout",
+      "task": "evidence",
+      "slice": "optional_vs_required",
+      "query": {
+        "en": "Production Python service development is required; Rust is optional. Find evidence satisfying the required skill.",
+        "ja": "Pythonサービスの本番開発経験は必須、Rustは歓迎。必須スキルを満たす実績を探す。"
+      },
+      "candidates": [
+        {
+          "id": "optional_skill-1",
+          "grade": 2,
+          "text": {
+            "en": "Built Python services for four years; have not used Rust.",
+            "ja": "Pythonサービスを4年間開発した。Rustは使用していない。"
+          },
+          "reason": "Required Python satisfied; optional Rust absence does not disqualify."
+        },
+        {
+          "id": "optional_skill-2",
+          "grade": 1,
+          "text": {
+            "en": "Completed introductory Python exercises and plan to learn Rust.",
+            "ja": "Pythonの入門演習を修了し、Rustを学ぶ予定である。"
+          },
+          "reason": "Limited Python evidence; no practical service experience."
+        },
+        {
+          "id": "optional_skill-3",
+          "grade": 0,
+          "text": {
+            "en": "Built Rust services for four years; have never used Python.",
+            "ja": "Rustサービスを4年間開発した。Pythonは使用したことがない。"
+          },
+          "reason": "Optional skill cannot replace required Python."
+        },
+        {
+          "id": "optional_skill-4",
+          "grade": 0,
+          "text": {
+            "en": "Organized hotel events and managed guest lists.",
+            "ja": "ホテルの催事と招待客名簿を管理した。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "distractor_tail",
+      "split": "holdout",
+      "task": "evidence",
+      "slice": "distractor_context",
+      "query": {
+        "en": "Hands-on experience implementing OAuth 2.0 authorization flows.",
+        "ja": "OAuth 2.0認可フローを自ら実装した経験。"
+      },
+      "candidates": [
+        {
+          "id": "distractor_tail-1",
+          "grade": 2,
+          "text": {
+            "en": "Worked on meetings, documentation, release checklists, accessibility reviews, and dashboard layouts. Also implemented OAuth 2.0 authorization-code flows with PKCE in a production application.",
+            "ja": "会議、文書、リリース確認、アクセシビリティ確認、画面配置を担当した。加えて、本番アプリにPKCEを使うOAuth 2.0認可コードフローを実装した。"
+          },
+          "reason": "Relevant evidence is at the end amid unrelated duties."
+        },
+        {
+          "id": "distractor_tail-2",
+          "grade": 1,
+          "text": {
+            "en": "Implemented password login and session cookies; have not implemented OAuth 2.0.",
+            "ja": "パスワードログインとセッションクッキーを実装した。OAuth 2.0は実装していない。"
+          },
+          "reason": "Adjacent authentication work only."
+        },
+        {
+          "id": "distractor_tail-3",
+          "grade": 0,
+          "text": {
+            "en": "OAuth 2.0, authorization code, PKCE: these appeared in the roadmap, but my work covered meetings, documentation, release checklists, accessibility reviews, and dashboard layouts only.",
+            "ja": "OAuth 2.0、認可コード、PKCEはロードマップにあったが、自分の担当は会議、文書、リリース確認、アクセシビリティ確認、画面配置だけだった。"
+          },
+          "reason": "Matching keywords describe plans, not performed work."
+        },
+        {
+          "id": "distractor_tail-4",
+          "grade": 0,
+          "text": {
+            "en": "Baked pastries for a neighborhood cafe.",
+            "ja": "近所のカフェで焼き菓子を作った。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "no_mobile",
+      "split": "calibration",
+      "task": "evidence",
+      "slice": "no_match",
+      "query": {
+        "en": "Published a native iOS application written in Swift.",
+        "ja": "Swiftで書いたネイティブiOSアプリを公開した経験。"
+      },
+      "candidates": [
+        {
+          "id": "no_mobile-1",
+          "grade": 0,
+          "text": {
+            "en": "Built Android applications in Kotlin; no iOS work.",
+            "ja": "KotlinでAndroidアプリを開発した。iOS業務はない。"
+          },
+          "reason": "Wrong platform and language."
+        },
+        {
+          "id": "no_mobile-2",
+          "grade": 0,
+          "text": {
+            "en": "Read about publishing Swift iOS applications; never built one.",
+            "ja": "SwiftのiOSアプリ公開について読んだが、開発したことはない。"
+          },
+          "reason": "Reading is not publishing."
+        },
+        {
+          "id": "no_mobile-3",
+          "grade": 0,
+          "text": {
+            "en": "Designed mobile app icons without writing code.",
+            "ja": "コードを書かずにモバイルアプリのアイコンをデザインした。"
+          },
+          "reason": "Design only."
+        },
+        {
+          "id": "no_mobile-4",
+          "grade": 0,
+          "text": {
+            "en": "Coordinated warehouse shipments.",
+            "ja": "倉庫の出荷を調整した。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "no_license",
+      "split": "calibration",
+      "task": "evidence",
+      "slice": "no_match",
+      "query": {
+        "en": "Holds an active registered nurse license.",
+        "ja": "有効な看護師免許を保有していること。"
+      },
+      "candidates": [
+        {
+          "id": "no_license-1",
+          "grade": 0,
+          "text": {
+            "en": "Recruit registered nurses but do not hold a nursing license.",
+            "ja": "看護師の採用を担当しているが、看護師免許はない。"
+          },
+          "reason": "Explicitly not licensed."
+        },
+        {
+          "id": "no_license-2",
+          "grade": 0,
+          "text": {
+            "en": "Studying nursing and have not yet qualified.",
+            "ja": "看護を勉強中で、まだ資格を取得していない。"
+          },
+          "reason": "Not qualified yet."
+        },
+        {
+          "id": "no_license-3",
+          "grade": 0,
+          "text": {
+            "en": "Developed scheduling software for nurses.",
+            "ja": "看護師の勤務表ソフトウェアを開発した。"
+          },
+          "reason": "Software work does not imply licensure."
+        },
+        {
+          "id": "no_license-4",
+          "grade": 0,
+          "text": {
+            "en": "Repair musical instruments.",
+            "ja": "楽器を修理している。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "no_cuda",
+      "split": "holdout",
+      "task": "evidence",
+      "slice": "no_match",
+      "query": {
+        "en": "Implemented custom CUDA kernels in C++.",
+        "ja": "C++で独自のCUDAカーネルを実装した経験。"
+      },
+      "candidates": [
+        {
+          "id": "no_cuda-1",
+          "grade": 0,
+          "text": {
+            "en": "Used PyTorch on CUDA GPUs but never wrote custom kernels.",
+            "ja": "CUDA GPU上でPyTorchを使ったが、独自カーネルは書いていない。"
+          },
+          "reason": "GPU use is not kernel implementation."
+        },
+        {
+          "id": "no_cuda-2",
+          "grade": 0,
+          "text": {
+            "en": "Wrote C++ desktop applications without CUDA.",
+            "ja": "CUDAを使わずC++デスクトップアプリを開発した。"
+          },
+          "reason": "C++ without CUDA."
+        },
+        {
+          "id": "no_cuda-3",
+          "grade": 0,
+          "text": {
+            "en": "Managed purchases of CUDA-compatible graphics cards.",
+            "ja": "CUDA対応グラフィックカードの購入を管理した。"
+          },
+          "reason": "Procurement only."
+        },
+        {
+          "id": "no_cuda-4",
+          "grade": 0,
+          "text": {
+            "en": "Produced radio interviews.",
+            "ja": "ラジオのインタビュー番組を制作した。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "no_cert",
+      "split": "holdout",
+      "task": "evidence",
+      "slice": "no_match",
+      "query": {
+        "en": "Holds a current AWS Solutions Architect Professional certification.",
+        "ja": "有効なAWS Solutions Architect Professional資格を保有していること。"
+      },
+      "candidates": [
+        {
+          "id": "no_cert-1",
+          "grade": 0,
+          "text": {
+            "en": "Hold AWS Solutions Architect Associate, not Professional.",
+            "ja": "AWS Solutions Architect Associateを保有しているが、Professionalはない。"
+          },
+          "reason": "Wrong certification level."
+        },
+        {
+          "id": "no_cert-2",
+          "grade": 0,
+          "text": {
+            "en": "Preparing for the AWS Solutions Architect Professional exam; have not passed.",
+            "ja": "AWS Solutions Architect Professionalを受験準備中で、まだ合格していない。"
+          },
+          "reason": "Preparation is not certification."
+        },
+        {
+          "id": "no_cert-3",
+          "grade": 0,
+          "text": {
+            "en": "My AWS Solutions Architect Professional certification expired two years ago.",
+            "ja": "AWS Solutions Architect Professional資格は2年前に失効した。"
+          },
+          "reason": "Expired, not current."
+        },
+        {
+          "id": "no_cert-4",
+          "grade": 0,
+          "text": {
+            "en": "Design interiors for restaurants.",
+            "ja": "飲食店の内装を設計している。"
+          },
+          "reason": "Unrelated work."
+        }
+      ]
+    },
+    {
+      "id": "job_backend",
+      "split": "calibration",
+      "task": "retrieval",
+      "slice": "role_vs_keyword",
+      "query": {
+        "en": "Python backend engineer seeking REST API and database development.",
+        "ja": "REST APIとデータベース開発を希望するPythonバックエンドエンジニア。"
+      },
+      "candidates": [
+        {
+          "id": "job_backend-1",
+          "grade": 2,
+          "text": {
+            "en": "Backend engineer: build Python REST APIs and PostgreSQL data services.",
+            "ja": "バックエンドエンジニア。PythonのREST APIとPostgreSQLデータサービスを開発。"
+          },
+          "reason": "Direct role and stack match."
+        },
+        {
+          "id": "job_backend-2",
+          "grade": 1,
+          "text": {
+            "en": "Backend engineer: build Java REST APIs and relational data services.",
+            "ja": "バックエンドエンジニア。JavaのREST APIとリレーショナルデータサービスを開発。"
+          },
+          "reason": "Related role, different main language."
+        },
+        {
+          "id": "job_backend-3",
+          "grade": 0,
+          "text": {
+            "en": "Technical recruiter: hire Python backend engineers; no software development duties.",
+            "ja": "技術採用担当。Pythonバックエンドエンジニアを採用する。ソフトウェア開発業務はない。"
+          },
+          "reason": "Hiring the role is not doing it."
+        },
+        {
+          "id": "job_backend-4",
+          "grade": 0,
+          "text": {
+            "en": "Pastry chef: prepare desserts for a hotel.",
+            "ja": "パティシエ。ホテルのデザートを作る。"
+          },
+          "reason": "Unrelated role."
+        }
+      ]
+    },
+    {
+      "id": "job_design",
+      "split": "calibration",
+      "task": "retrieval",
+      "slice": "role_vs_keyword",
+      "query": {
+        "en": "Product designer seeking user research, prototyping, and usability testing.",
+        "ja": "ユーザー調査、試作、ユーザビリティテストを希望するプロダクトデザイナー。"
+      },
+      "candidates": [
+        {
+          "id": "job_design-1",
+          "grade": 2,
+          "text": {
+            "en": "Product designer: conduct user interviews, prototype interfaces, and test usability.",
+            "ja": "プロダクトデザイナー。ユーザー面談、画面試作、操作性テストを担当。"
+          },
+          "reason": "All core design responsibilities."
+        },
+        {
+          "id": "job_design-2",
+          "grade": 1,
+          "text": {
+            "en": "Graphic designer: create brand illustrations and marketing materials.",
+            "ja": "グラフィックデザイナー。ブランドのイラストと販促資料を制作。"
+          },
+          "reason": "Related design discipline but different responsibilities."
+        },
+        {
+          "id": "job_design-3",
+          "grade": 0,
+          "text": {
+            "en": "Sales representative: sell user research and prototyping software.",
+            "ja": "営業担当。ユーザー調査・試作ソフトウェアを販売。"
+          },
+          "reason": "Selling tools is not product design."
+        },
+        {
+          "id": "job_design-4",
+          "grade": 0,
+          "text": {
+            "en": "Forklift operator: move warehouse pallets.",
+            "ja": "フォークリフト運転者。倉庫のパレットを運搬。"
+          },
+          "reason": "Unrelated role."
+        }
+      ]
+    },
+    {
+      "id": "job_data",
+      "split": "holdout",
+      "task": "retrieval",
+      "slice": "role_vs_keyword",
+      "query": {
+        "en": "Data engineer seeking Spark, Airflow, and data pipeline development.",
+        "ja": "Spark、Airflow、データパイプライン開発を希望するデータエンジニア。"
+      },
+      "candidates": [
+        {
+          "id": "job_data-1",
+          "grade": 2,
+          "text": {
+            "en": "Data engineer: build Spark ingestion pipelines and manage Airflow orchestration.",
+            "ja": "データエンジニア。Spark取り込みパイプラインとAirflow制御を開発。"
+          },
+          "reason": "Direct role and tool match."
+        },
+        {
+          "id": "job_data-2",
+          "grade": 1,
+          "text": {
+            "en": "Data analyst: build SQL reports and business dashboards.",
+            "ja": "データアナリスト。SQLレポートと業務ダッシュボードを作成。"
+          },
+          "reason": "Adjacent data role, different responsibility."
+        },
+        {
+          "id": "job_data-3",
+          "grade": 0,
+          "text": {
+            "en": "Account manager: sell Spark and Airflow consulting; no engineering duties.",
+            "ja": "顧客担当。SparkとAirflowのコンサルティングを販売。技術開発業務はない。"
+          },
+          "reason": "Sales keywords do not establish engineering work."
+        },
+        {
+          "id": "job_data-4",
+          "grade": 0,
+          "text": {
+            "en": "Dental assistant: prepare treatment rooms.",
+            "ja": "歯科助手。診療室を準備。"
+          },
+          "reason": "Unrelated role."
+        }
+      ]
+    },
+    {
+      "id": "job_frontend",
+      "split": "holdout",
+      "task": "retrieval",
+      "slice": "role_vs_keyword",
+      "query": {
+        "en": "Frontend engineer seeking React, TypeScript, and accessible web interfaces.",
+        "ja": "React、TypeScript、アクセシブルなWeb画面の開発を希望するフロントエンドエンジニア。"
+      },
+      "candidates": [
+        {
+          "id": "job_frontend-1",
+          "grade": 2,
+          "text": {
+            "en": "Frontend engineer: build accessible React and TypeScript web interfaces.",
+            "ja": "フロントエンドエンジニア。ReactとTypeScriptでアクセシブルなWeb画面を開発。"
+          },
+          "reason": "Direct role and stack match."
+        },
+        {
+          "id": "job_frontend-2",
+          "grade": 1,
+          "text": {
+            "en": "Frontend engineer: maintain Vue web interfaces and CSS components.",
+            "ja": "フロントエンドエンジニア。Vue画面とCSS部品を保守。"
+          },
+          "reason": "Related role, different framework."
+        },
+        {
+          "id": "job_frontend-3",
+          "grade": 0,
+          "text": {
+            "en": "Content marketer: write articles about React and TypeScript; no coding.",
+            "ja": "コンテンツ担当。ReactとTypeScriptの記事を書く。コーディング業務はない。"
+          },
+          "reason": "Writing about development is a different role."
+        },
+        {
+          "id": "job_frontend-4",
+          "grade": 0,
+          "text": {
+            "en": "Veterinary assistant: care for animals.",
+            "ja": "動物看護助手。動物の世話をする。"
+          },
+          "reason": "Unrelated role."
+        }
+      ]
+    },
+    {
+      "id": "job_sre",
+      "split": "holdout",
+      "task": "retrieval",
+      "slice": "role_vs_keyword",
+      "query": {
+        "en": "Site reliability engineer seeking Linux operations, incident response, and Kubernetes.",
+        "ja": "Linux運用、障害対応、Kubernetesを担当したいSRE。"
+      },
+      "candidates": [
+        {
+          "id": "job_sre-1",
+          "grade": 2,
+          "text": {
+            "en": "Site reliability engineer: operate Linux Kubernetes services and lead incident response.",
+            "ja": "SRE。LinuxのKubernetesサービス運用と障害対応を主導。"
+          },
+          "reason": "Direct operational responsibilities."
+        },
+        {
+          "id": "job_sre-2",
+          "grade": 1,
+          "text": {
+            "en": "IT support technician: troubleshoot employee laptops and office networks.",
+            "ja": "ITサポート。社員のノートPCと社内ネットワークの問題に対応。"
+          },
+          "reason": "Related support work, different systems."
+        },
+        {
+          "id": "job_sre-3",
+          "grade": 0,
+          "text": {
+            "en": "Training coordinator: schedule Kubernetes and Linux incident-response courses.",
+            "ja": "研修担当。KubernetesやLinux障害対応の講座日程を調整。"
+          },
+          "reason": "Coordination instead of operations."
+        },
+        {
+          "id": "job_sre-4",
+          "grade": 0,
+          "text": {
+            "en": "Landscape gardener: maintain public parks.",
+            "ja": "造園作業員。公園を整備。"
+          },
+          "reason": "Unrelated role."
+        }
+      ]
+    },
+    {
+      "id": "job_ml",
+      "split": "holdout",
+      "task": "retrieval",
+      "slice": "role_vs_keyword",
+      "query": {
+        "en": "Machine-learning engineer seeking model training, evaluation, and production serving.",
+        "ja": "モデル学習、評価、本番配信を希望する機械学習エンジニア。"
+      },
+      "candidates": [
+        {
+          "id": "job_ml-1",
+          "grade": 2,
+          "text": {
+            "en": "ML engineer: train predictive models, evaluate quality, and deploy prediction APIs.",
+            "ja": "機械学習エンジニア。予測モデルを学習・評価し、予測APIを導入。"
+          },
+          "reason": "Direct ML engineering workflow."
+        },
+        {
+          "id": "job_ml-2",
+          "grade": 1,
+          "text": {
+            "en": "Research assistant: analyze experiments and train models without deployment work.",
+            "ja": "研究助手。実験分析とモデル学習を担当。本番導入業務はない。"
+          },
+          "reason": "Related modeling with missing deployment scope."
+        },
+        {
+          "id": "job_ml-3",
+          "grade": 0,
+          "text": {
+            "en": "Product salesperson: demonstrate model training and serving platforms; no development duties.",
+            "ja": "製品営業。モデル学習・配信基盤を実演する。開発業務はない。"
+          },
+          "reason": "Demonstration and sales are not ML engineering."
+        },
+        {
+          "id": "job_ml-4",
+          "grade": 0,
+          "text": {
+            "en": "Hotel receptionist: check in guests.",
+            "ja": "ホテル受付。宿泊客のチェックインを担当。"
+          },
+          "reason": "Unrelated role."
+        }
+      ]
+    },
+    {
+      "id": "job_mobile",
+      "split": "holdout",
+      "task": "retrieval",
+      "slice": "role_vs_keyword",
+      "query": {
+        "en": "iOS engineer seeking native Swift application development.",
+        "ja": "Swiftによるネイティブアプリ開発を希望するiOSエンジニア。"
+      },
+      "candidates": [
+        {
+          "id": "job_mobile-1",
+          "grade": 2,
+          "text": {
+            "en": "iOS engineer: develop native Swift applications for iPhone.",
+            "ja": "iOSエンジニア。iPhone向けネイティブSwiftアプリを開発。"
+          },
+          "reason": "Direct platform and language match."
+        },
+        {
+          "id": "job_mobile-2",
+          "grade": 1,
+          "text": {
+            "en": "Mobile engineer: develop Android applications in Kotlin.",
+            "ja": "モバイルエンジニア。KotlinでAndroidアプリを開発。"
+          },
+          "reason": "Related mobile work, different platform."
+        },
+        {
+          "id": "job_mobile-3",
+          "grade": 0,
+          "text": {
+            "en": "Recruiter: source native iOS Swift developers; no application development.",
+            "ja": "採用担当。ネイティブiOS Swift開発者を探す。アプリ開発業務はない。"
+          },
+          "reason": "Recruitment rather than development."
+        },
+        {
+          "id": "job_mobile-4",
+          "grade": 0,
+          "text": {
+            "en": "Laboratory technician: test water samples.",
+            "ja": "検査技師。水の試料を分析。"
+          },
+          "reason": "Unrelated role."
+        }
+      ]
+    },
+    {
+      "id": "job_security",
+      "split": "holdout",
+      "task": "retrieval",
+      "slice": "role_vs_keyword",
+      "query": {
+        "en": "Application security engineer seeking threat modeling and vulnerability remediation.",
+        "ja": "脅威分析と脆弱性修正を希望するアプリケーションセキュリティエンジニア。"
+      },
+      "candidates": [
+        {
+          "id": "job_security-1",
+          "grade": 2,
+          "text": {
+            "en": "Application security engineer: model threats, review code, and remediate vulnerabilities.",
+            "ja": "アプリケーションセキュリティエンジニア。脅威分析、コードレビュー、脆弱性修正を担当。"
+          },
+          "reason": "Direct application security work."
+        },
+        {
+          "id": "job_security-2",
+          "grade": 1,
+          "text": {
+            "en": "Compliance analyst: maintain security policies and coordinate audits.",
+            "ja": "コンプライアンス担当。セキュリティ規程の管理と監査調整を担当。"
+          },
+          "reason": "Related security domain but different work."
+        },
+        {
+          "id": "job_security-3",
+          "grade": 0,
+          "text": {
+            "en": "Security guard: patrol buildings and check visitor badges.",
+            "ja": "警備員。建物を巡回し来訪者の入館証を確認。"
+          },
+          "reason": "Same word, different occupation."
+        },
+        {
+          "id": "job_security-4",
+          "grade": 0,
+          "text": {
+            "en": "Music teacher: teach piano lessons.",
+            "ja": "音楽教師。ピアノを教える。"
+          },
+          "reason": "Unrelated role."
+        }
+      ]
+    }
+  ]
+}
