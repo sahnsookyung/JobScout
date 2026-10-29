@@ -411,6 +411,10 @@ def _snapshot_limited_to_expected_tables(
         if isinstance(constraint, dict) and isinstance(constraint.get("name"), str)
     }
     actual_tables = snapshot.get("tables") or {}
+    expected_columns = {
+        table_name: {column["name"] for column in table["columns"]}
+        for table_name, table in (expected.get("tables") or {}).items()
+    }
     return {
         "extensions": [
             extension
@@ -423,7 +427,13 @@ def _snapshot_limited_to_expected_tables(
             if isinstance(enum, dict) and enum.get("name") in expected_enums
         ],
         "tables": {
-            table_name: actual_tables[table_name]
+            table_name: {
+                **actual_tables[table_name],
+                "columns": [
+                    column for column in actual_tables[table_name]["columns"]
+                    if column["name"] in expected_columns[table_name]
+                ],
+            }
             for table_name in expected_tables
             if table_name in actual_tables
         },
