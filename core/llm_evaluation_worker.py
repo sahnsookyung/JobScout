@@ -53,6 +53,8 @@ def _queue_depths(queue: Queue) -> dict[str, int]:
 def start_worker(*, burst: bool = False, queue_names: list[str] | None = None) -> None:
     redis_conn = Redis.from_url(load_config().orchestrator.redis_url)
     queues = [Queue(name, connection=redis_conn) for name in (queue_names or [LLM_EVALUATION_QUEUE])]
+    # Configure blocking-dequeue timeouts before startup work caches a socket.
+    worker = Worker(queues, connection=redis_conn)
 
     metrics_port = _metrics_port()
     start_metrics_server(metrics_port)
@@ -69,7 +71,6 @@ def start_worker(*, burst: bool = False, queue_names: list[str] | None = None) -
     except Exception:
         logger.warning("Failed to schedule LLM evaluation recovery sweep", exc_info=True)
 
-    worker = Worker(queues, connection=redis_conn)
     record_worker_running("llm_evaluation", "worker", True)
     try:
         worker.work(burst=burst, with_scheduler=True)
