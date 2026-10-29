@@ -1,6 +1,7 @@
 """Exercise generation isolation and backfill checkpoints on real pgvector."""
 
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -12,6 +13,8 @@ from database.repositories.job_post import JobPostRepository
 from database.repositories.match import MatchRepository
 from database.repositories.resume import ResumeRepository
 from scripts.migrate_embedding_space import BackfillItem, collect_items, persist_items
+from core.llm_evaluation import MatchLlmEvaluationService
+from core.resume_variants.service import ResumeVariantService
 
 pytestmark = [pytest.mark.integration, pytest.mark.db]
 VECTOR = [1.0] + [0.0]*1023
@@ -70,7 +73,9 @@ def test_partial_catalog_backfill_never_mixes_spaces_and_skips_changed_text(spac
             session.delete(session.get(JobPost, job_id))
 
 
-def test_resume_backfill_keeps_legacy_vectors_and_reads_query_vector(space_db):
+def test_resume_backfill_keeps_legacy_vectors_and_reads_query_vector(space_db, monkeypatch):
+    monkeypatch.setattr("core.llm_evaluation.current_embedding_space", lambda: "test-new-space")
+    monkeypatch.setattr("core.resume_variants.service.current_embedding_space", lambda: "test-new-space")
     marker = str(uuid.uuid4())
     section = dict(section_type="summary", section_index=0, source_text="Synthetic engineer",
                    source_data={}, embedding=VECTOR)
@@ -88,6 +93,13 @@ def test_resume_backfill_keeps_legacy_vectors_and_reads_query_vector(space_db):
             assert repo.get_resume_summary_embedding(marker) == QUERY
             assert len(repo.get_resume_section_embeddings(marker)) == 1
             assert len(repo.find_best_evidence_for_requirement(QUERY, marker, top_k=10)) == 1
+            judge = object.__new__(MatchLlmEvaluationService)
+            judge.db = session
+            judge.config = SimpleNamespace(matching=SimpleNamespace(llm_judge=SimpleNamespace()))
+            variants = object.__new__(ResumeVariantService)
+            variants.db = session
+            assert len(judge._load_resume_evidence_units(SYSTEM_OWNER_ID, marker)) == 1
+            assert len(variants._resume_evidence_units(SYSTEM_OWNER_ID, marker)) == 1
             for model in (ResumeSectionEmbedding, ResumeEvidenceUnitEmbedding):
                 rows = session.scalars(select(model).where(model.resume_fingerprint == marker)).all()
                 assert {row.embedding_space for row in rows} == {"legacy", "test-new-space"}
