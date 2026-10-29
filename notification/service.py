@@ -45,7 +45,7 @@ try:
 except ImportError:
     RQ_AVAILABLE = False
 
-from database.database import db_session_scope
+from database.database import db_session_scope, worker_database_context
 from database.models import User
 from database.repository import JobRepository
 from notification.channels import NotificationChannelFactory
@@ -821,6 +821,18 @@ def process_notification_task(notification_data: Dict[str, Any]) -> str:
     - Short pre-flight rate-limit waits (≤ SYNC_MODE_MAX_WAIT_SECONDS) are honored
       with a brief sleep; longer waits record a failure immediately.
     """
+    # RQ starts outside the request/stream context. Carry the queued identity
+    # through recipient lookup, delivery tracking, and every failure handler.
+    metadata = notification_data.get('metadata') or {}
+    with worker_database_context(
+        user_id=notification_data.get('user_id'),
+        tenant_id=notification_data.get('tenant_id') or metadata.get('tenant_id'),
+    ):
+        return _process_notification_in_context(notification_data)
+
+
+def _process_notification_in_context(notification_data: Dict[str, Any]) -> str:
+    """Run delivery and retry handling within the notification owner's context."""
     notification_id = str(uuid.uuid4())
     channel_type = notification_data['channel_type']
     runtime_config = get_notification_runtime_config()
