@@ -7,12 +7,12 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from database.models import JobPost, JobRequirementUnit, JobRequirementUnitEmbedding, JobMatch
+from database.models import JobPost, JobRequirementUnit, JobRequirementUnitEmbedding, JobMatch, StructuredResume
 from database.models.resume import ResumeSectionEmbedding, ResumeEvidenceUnitEmbedding, SYSTEM_OWNER_ID
 from database.repositories.job_post import JobPostRepository
 from database.repositories.match import MatchRepository
 from database.repositories.resume import ResumeRepository
-from scripts.migrate_embedding_space import BackfillItem, collect_items, persist_items
+from scripts.migrate_embedding_space import BackfillItem, collect_items, persist_items, backfill_resumes, migration_status
 from core.llm_evaluation import MatchLlmEvaluationService
 from core.resume_variants.service import ResumeVariantService
 
@@ -108,3 +108,30 @@ def test_resume_backfill_keeps_legacy_vectors_and_reads_query_vector(space_db, m
             for model in (ResumeSectionEmbedding, ResumeEvidenceUnitEmbedding):
                 for row in session.scalars(select(model).where(model.resume_fingerprint == marker)):
                     session.delete(row)
+
+
+def test_outdated_resume_is_reported_without_reembedding_or_promoting_version(space_db, monkeypatch):
+    marker = str(uuid.uuid4())
+    baseline = migration_status(space_db)
+    with Session(space_db) as session, session.begin():
+        # Deliberately unparseable with the current schema: an old upload needs re-extraction.
+        row = StructuredResume(owner_id=SYSTEM_OWNER_ID, resume_fingerprint=marker,
+                               fingerprint_version=1, extracted_data={"profile": {}})
+        session.add(row)
+        session.flush()
+        row_id = row.id
+    def unexpected_provider(*args, **kwargs):
+        pytest.fail("Outdated resumes must not be sent to an embedding provider")
+    monkeypatch.setattr("scripts.migrate_embedding_space.build_llm_provider", unexpected_provider)
+    try:
+        assert backfill_resumes(space_db, None) == 0
+        status = migration_status(space_db)
+        assert status["outdated_resumes"] == baseline["outdated_resumes"] + 1
+        assert status["resumes_pending"] == baseline["resumes_pending"]
+        with Session(space_db) as session:
+            stored = session.get(StructuredResume, row_id)
+            assert stored.fingerprint_version == 1
+            assert stored.extracted_data == {"profile": {}}
+    finally:
+        with Session(space_db) as session, session.begin():
+            session.delete(session.get(StructuredResume, row_id))

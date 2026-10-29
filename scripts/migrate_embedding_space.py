@@ -23,7 +23,7 @@ from core.embedding_contract import current_embedding_space, embedding_space_for
 from core.llm.global_budget import global_llm_budget_lane
 from core.llm.provider_factory import RuntimeLLMConfig, build_llm_provider, runtime_llm_config_from_etl
 from core.llm.schema_models import ResumeSchema
-from database.models import JobPost, JobRequirementUnit, JobRequirementUnitEmbedding, StructuredResume
+from database.models import JobPost, JobRequirementUnit, JobRequirementUnitEmbedding, StructuredResume, RESUME_FINGERPRINT_VERSION
 from database.repositories.embedding_contract import job_embeddings_ready_clause
 from database.repositories.job_post import JobPostRepository
 from database.repositories.resume import ResumeRepository
@@ -150,7 +150,8 @@ def backfill_resumes(engine: Engine, runtime: RuntimeLLMConfig) -> int:
     # Resume calls stay in the ordinary interactive budget lane. They do not use
     # the public-catalog budget exemption.
     with Session(engine) as session:
-        fingerprints = list(session.execute(select(StructuredResume.resume_fingerprint)).scalars())
+        fingerprints = list(session.execute(select(StructuredResume.resume_fingerprint).where(
+            StructuredResume.fingerprint_version == RESUME_FINGERPRINT_VERSION)).scalars())
     completed = 0
     for fingerprint in fingerprints:
         with Session(engine) as session:
@@ -203,8 +204,11 @@ def migration_status(engine: Engine, include_inactive: bool = False) -> Dict[str
         if not include_inactive:
             ready = ready.where(JobPost.status == "active")
         counts["ready_jobs"] = session.scalar(ready)
-        fingerprints = list(session.execute(select(StructuredResume.resume_fingerprint)).scalars())
+        fingerprints = list(session.execute(select(StructuredResume.resume_fingerprint).where(
+            StructuredResume.fingerprint_version == RESUME_FINGERPRINT_VERSION)).scalars())
         counts["resumes_pending"] = sum(not ResumeRepository(session).is_resume_ready(fp) for fp in fingerprints)
+        counts["outdated_resumes"] = session.scalar(select(func.count(StructuredResume.id)).where(
+            StructuredResume.fingerprint_version != RESUME_FINGERPRINT_VERSION))
         return {"embedding_space": current_embedding_space(), **counts}
 
 
