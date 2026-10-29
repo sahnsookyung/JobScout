@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Dict, Iterator, Optional
+
+from sqlalchemy import text
 
 from core.metrics import (
     record_description_recovery_job,
@@ -14,7 +16,8 @@ from core.redis_streams import (
     STREAM_MATCHING,
     enqueue_job,
 )
-from database.database import db_session_scope
+from database.context_signing import database_context_signing_enabled
+from database.database import db_session_scope, worker_database_context
 from database.repository import JobRepository
 from services.orchestrator.description_recovery import recover_missing_description_jobs
 from services.orchestrator.pipeline_runs import PipelineRunService
@@ -74,6 +77,73 @@ def _coerce_job_ids(values: Any) -> list[Any]:
     return [value for value in values if value]
 
 
+def _ready_matching_targets() -> Iterator[Dict[str, Any]]:
+    """Discover work through the restricted worker function when RLS is active."""
+    if not database_context_signing_enabled():
+        with db_session_scope() as db:
+            repo = JobRepository(db)
+            fingerprint = repo.get_latest_ready_resume_fingerprint()
+            if not fingerprint:
+                return
+            resume = repo.get_structured_resume_by_fingerprint(fingerprint)
+            target = {
+                "resume_fingerprint": fingerprint,
+                "owner_id": getattr(resume, "owner_id", None),
+                "tenant_id": getattr(resume, "tenant_id", None),
+            }
+        yield target
+        return
+
+    cursor: Optional[str] = None
+    while True:
+        with db_session_scope() as db:
+            targets = db.execute(
+                text(
+                    "SELECT * FROM public.jobscout_worker_ready_resume_candidates("
+                    "NULL, NULL, 100, :cursor)"
+                ),
+                {"cursor": cursor},
+            ).mappings().all()
+        for target in targets:
+            yield dict(target)
+        if len(targets) < 100:
+            return
+        cursor = targets[-1]["cursor_value"]
+
+
+def _enqueue_matching_repairs(task_id: str, correlation: Dict[str, str]) -> int:
+    """Count and enqueue each resume's backlog under its owner and tenant."""
+    queued = 0
+    for index, target in enumerate(_ready_matching_targets()):
+        owner_id = target.get("owner_id")
+        tenant_id = target.get("tenant_id")
+        fingerprint = target["resume_fingerprint"]
+        with worker_database_context(user_id=owner_id, tenant_id=tenant_id):
+            with db_session_scope() as db:
+                repo = JobRepository(db)
+                preferences = _load_candidate_preferences(
+                    repo, str(owner_id) if owner_id is not None else None,
+                )
+                pending = repo.count_pending_matching_jobs(
+                    fingerprint,
+                    tenant_id=tenant_id,
+                    candidate_preferences=preferences,
+                )
+        if not pending:
+            continue
+        payload = {
+            "task_id": f"{task_id}-match-{index}",
+            "resume_fingerprint": fingerprint,
+            **correlation,
+        }
+        for key in ("owner_id", "tenant_id", "resume_upload_id"):
+            if target.get(key) is not None:
+                payload[key] = str(target[key])
+        enqueue_job(STREAM_MATCHING, payload)
+        queued += pending
+    return queued
+
+
 def run_stuck_job_repair(
     *,
     task_id: str,
@@ -116,22 +186,6 @@ def run_stuck_job_repair(
             )
             extraction_jobs = repo.job_post.claim_unextracted_jobs_for_queue(limit=extraction_limit)
             embedding_jobs = repo.job_post.claim_unembedded_jobs_for_queue(limit=embedding_limit)
-            latest_resume_fingerprint = repo.get_latest_ready_resume_fingerprint()
-            ready_unmatched_count = 0
-            matching_owner_id: str | None = None
-            if latest_resume_fingerprint:
-                structured_resume = repo.get_structured_resume_by_fingerprint(
-                    latest_resume_fingerprint
-                )
-                owner_id = getattr(structured_resume, "owner_id", None)
-                tenant_id = getattr(structured_resume, "tenant_id", None)
-                matching_owner_id = str(owner_id) if owner_id is not None else None
-                candidate_preferences = _load_candidate_preferences(repo, matching_owner_id)
-                ready_unmatched_count = repo.count_pending_matching_jobs(
-                    latest_resume_fingerprint,
-                    tenant_id=tenant_id,
-                    candidate_preferences=candidate_preferences,
-                )
 
         enqueued = {
             "description_recovery_queued": int(description_recovery_stats.get("claimed", 0)),
@@ -163,7 +217,7 @@ def run_stuck_job_repair(
             "description_recovery_extraction_queued": 0,
             "embedding_queued": 0,
             "matching_queued": 0,
-            "ready_unmatched_count": ready_unmatched_count,
+            "ready_unmatched_count": 0,
         }
         if enqueued["description_recovery_queued"]:
             record_description_recovery_job(
@@ -212,19 +266,8 @@ def run_stuck_job_repair(
             enqueued["embedding_queued"] = len(embedding_jobs)
             record_jobs_embedding_queued(len(embedding_jobs))
 
-        if latest_resume_fingerprint and ready_unmatched_count:
-            matching_payload = {
-                "task_id": f"{task_id}-match",
-                "resume_fingerprint": latest_resume_fingerprint,
-                **correlation,
-            }
-            if matching_owner_id is not None:
-                matching_payload["owner_id"] = matching_owner_id
-            enqueue_job(
-                STREAM_MATCHING,
-                matching_payload,
-            )
-            enqueued["matching_queued"] = ready_unmatched_count
+        enqueued["matching_queued"] = _enqueue_matching_repairs(task_id, correlation)
+        enqueued["ready_unmatched_count"] = enqueued["matching_queued"]
 
         pipeline_runs.complete_stage(
             task_id=task_id,
