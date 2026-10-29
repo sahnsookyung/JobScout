@@ -32,7 +32,7 @@ dev = [
     "reportlab>=4.0.0",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
-    "ruff>=0.15.21",
+    "ruff>=0.17.2",
     "httpx2>=2.13.1",
 ]
 web = [
