@@ -88,33 +88,36 @@ def build_job_extraction_provider(config: LlmConfig, default_provider: LLMProvid
         return default_provider
     if not routing.nvidia_api_key:
         raise ValueError("NVIDIA-first job extraction requires NVIDIA_EXTRACTION_API_KEY or NVIDIA_API_KEY")
-    nvidia = build_llm_provider(RuntimeLLMConfig(
-        base_url=NVIDIA_OPENAI_COMPATIBLE_BASE_URL, api_key=routing.nvidia_api_key,
-        # Nemotron's model card recommends this sampling even with reasoning disabled:
-        # https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b/modelcard
-        model=routing.nvidia_model, temperature=1.0, top_p=0.95,
-        structured_output_mode="json_schema",
-        timeout_seconds=routing.timeout_seconds, max_output_tokens=routing.max_output_tokens,
-        retry_max_attempts=1, enable_thinking=False,
-        requirements_system_prompt=JOB_EXTRACTION_PROMPT,
-    ))
+    candidates = []
+    models = dict.fromkeys([routing.nvidia_model, *routing.nvidia_fallback_models])
+    for model in models:
+        nvidia = build_llm_provider(RuntimeLLMConfig(
+            base_url=NVIDIA_OPENAI_COMPATIBLE_BASE_URL, api_key=routing.nvidia_api_key,
+            # Nemotron's model card recommends this sampling even with reasoning disabled:
+            # https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b/modelcard
+            model=model, temperature=1.0, top_p=0.95,
+            structured_output_mode="json_schema",
+            timeout_seconds=routing.timeout_seconds, max_output_tokens=routing.max_output_tokens,
+            retry_max_attempts=1, enable_thinking=False,
+            requirements_system_prompt=JOB_EXTRACTION_PROMPT,
+        ))
+        candidates.append(LLMProviderCandidate(
+            # One account rate bucket; the circuit breaker also keys by model.
+            name="nvidia-extraction", provider_name="nvidia", model=model,
+            provider=nvidia, requests_per_minute=routing.requests_per_minute,
+            rate_limit_max_wait_seconds=0, fallback_on_rate_limit=True,
+            fallback_on_invalid_output=True,
+        ))
     fallback_runtime = runtime_llm_config_from_etl(config).model_copy(update={
         "timeout_seconds": routing.timeout_seconds,
         "max_output_tokens": routing.fallback_max_output_tokens, "retry_max_attempts": 1,
         "requirements_system_prompt": JOB_EXTRACTION_PROMPT,
     })
     fallback = build_llm_provider(fallback_runtime)
-    chain = LLMProviderChain([
-        LLMProviderCandidate(
-            name="nvidia-extraction", provider_name="nvidia", model=routing.nvidia_model,
-            provider=nvidia, requests_per_minute=routing.requests_per_minute,
-            rate_limit_max_wait_seconds=0, fallback_on_rate_limit=True,
-            fallback_on_invalid_output=True,
-        ),
-        LLMProviderCandidate(
-            name="etl-fallback", provider_name="openai_compatible", model=str(config.extraction_model),
-            provider=fallback, fallback_on_rate_limit=False,
-        ),
-    ], rate_limiter=ProviderRateLimiter(client_factory=get_redis_client),
+    candidates.append(LLMProviderCandidate(
+        name="etl-fallback", provider_name="openai_compatible", model=str(config.extraction_model),
+        provider=fallback, fallback_on_rate_limit=False,
+    ))
+    chain = LLMProviderChain(candidates, rate_limiter=ProviderRateLimiter(client_factory=get_redis_client),
         circuit_breaker=ProviderCircuitBreaker(client_factory=get_redis_client))
     return JobExtractionProvider(default_provider, chain)
