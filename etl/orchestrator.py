@@ -491,7 +491,7 @@ class JobETLService:
             req: JobRequirementUnit ORM instance (loaded within this UoW session)
         """
         vector = _validate_embedding_vector(
-            self.ai.generate_embedding(req.text),
+            self.ai.generate_query_embedding(req.text),
             f"requirement {req.id}",
         )
         repo.save_requirement_embedding(req.id, vector)

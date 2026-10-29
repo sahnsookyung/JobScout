@@ -158,6 +158,8 @@ def _extract_scores(scored_match: ScoredMatch):
 
 
 def _build_match_values(scores, matched_reqs, missing_reqs, job_content_hash):
+    from core.embedding_contract import current_embedding_space
+
     total_requirements = len(matched_reqs) + len(missing_reqs)
     return {
         'job_similarity': _to_float(scores['job_similarity']),
@@ -175,6 +177,7 @@ def _build_match_values(scores, matched_reqs, missing_reqs, job_content_hash):
         'matched_requirements_count': len(matched_reqs),
         'match_type': scores['match_type'],
         'job_content_hash': job_content_hash,
+        'embedding_space': current_embedding_space(),
         'calculated_at': func.now(),
     }
 
@@ -195,6 +198,7 @@ def _apply_match_values(match_record: JobMatch, values) -> None:
     match_record.matched_requirements_count = values['matched_requirements_count']
     match_record.match_type = values['match_type']
     match_record.job_content_hash = values['job_content_hash']
+    match_record.embedding_space = values['embedding_space']
     match_record.calculated_at = values['calculated_at']
 
 
@@ -284,6 +288,7 @@ def _create_match_record(
         matched_requirements_count=values['matched_requirements_count'],
         match_type=values['match_type'],
         job_content_hash=values['job_content_hash'],
+        embedding_space=values['embedding_space'],
         notified=False,
         is_hidden=is_hidden,
         calculated_at=values['calculated_at'],

@@ -81,6 +81,12 @@ class JobExtractionProvider(LLMProvider):
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
         return self.default_provider.generate_embeddings_batch(texts)
 
+    def generate_query_embedding(self, text: str) -> List[float]:
+        return self.default_provider.generate_query_embedding(text)
+
+    def generate_query_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        return self.default_provider.generate_query_embeddings_batch(texts)
+
 
 def build_job_extraction_provider(config: LlmConfig, default_provider: LLMProvider) -> LLMProvider:
     routing = config.job_routing

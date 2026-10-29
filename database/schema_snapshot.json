@@ -1702,6 +1702,12 @@
           "type": "timestamp with time zone"
         },
         {
+          "default": "'legacy'::text",
+          "name": "embedding_space",
+          "nullable": false,
+          "type": "text"
+        },
+        {
           "default": null,
           "name": "fit_components",
           "nullable": true,
@@ -2188,6 +2194,12 @@
           "type": "timestamp with time zone"
         },
         {
+          "default": "'legacy'::text",
+          "name": "embedding_space",
+          "nullable": false,
+          "type": "text"
+        },
+        {
           "default": null,
           "name": "embedding_status",
           "nullable": false,
@@ -2516,6 +2528,12 @@
           "name": "embedding",
           "nullable": false,
           "type": "vector"
+        },
+        {
+          "default": "'legacy'::text",
+          "name": "embedding_space",
+          "nullable": false,
+          "type": "text"
         },
         {
           "default": null,
@@ -3284,6 +3302,12 @@
           "type": "vector"
         },
         {
+          "default": "'legacy'::text",
+          "name": "embedding_space",
+          "nullable": false,
+          "type": "text"
+        },
+        {
           "default": null,
           "name": "evidence_unit_id",
           "nullable": false,
@@ -3448,6 +3472,12 @@
           "type": "vector"
         },
         {
+          "default": "'legacy'::text",
+          "name": "embedding_space",
+          "nullable": false,
+          "type": "text"
+        },
+        {
           "default": null,
           "name": "fingerprint_version",
           "nullable": false,
@@ -3464,6 +3494,12 @@
           "name": "owner_id",
           "nullable": false,
           "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "query_embedding",
+          "nullable": true,
+          "type": "vector"
         },
         {
           "default": null,

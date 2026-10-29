@@ -99,10 +99,18 @@ def _capture_additive_upgrade_path() -> dict:
                     text(
                         """
                         ALTER TABLE job_post
+                        DROP COLUMN IF EXISTS embedding_space,
                         DROP COLUMN IF EXISTS description_source,
                         DROP COLUMN IF EXISTS description_completeness,
                         DROP COLUMN IF EXISTS description_warning_code,
                         DROP COLUMN IF EXISTS description_hash;
+
+                        ALTER TABLE job_requirement_unit_embedding DROP COLUMN IF EXISTS embedding_space;
+                        ALTER TABLE resume_section_embedding
+                        DROP COLUMN IF EXISTS embedding_space,
+                        DROP COLUMN IF EXISTS query_embedding;
+                        ALTER TABLE resume_evidence_unit_embedding DROP COLUMN IF EXISTS embedding_space;
+                        ALTER TABLE job_match DROP COLUMN IF EXISTS embedding_space;
 
                         ALTER TABLE llm_match_evaluation
                         DROP COLUMN IF EXISTS analysis;

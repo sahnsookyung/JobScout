@@ -69,17 +69,15 @@ class TestRunEmbeddingBatch:
             mock_job_uow.return_value = mock_context
 
             mock_ctx = Mock()
-            # generate_embeddings_batch called twice: once for jobs, once for reqs
-            mock_ctx.job_etl_service.ai.generate_embeddings_batch.side_effect = [
-                [[0.1] * 1024],  # job vectors
-                [[0.2] * 1024],  # requirement vectors
-            ]
+            mock_ctx.job_etl_service.ai.generate_embeddings_batch.return_value = [[0.1] * 1024]
+            mock_ctx.job_etl_service.ai.generate_query_embeddings_batch.return_value = [[0.2] * 1024]
             stop_event = threading.Event()
 
             result = _run_embedding_batch(mock_ctx, stop_event, limit=10)
 
             assert result == 2
-            assert mock_ctx.job_etl_service.ai.generate_embeddings_batch.call_count == 2
+            mock_ctx.job_etl_service.ai.generate_embeddings_batch.assert_called_once()
+            mock_ctx.job_etl_service.ai.generate_query_embeddings_batch.assert_called_once_with([mock_req.text])
 
     def test_embedding_batch_handles_stop_event(self):
         """Test embedding batch respects stop event."""

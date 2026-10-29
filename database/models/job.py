@@ -128,6 +128,7 @@ class JobPost(Base):
 
     # Coarse embedding for the whole job
     summary_embedding = Column(Vector(1024))
+    embedding_space = Column(Text, nullable=False, default='legacy', server_default='legacy')
 
     # Relationships
     sources = relationship("JobPostSource", back_populates="job_post", cascade=CASCADE_DELETE_ORPHAN)
@@ -249,6 +250,7 @@ class JobRequirementUnitEmbedding(Base):
 
     job_requirement_unit_id = Column(UUID(as_uuid=True), ForeignKey(JOB_REQUIREMENT_UNIT_ID_FK, ondelete='CASCADE'), primary_key=True)
     embedding = Column(Vector(1024), nullable=False)
+    embedding_space = Column(Text, nullable=False, default='legacy', server_default='legacy')
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)
 
     unit = relationship("JobRequirementUnit", back_populates="embedding_row")

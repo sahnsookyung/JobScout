@@ -508,3 +508,17 @@ class BudgetedLLMProvider(LLMProvider):
             self._estimate_operation_tokens("generate_embeddings_batch", texts),
             lambda: self.provider.generate_embeddings_batch(texts),
         )
+
+    def generate_query_embedding(self, text: str) -> List[float]:
+        return self._run_with_budget(
+            self._estimate_operation_tokens("generate_embedding", text),
+            lambda: self.provider.generate_query_embedding(text),
+        )
+
+    def generate_query_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        if not texts:
+            return []
+        return self._run_with_budget(
+            self._estimate_operation_tokens("generate_embeddings_batch", texts),
+            lambda: self.provider.generate_query_embeddings_batch(texts),
+        )

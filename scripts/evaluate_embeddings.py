@@ -355,8 +355,11 @@ def review_families(report: Dict[str, Any], limit: int = 12) -> List[str]:
 
 def write_html(report: Dict[str, Any], fixture: Dict[str, Any], path: Path) -> None:
     """Self-contained report with bounded first review, full details, and audit export."""
-    esc = lambda value: html.escape(str(value), quote=True)
-    pct = lambda value: "—" if value is None else f"{100*value:.1f}%"
+    def esc(value: Any) -> str:
+        return html.escape(str(value), quote=True)
+
+    def pct(value: Optional[float]) -> str:
+        return "—" if value is None else f"{100*value:.1f}%"
     selected = review_families(report)
     report["priority_review_families"] = selected
     summary_rows = []

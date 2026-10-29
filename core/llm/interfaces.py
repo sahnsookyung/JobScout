@@ -65,3 +65,11 @@ class LLMProvider(ABC):
         Override for providers that support native batch embedding APIs.
         """
         return [self.generate_embedding(text) for text in texts]
+
+    def generate_query_embedding(self, text: str) -> List[float]:
+        """Embed a retrieval query; symmetric providers retain their existing behavior."""
+        return self.generate_embedding(text)
+
+    def generate_query_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        """Embed retrieval queries, preserving compatibility with symmetric providers."""
+        return self.generate_embeddings_batch(texts)

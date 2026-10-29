@@ -52,6 +52,7 @@ def mock_requirement_with_embedding():
     req.req_type = "required"
 
     embedding_row = Mock()
+    embedding_row.embedding_space = 'legacy'
     embedding_row.embedding = [0.85, 0.15, 0.25] * 341
     req.embedding_row = embedding_row
 

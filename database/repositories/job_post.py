@@ -9,13 +9,16 @@ from datetime import date, datetime, timezone, timedelta
 from sqlalchemy import select, delete, func, update
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import selectinload
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from core.embedding_contract import current_embedding_space
 from database.models import (
     JobMatch, JobPost, JobPostSource,
     JobRequirementUnit, JobRequirementUnitEmbedding,
     JobBenefit, JobOfferingsProfile,
 )
 from database.repositories.base import BaseRepository
+from database.repositories.embedding_contract import job_embeddings_ready_clause
 from core.utils import cosine_similarity_from_distance
 
 logger = logging.getLogger(__name__)
@@ -909,8 +912,11 @@ class JobPostRepository(BaseRepository):
                 )
             )
         stmt = select(JobPost).where(
-            JobPost.summary_embedding.is_(None),
-            or_(*queueable_conditions),
+            or_(JobPost.summary_embedding.is_(None), JobPost.embedding_space != current_embedding_space()),
+            or_(*queueable_conditions, and_(
+                JobPost.embedding_space != current_embedding_space(),
+                JobPost.embedding_status == "succeeded",
+            )),
         ).limit(limit)
         return stmt
 
@@ -943,7 +949,8 @@ class JobPostRepository(BaseRepository):
 
     def get_unembedded_requirements(self, limit: int = 1000) -> List[JobRequirementUnit]:
         stmt = select(JobRequirementUnit).outerjoin(JobRequirementUnitEmbedding).where(
-            JobRequirementUnitEmbedding.job_requirement_unit_id.is_(None)
+            or_(JobRequirementUnitEmbedding.job_requirement_unit_id.is_(None),
+                JobRequirementUnitEmbedding.embedding_space != current_embedding_space())
         ).limit(limit)
         return self.db.execute(stmt).scalars().all()
 
@@ -953,6 +960,7 @@ class JobPostRepository(BaseRepository):
 
     def save_job_embedding(self, job_post: JobPost, embedding: List[float]) -> None:
         job_post.summary_embedding = embedding
+        job_post.embedding_space = current_embedding_space()
         job_post.is_embedded = True
         job_post.embedding_status = 'succeeded'
         job_post.embedding_attempts = (job_post.embedding_attempts or 0) + 1
@@ -961,11 +969,15 @@ class JobPostRepository(BaseRepository):
         job_post.embedding_next_retry_at = None
 
     def save_requirement_embedding(self, req_id: Any, embedding: List[float]) -> None:
-        emb_row = JobRequirementUnitEmbedding(
+        statement = pg_insert(JobRequirementUnitEmbedding).values(
             job_requirement_unit_id=req_id,
-            embedding=embedding
+            embedding=embedding,
+            embedding_space=current_embedding_space(),
         )
-        self.db.add(emb_row)
+        self.db.execute(statement.on_conflict_do_update(
+            index_elements=[JobRequirementUnitEmbedding.job_requirement_unit_id],
+            set_={"embedding": statement.excluded.embedding, "embedding_space": statement.excluded.embedding_space},
+        ))
 
     def mark_embedding_in_progress(self, job_post_id: Any) -> None:
         stmt = update(JobPost).where(
@@ -1027,7 +1039,7 @@ class JobPostRepository(BaseRepository):
 
     def get_embedded_jobs_for_matching(self, limit: int = 100) -> List[JobPost]:
         stmt = select(JobPost).where(
-            JobPost.is_embedded.is_(True)
+            JobPost.is_embedded.is_(True), job_embeddings_ready_clause(),
         ).limit(limit)
         return self.db.execute(stmt).scalars().all()
 
@@ -1045,7 +1057,8 @@ class JobPostRepository(BaseRepository):
             JobPost.status == 'active',
             JobPost.is_extracted.is_(True),
             JobPost.is_embedded.is_(True),
-            JobPost.summary_embedding.isnot(None)
+            JobPost.summary_embedding.isnot(None),
+            job_embeddings_ready_clause(),
         )
 
         if tenant_id is not None:
@@ -1099,6 +1112,7 @@ class JobPostRepository(BaseRepository):
             JobPost.is_embedded.is_(True),
             JobPost.summary_embedding.isnot(None),
             document.op("@@")(query),
+            job_embeddings_ready_clause(),
         )
 
         if tenant_id is not None:
@@ -1134,6 +1148,7 @@ class JobPostRepository(BaseRepository):
                 JobMatch.job_post_id == JobPost.id,
                 JobMatch.resume_fingerprint == resume_fingerprint,
                 JobMatch.job_content_hash == JobPost.content_hash,
+                JobMatch.embedding_space == current_embedding_space(),
             )
             .exists()
         )

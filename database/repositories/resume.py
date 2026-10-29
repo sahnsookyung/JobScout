@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Dict, Any, Tuple
 from sqlalchemy import select, delete
 
+from core.embedding_contract import LEGACY_EMBEDDING_SPACE, current_embedding_space
 from database.models import (
     StructuredResume,
     ResumeSectionEmbedding,
@@ -240,12 +241,14 @@ class ResumeRepository(BaseRepository):
             return False
 
         evidence_stmt = select(ResumeEvidenceUnitEmbedding.id).where(
-            ResumeEvidenceUnitEmbedding.resume_fingerprint == resume_fingerprint
+            ResumeEvidenceUnitEmbedding.resume_fingerprint == resume_fingerprint,
+            ResumeEvidenceUnitEmbedding.embedding_space == current_embedding_space(),
         ).limit(1)
         evidence_exists = self.db.execute(evidence_stmt).scalar_one_or_none() is not None
 
         section_stmt = select(ResumeSectionEmbedding.id).where(
-            ResumeSectionEmbedding.resume_fingerprint == resume_fingerprint
+            ResumeSectionEmbedding.resume_fingerprint == resume_fingerprint,
+            ResumeSectionEmbedding.embedding_space == current_embedding_space(),
         ).limit(1)
         section_exists = self.db.execute(section_stmt).scalar_one_or_none() is not None
 
@@ -325,7 +328,8 @@ class ResumeRepository(BaseRepository):
         owner_id = owner_id or SYSTEM_OWNER_ID
         self.db.execute(
             delete(ResumeSectionEmbedding).where(
-                ResumeSectionEmbedding.resume_fingerprint == resume_fingerprint
+                ResumeSectionEmbedding.resume_fingerprint == resume_fingerprint,
+                ResumeSectionEmbedding.embedding_space == current_embedding_space(),
             )
         )
 
@@ -339,7 +343,9 @@ class ResumeRepository(BaseRepository):
                 section_index=section['section_index'],
                 source_text=section['source_text'],
                 source_data=section['source_data'],
-                embedding=section['embedding']
+                embedding=section['embedding'],
+                embedding_space=current_embedding_space(),
+                query_embedding=section.get('query_embedding'),
             )
             self.db.add(record)
             records.append(record)
@@ -362,7 +368,8 @@ class ResumeRepository(BaseRepository):
             List of ResumeSectionEmbedding objects
         """
         stmt = select(ResumeSectionEmbedding).where(
-            ResumeSectionEmbedding.resume_fingerprint == resume_fingerprint
+            ResumeSectionEmbedding.resume_fingerprint == resume_fingerprint,
+            ResumeSectionEmbedding.embedding_space == current_embedding_space(),
         )
 
         if section_type:
@@ -386,7 +393,8 @@ class ResumeRepository(BaseRepository):
         owner_id = owner_id or SYSTEM_OWNER_ID
         self.db.execute(
             delete(ResumeEvidenceUnitEmbedding).where(
-                ResumeEvidenceUnitEmbedding.resume_fingerprint == resume_fingerprint
+                ResumeEvidenceUnitEmbedding.resume_fingerprint == resume_fingerprint,
+                ResumeEvidenceUnitEmbedding.embedding_space == current_embedding_space(),
             )
         )
 
@@ -401,6 +409,7 @@ class ResumeRepository(BaseRepository):
                 source_section=unit.get('source_section'),
                 tags=unit.get('tags', {}),
                 embedding=unit['embedding'],
+                embedding_space=current_embedding_space(),
                 years_value=unit.get('years_value'),
                 years_context=unit.get('years_context'),
                 is_total_years_claim=unit.get('is_total_years_claim', False),
@@ -424,8 +433,12 @@ class ResumeRepository(BaseRepository):
             List of floats (embedding) or None if not found
         """
         sections = self.get_resume_section_embeddings(resume_fingerprint, section_type='summary')
-        if sections and len(sections) > 0 and sections[0].embedding is not None:
-            return list(sections[0].embedding)
+        if sections:
+            query = getattr(sections[0], 'query_embedding', None)
+            if query is not None:
+                return list(query)
+            if current_embedding_space() == LEGACY_EMBEDDING_SPACE and sections[0].embedding is not None:
+                return list(sections[0].embedding)
         return None
 
     def get_structured_resume_by_fingerprint(
@@ -490,7 +503,8 @@ class ResumeRepository(BaseRepository):
         ).label("distance")
 
         stmt = select(ResumeEvidenceUnitEmbedding, distance_expr).where(
-            ResumeEvidenceUnitEmbedding.resume_fingerprint == resume_fingerprint
+            ResumeEvidenceUnitEmbedding.resume_fingerprint == resume_fingerprint,
+            ResumeEvidenceUnitEmbedding.embedding_space == current_embedding_space(),
         ).order_by(distance_expr).limit(top_k)
 
         rows = self.db.execute(stmt).all()
