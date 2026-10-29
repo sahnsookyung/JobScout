@@ -145,10 +145,10 @@ def start_worker(burst: bool = False, queues: list = None):
 
     try:
         redis_conn = Redis.from_url(redis_url)
+        # RQ must set the blocking-dequeue timeout before any socket is cached.
+        worker = Worker(queues, connection=redis_conn)
         redis_conn.ping()
         logger.info("Connected to Redis")
-
-        worker = Worker(queues, connection=redis_conn)
 
         if not burst and queues:
             # Burst mode exits immediately after draining — no point polling DLQ.
