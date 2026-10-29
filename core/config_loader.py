@@ -101,11 +101,24 @@ class JobExtractionRoutingConfig(BaseModel):
 
     enabled: bool = False
     nvidia_model: str = Field(default="nvidia/nemotron-3-super-120b-a12b", min_length=1, max_length=200)
+    nvidia_fallback_models: List[str] = Field(default_factory=list, max_length=2)
     nvidia_api_key: Optional[str] = Field(default=None, repr=False, exclude=True)
     timeout_seconds: int = Field(default=60, ge=1, le=120)
     max_output_tokens: int = Field(default=NVIDIA_MAX_OUTPUT_TOKENS, ge=256, le=NVIDIA_MAX_OUTPUT_TOKENS)
     fallback_max_output_tokens: int = Field(default=DEFAULT_LLM_MAX_OUTPUT_TOKENS, ge=256)
     requests_per_minute: int = Field(default=10, ge=1, le=40)
+
+    @field_validator("nvidia_fallback_models", mode="before")
+    @classmethod
+    def _parse_nvidia_fallback_models(cls, value: Any) -> List[str]:
+        if isinstance(value, str):
+            value = [model.strip() for model in value.split(",") if model.strip()]
+        if not isinstance(value, list) or any(
+            not isinstance(model, str) or not model.strip() or len(model.strip()) > 200
+            for model in value
+        ):
+            raise ValueError("NVIDIA fallback models must be nonempty model names of at most 200 characters")
+        return list(dict.fromkeys(model.strip() for model in value))
 
 
 class LlmConfig(BaseModel):
@@ -1038,6 +1051,7 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["ETL_LLM_EXTRACTION_MAX_OUTPUT_TOKENS"], ["etl", "llm", "extraction_max_output_tokens"]),
     (["JOB_EXTRACTION_NVIDIA_FIRST"], ["etl", "llm", "job_routing", "enabled"]),
     (["NVIDIA_EXTRACTION_MODEL"], ["etl", "llm", "job_routing", "nvidia_model"]),
+    (["NVIDIA_EXTRACTION_FALLBACK_MODELS"], ["etl", "llm", "job_routing", "nvidia_fallback_models"]),
     (["NVIDIA_EXTRACTION_API_KEY", "NVIDIA_API_KEY"], ["etl", "llm", "job_routing", "nvidia_api_key"]),
     (["JOB_EXTRACTION_PROVIDER_TIMEOUT_SECONDS"], ["etl", "llm", "job_routing", "timeout_seconds"]),
     (["JOB_EXTRACTION_MAX_OUTPUT_TOKENS"], ["etl", "llm", "job_routing", "max_output_tokens"]),
