@@ -34,6 +34,9 @@ class RuntimeLLMConfig(BaseModel):
     requirements_system_prompt: Optional[str] = None
     embedding_model: Optional[str] = None
     embedding_dimensions: Optional[int] = None
+    embedding_input_type_enabled: bool = False
+    embedding_timeout_seconds: int = 60
+    embedding_requests_per_minute: int = 10
     embedding_base_url: Optional[str] = None
     embedding_api_key: Optional[str] = None
     embedding_api_secret: Optional[str] = None
@@ -53,6 +56,9 @@ def runtime_llm_config_from_etl(config: LlmConfig) -> RuntimeLLMConfig:
         structured_output_mode=config.structured_output_mode,
         embedding_model=config.embedding_model,
         embedding_dimensions=config.embedding_dimensions,
+        embedding_input_type_enabled=config.embedding_input_type_enabled,
+        embedding_timeout_seconds=config.embedding_timeout_seconds,
+        embedding_requests_per_minute=config.embedding_requests_per_minute,
         embedding_base_url=config.embedding_base_url,
         embedding_api_key=config.embedding_api_key,
         embedding_api_secret=config.embedding_api_secret,
@@ -148,6 +154,9 @@ def build_llm_provider(config: RuntimeLLMConfig) -> LLMProvider:
         "extraction_model": config.model,
         "embedding_model": config.embedding_model,
         "embedding_dimensions": config.embedding_dimensions,
+        "embedding_input_type_enabled": config.embedding_input_type_enabled,
+        "embedding_timeout_seconds": config.embedding_timeout_seconds,
+        "embedding_requests_per_minute": config.embedding_requests_per_minute,
         "extraction_temperature": config.temperature,
         "extraction_top_p": config.top_p,
     }

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 from database.repositories.job_post import JobPostRepository
 from database.models import (
     JobPost, JobPostSource, JobRequirementUnit, JobBenefit,
-    JobRequirementUnitEmbedding, JobOfferingsProfile,
+    JobOfferingsProfile,
 )
 
 
@@ -962,11 +962,13 @@ class TestSaveRequirementEmbedding:
     def test_creates_embedding_record(self):
         repo, mock_db = make_repo()
         repo.save_requirement_embedding("req-id", [0.5, 0.6])
-        mock_db.add.assert_called_once()
-        added = mock_db.add.call_args[0][0]
-        assert isinstance(added, JobRequirementUnitEmbedding)
-        assert added.job_requirement_unit_id == "req-id"
-        assert added.embedding == [0.5, 0.6]
+        mock_db.execute.assert_called_once()
+        statement = mock_db.execute.call_args[0][0]
+        params = statement.compile().params
+        assert params['job_requirement_unit_id'] == "req-id"
+        assert params['embedding'] == [0.5, 0.6]
+        assert params['embedding_space'] == 'legacy'
+        assert 'ON CONFLICT' in str(statement)
 
 
 # ---------------------------------------------------------------------------

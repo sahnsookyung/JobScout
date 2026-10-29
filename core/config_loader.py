@@ -133,6 +133,9 @@ class LlmConfig(BaseModel):
     structured_output_mode: Optional[Literal["auto", "json_schema", "json_object"]] = None
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1024
+    embedding_input_type_enabled: bool = False
+    embedding_timeout_seconds: int = Field(default=60, ge=1, le=120)
+    embedding_requests_per_minute: int = Field(default=10, ge=1, le=40)
     extraction_temperature: float = 0.0
     embedding_base_url: Optional[str] = None
     embedding_api_key: Optional[str] = None
@@ -1062,6 +1065,9 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
         ["etl", "llm", "structured_output_mode"],
     ),
     (["ETL_EMBEDDING_MODEL"], ["etl", "llm", "embedding_model"]),
+    (["ETL_EMBEDDING_INPUT_TYPE_ENABLED"], ["etl", "llm", "embedding_input_type_enabled"]),
+    (["ETL_EMBEDDING_TIMEOUT_SECONDS"], ["etl", "llm", "embedding_timeout_seconds"]),
+    (["ETL_EMBEDDING_REQUESTS_PER_MINUTE"], ["etl", "llm", "embedding_requests_per_minute"]),
     (["PREFERENCES_DEFAULT_MODE"], ["preferences", "default_mode"]),
     (["PREFERENCES_PARSER_PROVIDER"], ["preferences", "parser", "provider"]),
     (["PREFERENCES_PARSER_BASE_URL"], ["preferences", "parser", "base_url"]),

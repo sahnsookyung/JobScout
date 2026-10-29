@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 
+from core.embedding_contract import current_embedding_space
 from core.resume_variants.generator import (
     EVIDENCE_POLICY_VERSION,
     GENERATOR_VERSION,
@@ -310,6 +311,7 @@ class ResumeVariantService:
                     .where(
                         ResumeEvidenceUnitEmbedding.owner_id == owner_id,
                         ResumeEvidenceUnitEmbedding.resume_fingerprint == resume_fingerprint,
+                        ResumeEvidenceUnitEmbedding.embedding_space == current_embedding_space(),
                     )
                     .order_by(
                         ResumeEvidenceUnitEmbedding.source_section.asc(),

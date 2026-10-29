@@ -47,6 +47,7 @@ class JobMatch(Base):
     resume_fingerprint = Column(Text, nullable=False)
 
     job_content_hash = Column(Text, nullable=True)
+    embedding_space = Column(Text, nullable=False, default='legacy', server_default='legacy')
 
     job_similarity = Column(Numeric(3, 2))
 

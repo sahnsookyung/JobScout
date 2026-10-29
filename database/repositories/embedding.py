@@ -1,6 +1,7 @@
 from typing import List, Optional, Tuple
 from sqlalchemy import select
 
+from core.embedding_contract import current_embedding_space
 from database.models import ResumeSectionEmbedding
 from database.repositories.base import BaseRepository
 from core.utils import cosine_similarity_from_distance
@@ -16,7 +17,7 @@ class EmbeddingRepository(BaseRepository):
         stmt = select(
             ResumeSectionEmbedding,
             ResumeSectionEmbedding.embedding.cosine_distance(query_embedding).label('distance')
-        )
+        ).where(ResumeSectionEmbedding.embedding_space == current_embedding_space())
 
         if section_type:
             stmt = stmt.where(ResumeSectionEmbedding.section_type == section_type)

@@ -58,6 +58,8 @@ class ResumeSectionEmbedding(Base):
     source_text = Column(Text, nullable=False)
     source_data = Column(JSONB, nullable=False)
     embedding = Column(Vector(1024), nullable=False)
+    embedding_space = Column(Text, nullable=False, default='legacy', server_default='legacy')
+    query_embedding = Column(Vector(1024), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=sql_text(UTC_NOW_SQL))
 
     __table_args__ = (
@@ -88,6 +90,7 @@ class ResumeEvidenceUnitEmbedding(Base):
     source_section = Column(Text)
     tags = Column(JSONB, default=dict)
     embedding = Column(Vector(1024), nullable=False)
+    embedding_space = Column(Text, nullable=False, default='legacy', server_default='legacy')
     years_value = Column(Float)
     years_context = Column(Text)
     is_total_years_claim = Column(Boolean, default=False)

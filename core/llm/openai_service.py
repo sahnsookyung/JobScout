@@ -306,6 +306,11 @@ class OpenAIService(LLMProvider):
         enable_thinking: Optional[bool] = None,
         requirements_system_prompt: Optional[str] = None,
     ):
+        self.model_config = model_config or {}
+        self.embedding_input_type_enabled = self.model_config.get("embedding_input_type_enabled", False)
+        if self.embedding_input_type_enabled and (embedding_headers or embedding_api_secret):
+            raise ValueError("Query/passage embedding endpoints must not receive legacy provider headers or secrets")
+        self._embedding_rate_limiter = None
         # Build extraction client
         # All budgeted retries must pass through our per-attempt accounting.
         client_retries = 0 if global_llm_budget_enabled() else OPENAI_CLIENT_MAX_RETRIES
@@ -329,6 +334,8 @@ class OpenAIService(LLMProvider):
             embedding_client_kwargs = {"max_retries": client_retries}
             if timeout_seconds:
                 embedding_client_kwargs["timeout"] = timeout_seconds
+            if self.embedding_input_type_enabled:
+                embedding_client_kwargs["timeout"] = self.model_config.get("embedding_timeout_seconds", 60)
             if embedding_api_key:
                 embedding_client_kwargs["api_key"] = embedding_api_key
             if embedding_base_url:
@@ -343,7 +350,6 @@ class OpenAIService(LLMProvider):
         else:
             self.embedding_client = None
 
-        self.model_config = model_config or {}
         self.extraction_model = self.model_config.get("extraction_model", "qwen3:14b")
         self.embedding_model = self.model_config.get("embedding_model", "qwen3-embedding:4b")
         self.embedding_dimensions = self.model_config.get("embedding_dimensions", 1024)
@@ -632,14 +638,13 @@ class OpenAIService(LLMProvider):
         """Generate embedding vector for text."""
         client = self.embedding_client if self.embedding_client else self.client
         self.last_usage = None
+        self._wait_for_embedding_slot()
         consume_global_llm_request()
-        response = client.embeddings.create(
-            input=text, model=self.embedding_model, dimensions=self.embedding_dimensions
-        )
+        response = client.embeddings.create(**self._embedding_request_kwargs(text, "passage"))
         self._record_usage(response)
-        return _validate_embedding_vector(response.data[0].embedding)
+        return self._validate_embedding_response(response, 1)[0]
 
-    def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+    def generate_embeddings_batch(self, texts: List[str], *, input_type: str = "passage") -> List[List[float]]:
         """Generate embeddings for multiple texts in a single API call.
 
         Sends texts in chunks of up to 32 to stay within API limits.
@@ -659,18 +664,15 @@ class OpenAIService(LLMProvider):
             @_llm_retry()
             def _call(chunk=chunk):
                 self.last_usage = None
+                self._wait_for_embedding_slot()
                 consume_global_llm_request(
                     estimated_tokens=self.estimate_budget_tokens("generate_embeddings_batch", chunk)
                 )
-                return client.embeddings.create(
-                    input=chunk, model=self.embedding_model, dimensions=self.embedding_dimensions
-                )
+                return client.embeddings.create(**self._embedding_request_kwargs(chunk, input_type))
 
             response = _call()
             chunk_tokens = self._record_usage(response)
-            results.extend(
-                _validate_embedding_vector(item.embedding) for item in response.data
-            )
+            results.extend(self._validate_embedding_response(response, len(chunk)))
             if chunk_tokens is None:
                 usage_available = False
             else:
@@ -679,6 +681,54 @@ class OpenAIService(LLMProvider):
         self.last_usage = {"total_tokens": total_tokens} if usage_available else None
 
         return results
+
+    def generate_query_embedding(self, text: str) -> List[float]:
+        if not self.embedding_input_type_enabled:
+            return self.generate_embedding(text)
+        return self.generate_embeddings_batch([text], input_type="query")[0]
+
+    def generate_query_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        return self.generate_embeddings_batch(texts, input_type="query")
+
+    def _embedding_request_kwargs(self, inputs: Any, input_type: str) -> Dict[str, Any]:
+        if input_type not in {"query", "passage"}:
+            raise ValueError("Embedding input_type must be query or passage")
+        kwargs = {"input": inputs, "model": self.embedding_model, "dimensions": self.embedding_dimensions}
+        if self.embedding_input_type_enabled:
+            kwargs.update(encoding_format="float", extra_body={"input_type": input_type, "truncate": "NONE"})
+        return kwargs
+
+    def _wait_for_embedding_slot(self) -> None:
+        if not self.embedding_input_type_enabled:
+            return
+        if self._embedding_rate_limiter is None:
+            from core.llm.provider_rate_limiter import ProviderRateLimiter
+            from core.redis_streams import get_redis_client
+
+            self._embedding_rate_limiter = ProviderRateLimiter(client_factory=get_redis_client)
+        # Extraction and embedding use one NVIDIA account and share its rate bucket.
+        self._embedding_rate_limiter.wait_for_slot(
+            provider_name="nvidia-extraction",
+            requests_per_minute=self.model_config.get("embedding_requests_per_minute", 10),
+            max_wait_seconds=65,
+        )
+
+    def _validate_embedding_response(self, response: Any, count: int) -> List[List[float]]:
+        if len(response.data) != count:
+            raise ValueError("Embedding API returned an unexpected vector count")
+        if self.embedding_input_type_enabled:
+            indices = [item.index for item in response.data]
+            if any(type(index) is not int for index in indices) or set(indices) != set(range(count)):
+                raise ValueError("Embedding API returned missing or duplicate indices")
+            items = sorted(response.data, key=lambda item: item.index)
+        else:
+            items = response.data
+        vectors = [_validate_embedding_vector(item.embedding) for item in items]
+        if self.embedding_input_type_enabled:
+            for vector in vectors:
+                if len(vector) != self.embedding_dimensions or not any(vector):
+                    raise ValueError("Embedding API returned an invalid dimension or zero vector")
+        return vectors
 
     def unload_model(self, model_name: str):
         """Unload model from Ollama (no-op for pure OpenAI)."""

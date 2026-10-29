@@ -1,6 +1,7 @@
 from typing import List, Optional, Tuple
 import logging
 
+from core.embedding_contract import LEGACY_EMBEDDING_SPACE, current_embedding_space
 from database.models import JobRequirementUnit
 from database.repository import JobRepository
 from core.matcher.models import RequirementEvidenceCandidate, RequirementMatchResult
@@ -85,6 +86,8 @@ class RequirementMatcher:
     def _requirement_embedding(self, req: JobRequirementUnit):
         row = getattr(req, "embedding_row", None)
         if row is None:
+            return None
+        if (getattr(row, 'embedding_space', None) or LEGACY_EMBEDDING_SPACE) != current_embedding_space():
             return None
         return getattr(row, "embedding", None)
 

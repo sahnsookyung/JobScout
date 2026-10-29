@@ -3,6 +3,7 @@ from typing import List, Optional, Any
 from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.orm import joinedload, selectinload
 
+from core.embedding_contract import current_embedding_space
 from database.models import (
     JobMatch,
     JobMatchRequirement,
@@ -10,6 +11,7 @@ from database.models import (
     SYSTEM_OWNER_ID,
 )
 from database.repositories.base import BaseRepository
+from database.repositories.embedding_contract import job_embeddings_ready_clause
 
 logger = logging.getLogger(__name__)
 _TENANT_ID_UNSET = object()
@@ -104,6 +106,8 @@ class MatchRepository(BaseRepository):
         filters = [
             JobMatch.resume_fingerprint == resume_fingerprint,
             JobMatch.job_content_hash == JobPost.content_hash,
+            JobMatch.embedding_space == current_embedding_space(),
+            job_embeddings_ready_clause(),
             JobPost.status == 'active',
             JobPost.is_extracted.is_(True),
             JobPost.is_embedded.is_(True),
@@ -163,6 +167,7 @@ class MatchRepository(BaseRepository):
                 JobMatch.job_post_id == JobPost.id,
                 JobMatch.resume_fingerprint == resume_fingerprint,
                 JobMatch.job_content_hash == JobPost.content_hash,
+                JobMatch.embedding_space == current_embedding_space(),
             )
             .exists()
         )
@@ -172,6 +177,7 @@ class MatchRepository(BaseRepository):
             JobPost.is_embedded.is_(True),
             JobPost.summary_embedding.isnot(None),
             ~reusable_exists,
+            job_embeddings_ready_clause(),
         )
         if tenant_id is not None:
             stmt = stmt.where(JobPost.tenant_id == tenant_id)

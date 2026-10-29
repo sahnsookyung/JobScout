@@ -283,6 +283,7 @@ class TestGetResumeSummaryEmbedding:
     def test_returns_embedding_when_summary_found(self):
         repo, mock_db = make_repo()
         mock_section = MagicMock()
+        mock_section.query_embedding = None
         mock_section.embedding = [0.1, 0.2, 0.3]
         mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_section]
         result = repo.get_resume_summary_embedding("fp-1")
@@ -297,6 +298,7 @@ class TestGetResumeSummaryEmbedding:
     def test_returns_none_when_embedding_is_none(self):
         repo, mock_db = make_repo()
         mock_section = MagicMock()
+        mock_section.query_embedding = None
         mock_section.embedding = None
         mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_section]
         result = repo.get_resume_summary_embedding("fp-1")
@@ -305,6 +307,7 @@ class TestGetResumeSummaryEmbedding:
     def test_returns_list_not_original_object(self):
         repo, mock_db = make_repo()
         mock_section = MagicMock()
+        mock_section.query_embedding = None
         mock_section.embedding = (0.1, 0.2)
         mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_section]
         result = repo.get_resume_summary_embedding("fp-1")

@@ -36,6 +36,7 @@ from core.llm.provider_chain import (
 from core.llm.provider_factory import build_llm_provider, runtime_llm_config_from_match_judge
 from core.redis_streams import _sanitize_log
 from core.resume_evidence_selection import select_relevant_resume_evidence_units
+from core.embedding_contract import current_embedding_space
 from database.models import (
     LLM_EVALUATION_DELETED,
     LLM_EVALUATION_FAILED,
@@ -1397,6 +1398,7 @@ class MatchLlmEvaluationService:
                 .filter(
                     ResumeEvidenceUnitEmbedding.owner_id == owner_id,
                     ResumeEvidenceUnitEmbedding.resume_fingerprint == resume_fingerprint,
+                    ResumeEvidenceUnitEmbedding.embedding_space == current_embedding_space(),
                 )
                 .order_by(
                     ResumeEvidenceUnitEmbedding.source_section.asc(),

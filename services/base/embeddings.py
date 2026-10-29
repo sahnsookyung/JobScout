@@ -197,7 +197,7 @@ def _process_requirement_embedding_batch(
 
     req_ids, req_texts = zip(*req_data)
     try:
-        req_vectors = ctx.job_etl_service.ai.generate_embeddings_batch(list(req_texts))
+        req_vectors = ctx.job_etl_service.ai.generate_query_embeddings_batch(list(req_texts))
         req_success = 0
         for req_id, vector in zip(req_ids, req_vectors):
             if stop_event.is_set():

@@ -263,6 +263,14 @@ class ResumeProfiler:
 
     def embed_evidence_units(self, evidence_units: List[ResumeEvidenceUnit]) -> None:
         """Generate embeddings for evidence units in-place."""
+        if getattr(self.ai, 'embedding_input_type_enabled', False) is True:
+            pending = [unit for unit in evidence_units if unit.embedding is None]
+            vectors = self.ai.generate_embeddings_batch([unit.text for unit in pending])
+            if len(vectors) != len(pending):
+                raise ValueError("Resume evidence embedding response count mismatch")
+            for unit, vector in zip(pending, vectors, strict=True):
+                unit.embedding = vector
+            return
         for unit in evidence_units:
             if unit.embedding is None:
                 unit.embedding = self.ai.generate_embedding(unit.text)
@@ -364,7 +372,16 @@ class ResumeProfiler:
                 'source_data': profile.summary.model_dump() if profile.summary else {},
             })
 
-        payload = [{**sec, 'embedding': self.ai.generate_embedding(sec['source_text'])} for sec in sections]
+        if getattr(self.ai, 'embedding_input_type_enabled', False) is True:
+            vectors = self.ai.generate_embeddings_batch([sec['source_text'] for sec in sections])
+            if len(vectors) != len(sections):
+                raise ValueError("Resume section embedding response count mismatch")
+            payload = [{**sec, 'embedding': vector} for sec, vector in zip(sections, vectors, strict=True)]
+            for section in payload:
+                if section['section_type'] == 'summary':
+                    section['query_embedding'] = self.ai.generate_query_embedding(section['source_text'])
+        else:
+            payload = [{**sec, 'embedding': self.ai.generate_embedding(sec['source_text'])} for sec in sections]
 
         if payload and self.store:
             self.store.save_resume_section_embeddings(

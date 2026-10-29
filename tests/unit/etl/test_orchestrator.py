@@ -500,7 +500,7 @@ class TestEmbedRequirementOne:
         from etl.orchestrator import JobETLService
 
         mock_ai = Mock()
-        mock_ai.generate_embedding.return_value = [0.1, 0.2, 0.3]
+        mock_ai.generate_query_embedding.return_value = [0.1, 0.2, 0.3]
 
         service = JobETLService(mock_ai)
 
@@ -511,7 +511,7 @@ class TestEmbedRequirementOne:
 
         service.embed_requirement_one(mock_repo, mock_req)
 
-        mock_ai.generate_embedding.assert_called_once_with(mock_req.text)
+        mock_ai.generate_query_embedding.assert_called_once_with(mock_req.text)
         mock_repo.save_requirement_embedding.assert_called_once()
 
     def test_embed_requirement_rejects_invalid_vector(self):
@@ -519,7 +519,7 @@ class TestEmbedRequirementOne:
         from etl.orchestrator import JobETLService
 
         mock_ai = Mock()
-        mock_ai.generate_embedding.return_value = [0.1, float("nan")]
+        mock_ai.generate_query_embedding.return_value = [0.1, float("nan")]
 
         service = JobETLService(mock_ai)
 
