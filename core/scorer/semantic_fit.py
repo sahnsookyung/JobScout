@@ -1233,15 +1233,22 @@ class LLMSemanticFitScorer:
             ],
         }
         if serialized_pairs:
-            assessment = self.ai_service.extract_structured_data(
-                text=json.dumps(payload),
-                schema_spec=SEMANTIC_FIT_SCHEMA_SPEC,
-                system_prompt=SEMANTIC_FIT_SYSTEM_PROMPT,
-                user_message=(
-                    "Evaluate the semantic fit between each job requirement and the paired resume evidence.\n\n"
-                    f"{json.dumps(payload)}"
-                ),
-            )
+            if config.semantic_fit.llm.compact_requirements:
+                from core.scorer.compact_fit import assess_compact_requirements
+
+                assessment = assess_compact_requirements(
+                    self.ai_service, serialized_pairs, config.semantic_fit.llm,
+                )
+            else:
+                assessment = self.ai_service.extract_structured_data(
+                    text=json.dumps(payload),
+                    schema_spec=SEMANTIC_FIT_SCHEMA_SPEC,
+                    system_prompt=SEMANTIC_FIT_SYSTEM_PROMPT,
+                    user_message=(
+                        "Evaluate the semantic fit between each job requirement and the paired resume evidence.\n\n"
+                        f"{json.dumps(payload)}"
+                    ),
+                )
             parsed = SemanticPairAssessmentResponse.model_validate(assessment)
             assessments = [
                 PairAssessment(
@@ -1267,9 +1274,11 @@ class LLMSemanticFitScorer:
             config=config,
             metadata=AssessmentScoringMetadata(
                 scorer_name=self.scorer_name,
-                scorer_version=self.scorer_version,
+                scorer_version=(f"{self.scorer_version}-compact-1"
+                                if config.semantic_fit.llm.compact_requirements else self.scorer_version),
                 provider_route="llm",
-                provider_id="llm",
+                provider_id=(config.semantic_fit.llm.model
+                             if config.semantic_fit.llm.compact_requirements else "llm"),
                 threshold=threshold,
                 latency_ms=round((time.perf_counter() - started_at) * 1000.0, 3),
                 model_summary=summary,
