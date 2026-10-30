@@ -98,6 +98,8 @@ def runtime_llm_config_from_fit(config: SemanticFitLlmConfig) -> RuntimeLLMConfi
         temperature=config.temperature,
         timeout_seconds=config.timeout_seconds,
         max_output_tokens=config.max_output_tokens,
+        structured_output_mode=config.structured_output_mode,
+        enable_thinking=config.enable_thinking,
     )
 
 

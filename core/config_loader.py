@@ -720,6 +720,11 @@ class SemanticFitLlmConfig(BaseModel):
     timeout_seconds: int = 20
     max_input_tokens: int = 4000
     max_output_tokens: int = Field(default=DEFAULT_LLM_MAX_OUTPUT_TOKENS, ge=1)
+    structured_output_mode: Optional[Literal["auto", "json_schema", "json_object"]] = None
+    enable_thinking: Optional[bool] = None
+    compact_requirements: bool = False
+    compact_max_requirements: int = Field(default=8, ge=1, le=32)
+    compact_max_request_bytes: int = Field(default=24000, ge=2000, le=128000)
 
     def model_post_init(self, __context: Any) -> None:
         del __context
@@ -758,6 +763,11 @@ class SemanticFitConfig(BaseModel):
     serialization: SemanticFitSerializationConfig = Field(
         default_factory=SemanticFitSerializationConfig
     )
+
+    @field_validator("deploy_allowed_modes", "baseline_allowed_modes", mode="before")
+    @classmethod
+    def _parse_mode_list(cls, value: Any) -> Any:
+        return json.loads(value) if isinstance(value, str) else value
 
     def _normalize_allowed_modes(self) -> None:
         deploy_allowed = list(
@@ -1126,6 +1136,9 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     ),
     (["FIT_SEMANTIC_ENABLED"], ["matching", "scorer", "semantic_fit", "enabled"]),
     (["FIT_SEMANTIC_DEFAULT_MODE"], ["matching", "scorer", "semantic_fit", "default_mode"]),
+    (["FIT_SEMANTIC_DEPLOY_ALLOWED_MODES"], ["matching", "scorer", "semantic_fit", "deploy_allowed_modes"]),
+    (["FIT_SEMANTIC_BASELINE_ALLOWED_MODES"], ["matching", "scorer", "semantic_fit", "baseline_allowed_modes"]),
+    (["FIT_SEMANTIC_THRESHOLD_FALLBACK_ENABLED"], ["matching", "scorer", "semantic_fit", "threshold_fallback_enabled"]),
     (["FIT_SEMANTIC_RECALL_TOP_K"], ["matching", "scorer", "semantic_fit", "recall_top_k"]),
     (
         ["EVIDENCE_RERANK_ENABLED"],
@@ -1235,6 +1248,13 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["FIT_LLM_API_KEY"], ["matching", "scorer", "semantic_fit", "llm", "api_key"]),
     (["FIT_LLM_API_SECRET"], ["matching", "scorer", "semantic_fit", "llm", "api_secret"]),
     (["FIT_LLM_MODEL"], ["matching", "scorer", "semantic_fit", "llm", "model"]),
+    (["FIT_LLM_ENABLED"], ["matching", "scorer", "semantic_fit", "llm", "enabled"]),
+    (["FIT_LLM_TIMEOUT_SECONDS"], ["matching", "scorer", "semantic_fit", "llm", "timeout_seconds"]),
+    (["FIT_LLM_MAX_OUTPUT_TOKENS"], ["matching", "scorer", "semantic_fit", "llm", "max_output_tokens"]),
+    (["FIT_LLM_STRUCTURED_OUTPUT_MODE"], ["matching", "scorer", "semantic_fit", "llm", "structured_output_mode"]),
+    (["FIT_LLM_ENABLE_THINKING"], ["matching", "scorer", "semantic_fit", "llm", "enable_thinking"]),
+    (["FIT_LLM_COMPACT_REQUIREMENTS"], ["matching", "scorer", "semantic_fit", "llm", "compact_requirements"]),
+    (["MATCHER_BATCH_SIZE"], ["matching", "matcher", "batch_size"]),
     (["REDIS_URL"], ["notifications", "redis_url"]),
     (["BASE_URL"], ["notifications", "base_url"]),
     (["NOTIFICATION_RATE_LIMIT_MAX_WAIT"], ["notifications", "rate_limit_max_wait_seconds"]),
