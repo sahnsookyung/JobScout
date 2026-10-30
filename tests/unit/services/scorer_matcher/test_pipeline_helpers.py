@@ -1770,6 +1770,36 @@ class TestDtoRankingSnapshot:
 
 
 class TestSaveMatchesBatch:
+    @pytest.mark.parametrize("recalculate", [False, True])
+    @pytest.mark.parametrize("old_space,expected_progress", [("legacy", 1), ("new-space", 0)])
+    def test_embedding_migration_counts_progress_without_stale_replacement(
+        self, monkeypatch, recalculate, old_space, expected_progress,
+    ):
+        existing = SimpleNamespace(
+            id="existing-match-1", status="active", job_content_hash="hash-1",
+            embedding_space=old_space, notified=True, is_hidden=True,
+        )
+        repo = _publication_repo()
+        repo.match.get_existing_match.return_value = existing
+        monkeypatch.setattr("services.scorer_matcher.pipeline.current_embedding_space", lambda: "new-space")
+        save = Mock(return_value=existing)
+        monkeypatch.setattr("services.scorer_matcher.pipeline.save_match_to_db", save)
+
+        result = _save_matches_batch(
+            [_persistable_dto()], "fp-123", SimpleNamespace(recalculate_existing=recalculate), repo=repo,
+        )
+
+        assert result.backlog_processed_count == expected_progress
+        assert result.saved_count == 1
+        assert result.job_match_ids_by_job_id == {"job-1": "existing-match-1"}
+        assert existing.notified and existing.is_hidden
+        assert existing.status == "active"
+        if expected_progress or recalculate:
+            save.assert_called_once()
+            assert save.call_args.kwargs["is_stale_replacement"] is False
+        else:
+            save.assert_not_called()
+
     @patch("services.scorer_matcher.pipeline.save_match_to_db")
     @patch("services.scorer_matcher.pipeline.job_uow")
     def test_save_matches_batch_refreshes_existing_active_snapshot(self, mock_uow, mock_save):
