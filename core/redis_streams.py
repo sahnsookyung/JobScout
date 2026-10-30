@@ -63,10 +63,15 @@ def validate_job_payload(payload: dict, required_fields: list[str]) -> tuple[boo
     return True, ""
 
 
-def enqueue_job(stream: str, payload: dict) -> str:
+def enqueue_job(stream: str, payload: dict, *, concurrency_task_id: Optional[str] = None) -> str:
+    """Enqueue work; an explicit continuation may reuse its active parent lease."""
     valid, error = validate_job_payload(payload, ["task_id"])
     if not valid:
         raise ValueError(f"Invalid job payload: {error}")
+    if concurrency_task_id is not None and (
+        not concurrency_task_id or payload.get("parent_task_id") != concurrency_task_id
+    ):
+        raise ValueError("Continuation concurrency_task_id must match parent_task_id")
 
     try:
         serialized = {k: json.dumps(v) for k, v in payload.items()}
@@ -75,14 +80,17 @@ def enqueue_job(stream: str, payload: dict) -> str:
 
     client = get_redis_client()
     concurrency_state = "disabled"
+    slot_task_id = concurrency_task_id or payload["task_id"]
     owner_id = payload.get("owner_id")
     if owner_id is not None:
         from core.public_concurrency import acquire_public_task_slot
 
+        slot_options = {"require_existing": True} if concurrency_task_id is not None else {}
         concurrency_state = acquire_public_task_slot(
             client,
-            task_id=payload["task_id"],
+            task_id=slot_task_id,
             owner_id=owner_id,
+            **slot_options,
         )
 
     try:
@@ -100,7 +108,7 @@ def enqueue_job(stream: str, payload: dict) -> str:
             from core.public_concurrency import release_public_task_slot
 
             try:
-                release_public_task_slot(client, payload["task_id"])
+                release_public_task_slot(client, slot_task_id)
             except Exception:
                 logger.exception(
                     "Could not release public task slot after enqueue failure for %s",

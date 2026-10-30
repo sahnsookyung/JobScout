@@ -18,6 +18,10 @@ local current = redis.call('GET', KEYS[1])
 local ttl = tonumber(ARGV[4])
 local expires_at = tonumber(ARGV[3]) + ttl
 
+if ARGV[6] == '1' and (current ~= ARGV[1] or redis.call('GET', KEYS[3]) ~= ARGV[2]) then
+  return -1
+end
+
 if current == ARGV[1] then
   redis.call('EXPIRE', KEYS[1], ttl)
   redis.call('ZADD', KEYS[2], expires_at, ARGV[1])
@@ -103,8 +107,9 @@ def acquire_public_task_slot(
     task_id: Any,
     owner_id: Any | None,
     global_limit: int = 2,
+    require_existing: bool = False,
 ) -> str:
-    """Acquire, refresh, or transfer a request lease to a durable task."""
+    """Acquire a task lease, or only refresh its owner's existing lease."""
     if not public_task_concurrency_enabled() or owner_id is None:
         return "disabled"
     task_key = str(task_id)
@@ -124,6 +129,7 @@ def acquire_public_task_slot(
                 int(time.time()),
                 _ttl_seconds(),
                 max(int(global_limit), 1),
+                "1" if require_existing else "0",
             )
         )
     except PublicTaskConcurrencyError:
