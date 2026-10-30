@@ -1,9 +1,13 @@
 """Bounded requirement judgments with local identifiers and compact responses."""
 
 import json
+import logging
 from typing import Any, Dict, List, Literal, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
+
+
+logger = logging.getLogger(__name__)
 
 
 COMPACT_FIT_PROMPT = """Evaluate resume evidence against each job requirement.
@@ -13,6 +17,11 @@ candidates list. Evidence IDs restart at zero for each requirement; never use
 a candidate from another requirement. Judge that evidence independently of the other
 requirements. Do not infer unstated skills, experience, degrees, or licenses.
 Technology, duration, proficiency, responsibility, and negation all matter.
+Treat "or", "such as", and "e.g." as alternatives/examples, not a demand for
+all listed technologies. Distinguish those from explicit AND requirements.
+A tool name alone proves neither years of experience nor leadership/autonomy.
+Using or evaluating an ML model does not demonstrate training or fine-tuning it.
+For duration constraints require an explicit duration in the supplied evidence.
 covered means the evidence clearly satisfies every explicit condition;
 partial means relevant but incomplete; missing means unsupported.
 Return exactly one judgment for every requirement_id, including missing ones.
@@ -95,21 +104,29 @@ def assess_compact_requirements(provider: Any, pairs: List[Any], config: Any) ->
     for groups in batches:
         payload, pairs_by_ids = _payload(groups)
         encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-        response = provider.extract_structured_data(
-            text=encoded,
-            schema_spec=COMPACT_SCHEMA_SPEC,
-            system_prompt=COMPACT_FIT_PROMPT,
-            user_message=encoded,
-        )
-        parsed = CompactResponse.model_validate(response)
         expected_ids = set(range(len(groups)))
-        actual_ids = [item.requirement_id for item in parsed.judgments]
-        if len(actual_ids) != len(expected_ids) or set(actual_ids) != expected_ids:
-            raise ValueError("Compact fit response has missing, duplicate, or unknown requirements")
+        for attempt in range(2):
+            try:
+                response = provider.extract_structured_data(
+                    text=encoded,
+                    schema_spec=COMPACT_SCHEMA_SPEC,
+                    system_prompt=COMPACT_FIT_PROMPT,
+                    user_message=encoded,
+                )
+                parsed = CompactResponse.model_validate(response)
+                actual_ids = [item.requirement_id for item in parsed.judgments]
+                if len(actual_ids) != len(expected_ids) or set(actual_ids) != expected_ids:
+                    raise ValueError("Compact fit response has missing, duplicate, or unknown requirements")
+                if any((item.requirement_id, item.evidence_id) not in pairs_by_ids for item in parsed.judgments):
+                    raise ValueError("Compact fit response selected evidence outside the requirement's candidates")
+                break
+            except ValueError as exc:
+                if attempt == 1:
+                    raise
+                logger.warning("Compact fit response validation failed; retrying once (%s)", type(exc).__name__)
+        # Append only after the entire response passes validation, avoiding duplicates on retry.
         for item in parsed.judgments:
-            pair = pairs_by_ids.get((item.requirement_id, item.evidence_id))
-            if pair is None:
-                raise ValueError("Compact fit response selected evidence outside the requirement's candidates")
+            pair = pairs_by_ids[item.requirement_id, item.evidence_id]
             judgments.append({
                 "pair_id": pair.pair_id,
                 "requirement_id": pair.requirement_id,

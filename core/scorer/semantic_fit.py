@@ -1274,7 +1274,7 @@ class LLMSemanticFitScorer:
             config=config,
             metadata=AssessmentScoringMetadata(
                 scorer_name=self.scorer_name,
-                scorer_version=(f"{self.scorer_version}-compact-1"
+                scorer_version=(f"{self.scorer_version}-compact-2"
                                 if config.semantic_fit.llm.compact_requirements else self.scorer_version),
                 provider_route="llm",
                 provider_id=(config.semantic_fit.llm.model

@@ -1,0 +1,102 @@
+{
+  "label_status": "draft_synthetic_requires_human_adjudication",
+  "description": "Generalized controls motivated by real-data audit; covered acceptance is the primary gate; partial/missing distinction is separately reported.",
+  "cases": [
+    {
+      "id": "duration_tool",
+      "requirement": "At least three years of professional software engineering experience.",
+      "evidence": "Used CircleCI and Jenkins for builds.",
+      "expected": "missing"
+    },
+    {
+      "id": "duration_explicit",
+      "requirement": "At least three years of professional software engineering experience.",
+      "evidence": "Worked as a full-time software engineer for four years.",
+      "expected": "covered"
+    },
+    {
+      "id": "duration_short",
+      "requirement": "At least five years of professional Java experience.",
+      "evidence": "Two years writing Java services in production.",
+      "expected": "partial"
+    },
+    {
+      "id": "duration_range",
+      "requirement": "2\u201312+ years of industry software engineering experience.",
+      "evidence": "Experienced with GitHub Actions.",
+      "expected": "missing"
+    },
+    {
+      "id": "training_evaluation",
+      "requirement": "Experience fine-tuning or post-training large language models.",
+      "evidence": "Built a retrieval pipeline and used an LLM to judge answer quality.",
+      "expected": "missing"
+    },
+    {
+      "id": "training_explicit",
+      "requirement": "Experience fine-tuning or post-training large language models.",
+      "evidence": "Fine-tuned an open language model with LoRA and supervised instruction examples.",
+      "expected": "covered"
+    },
+    {
+      "id": "api_examples",
+      "requirement": "Experience with API technologies such as GraphQL, gRPC, and REST.",
+      "evidence": "Built and maintained production REST APIs.",
+      "expected": "covered"
+    },
+    {
+      "id": "api_conjunction",
+      "requirement": "Production experience with both GraphQL and gRPC.",
+      "evidence": "Built REST APIs; no GraphQL or gRPC experience.",
+      "expected": "missing"
+    },
+    {
+      "id": "cloud_alternative",
+      "requirement": "Experience with AWS, Azure, or Google Cloud.",
+      "evidence": "Deployed services to Azure.",
+      "expected": "covered"
+    },
+    {
+      "id": "cloud_conjunction",
+      "requirement": "Production experience with both AWS and Azure.",
+      "evidence": "Operated AWS services for three years.",
+      "expected": "partial"
+    },
+    {
+      "id": "frontend_backend",
+      "requirement": "Experience shipping both frontend and backend software.",
+      "evidence": "Implemented Java backend services.",
+      "expected": "partial"
+    },
+    {
+      "id": "full_stack",
+      "requirement": "Experience shipping both frontend and backend software.",
+      "evidence": "Shipped a React web frontend and a FastAPI backend.",
+      "expected": "covered"
+    },
+    {
+      "id": "autonomy_tool",
+      "requirement": "Experience independently owning and leading software projects.",
+      "evidence": "Familiar with Kubernetes.",
+      "expected": "missing"
+    },
+    {
+      "id": "autonomy_explicit",
+      "requirement": "Experience independently owning and leading software projects.",
+      "evidence": "Independently scoped and led a service migration from design through launch.",
+      "expected": "covered"
+    },
+    {
+      "id": "license_tool",
+      "requirement": "Licensed professional civil engineer.",
+      "evidence": "Experienced in AutoCAD.",
+      "expected": "missing"
+    },
+    {
+      "id": "license_explicit",
+      "requirement": "Licensed professional civil engineer.",
+      "evidence": "Holds an active professional civil engineering license.",
+      "expected": "covered"
+    }
+  ]
+}

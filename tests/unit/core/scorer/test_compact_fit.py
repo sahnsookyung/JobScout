@@ -101,6 +101,7 @@ def test_empty_input_never_calls_provider():
 def test_fit_runtime_and_environment_forward_explicit_options(monkeypatch):
     for key, value in {
         "FIT_LLM_ENABLED": "true", "FIT_LLM_COMPACT_REQUIREMENTS": "true",
+        "FIT_LLM_COMPACT_MAX_REQUIREMENTS": "4", "FIT_LLM_COMPACT_MAX_REQUEST_BYTES": "20000",
         "FIT_LLM_ENABLE_THINKING": "false", "FIT_LLM_TIMEOUT_SECONDS": "60",
         "FIT_LLM_MAX_OUTPUT_TOKENS": "2048", "FIT_LLM_STRUCTURED_OUTPUT_MODE": "json_object",
         "FIT_LLM_BASE_URL": "https://example.test/v1", "FIT_LLM_API_KEY": "fixture",
@@ -113,6 +114,8 @@ def test_fit_runtime_and_environment_forward_explicit_options(monkeypatch):
     config = load_config()
     fit = config.matching.scorer.semantic_fit.llm
     assert fit.enabled and fit.compact_requirements
+    assert fit.compact_max_requirements == 4
+    assert fit.compact_max_request_bytes == 20000
     assert config.matching.scorer.semantic_fit.deploy_allowed_modes == ["llm"]
     assert not config.matching.scorer.semantic_fit.threshold_fallback_enabled
     assert config.matching.matcher.batch_size == 20
@@ -149,7 +152,7 @@ def test_compact_judgment_selects_recalled_evidence_and_updates_final_score():
     assert result.matched_requirements[0].evidence is right
     assert result.penalties == 0
     assert result.fit_score > 80
-    assert result.fit_scorer["version"].endswith("-compact-1")
+    assert result.fit_scorer["version"].endswith("-compact-2")
     assert result.fit_components["semantic_fit_diagnostics"]["provider_id"] == "fixture-model"
     assert "Untrusted job context" not in provider.extract_structured_data.call_args.kwargs["text"]
 
@@ -159,3 +162,30 @@ def test_invalid_allowed_modes_are_rejected(value, monkeypatch):
     monkeypatch.setenv("FIT_SEMANTIC_DEPLOY_ALLOWED_MODES", value)
     with pytest.raises(ValueError):
         load_config()
+
+
+def test_retries_malformed_batch_once_without_leaking_partial_judgments():
+    provider = Mock()
+    attempts = 0
+
+    def respond(**kwargs):
+        nonlocal attempts
+        attempts += 1
+        result = judge(**kwargs)
+        if attempts == 1:
+            result["judgments"][-1]["evidence_id"] = 99
+        return result
+
+    provider.extract_structured_data.side_effect = respond
+    result = assess_compact_requirements(provider, [pair("r1", "Python"), pair("r2", "SQL")], SemanticFitLlmConfig())
+    assert attempts == 2
+    assert len(result["pair_judgments"]) == 2
+    assert {item["requirement_id"] for item in result["pair_judgments"]} == {"r1", "r2"}
+
+
+def test_repeated_invalid_response_stops_after_two_requests():
+    provider = Mock()
+    provider.extract_structured_data.return_value = {"judgments": []}
+    with pytest.raises(ValueError, match="missing"):
+        assess_compact_requirements(provider, [pair("r1", "Python")], SemanticFitLlmConfig())
+    assert provider.extract_structured_data.call_count == 2
