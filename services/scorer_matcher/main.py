@@ -332,7 +332,7 @@ def _maybe_enqueue_next_matching_page(
             payload["resume_upload_id"] = upload_id
         if pipeline_run_id is not None:
             payload["pipeline_run_id"] = pipeline_run_id
-        enqueue_job(STREAM_MATCHING, payload)
+        enqueue_job(STREAM_MATCHING, payload, concurrency_task_id=parent_task_id)
         return [{
             "code": "matching_backlog_page_enqueued",
             "pending_matching": str(pending_matching),

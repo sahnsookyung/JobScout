@@ -385,6 +385,7 @@ class TestMatcherConsumer:
                 "matching_page": 2,
                 "owner_id": "owner-123",
             },
+            concurrency_task_id="parent-task",
         )
 
     def test_maybe_enqueue_next_matching_page_stops_on_no_progress(self):
