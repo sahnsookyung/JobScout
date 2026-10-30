@@ -152,7 +152,7 @@ def test_compact_judgment_selects_recalled_evidence_and_updates_final_score():
     assert result.matched_requirements[0].evidence is right
     assert result.penalties == 0
     assert result.fit_score > 80
-    assert result.fit_scorer["version"].endswith("-compact-1")
+    assert result.fit_scorer["version"].endswith("-compact-2")
     assert result.fit_components["semantic_fit_diagnostics"]["provider_id"] == "fixture-model"
     assert "Untrusted job context" not in provider.extract_structured_data.call_args.kwargs["text"]
 
@@ -162,3 +162,30 @@ def test_invalid_allowed_modes_are_rejected(value, monkeypatch):
     monkeypatch.setenv("FIT_SEMANTIC_DEPLOY_ALLOWED_MODES", value)
     with pytest.raises(ValueError):
         load_config()
+
+
+def test_retries_malformed_batch_once_without_leaking_partial_judgments():
+    provider = Mock()
+    attempts = 0
+
+    def respond(**kwargs):
+        nonlocal attempts
+        attempts += 1
+        result = judge(**kwargs)
+        if attempts == 1:
+            result["judgments"][-1]["evidence_id"] = 99
+        return result
+
+    provider.extract_structured_data.side_effect = respond
+    result = assess_compact_requirements(provider, [pair("r1", "Python"), pair("r2", "SQL")], SemanticFitLlmConfig())
+    assert attempts == 2
+    assert len(result["pair_judgments"]) == 2
+    assert {item["requirement_id"] for item in result["pair_judgments"]} == {"r1", "r2"}
+
+
+def test_repeated_invalid_response_stops_after_two_requests():
+    provider = Mock()
+    provider.extract_structured_data.return_value = {"judgments": []}
+    with pytest.raises(ValueError, match="missing"):
+        assess_compact_requirements(provider, [pair("r1", "Python")], SemanticFitLlmConfig())
+    assert provider.extract_structured_data.call_count == 2
