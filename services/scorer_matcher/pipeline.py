@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 from core.app_context import AppContext
 from core.config_loader import PreferencesConfig
+from core.embedding_contract import LEGACY_EMBEDDING_SPACE, current_embedding_space
 from core.llm_evaluation_queue import enqueue_llm_top_n_for_selection
 from core.match_selection import (
     MatchSelectionItemSnapshot,
@@ -1585,6 +1586,7 @@ def _save_matches_batch(
     tenant_id = _effective_tenant_id(repo, tenant_id)
     saved_count = 0
     backlog_processed_count = 0
+    embedding_space = current_embedding_space()
     active_job_ids: set[str] = set()
     job_match_ids_by_job_id: dict[str, str] = {}
     for dto in scored_match_dtos:
@@ -1596,9 +1598,13 @@ def _save_matches_batch(
                 tenant_id=tenant_id,
             )
 
-            # Refreshing cached selection scores is a write, but it does not
-            # consume pending work and must not justify another matching page.
-            if existing is None or existing.job_content_hash != dto.job.content_hash:
+            embedding_space_changed = existing is not None and (
+                (getattr(existing, "embedding_space", None) or LEGACY_EMBEDDING_SPACE)
+                != embedding_space
+            )
+            # A migrated match consumes pending work even when job text is unchanged.
+            # Refreshing a current-space cached selection must still count as zero.
+            if existing is None or existing.job_content_hash != dto.job.content_hash or embedding_space_changed:
                 backlog_processed_count += 1
             if existing and existing.status == 'active':
                 if existing.job_content_hash != dto.job.content_hash:
@@ -1618,7 +1624,7 @@ def _save_matches_batch(
                     job_match_ids_by_job_id[str(dto.job.id)] = str(match_record.id)
                     continue
 
-                if not matching_config.recalculate_existing:
+                if not matching_config.recalculate_existing and not embedding_space_changed:
                     logger.debug("Refreshing existing active match snapshot for job %s", dto.job.id)
                     existing.job_similarity = dto.job_similarity
                     existing.fit_score = dto.fit_score
