@@ -1254,6 +1254,8 @@ DEFAULT_ENV_MAPPINGS: tuple[EnvMapping, ...] = (
     (["FIT_LLM_STRUCTURED_OUTPUT_MODE"], ["matching", "scorer", "semantic_fit", "llm", "structured_output_mode"]),
     (["FIT_LLM_ENABLE_THINKING"], ["matching", "scorer", "semantic_fit", "llm", "enable_thinking"]),
     (["FIT_LLM_COMPACT_REQUIREMENTS"], ["matching", "scorer", "semantic_fit", "llm", "compact_requirements"]),
+    (["FIT_LLM_COMPACT_MAX_REQUIREMENTS"], ["matching", "scorer", "semantic_fit", "llm", "compact_max_requirements"]),
+    (["FIT_LLM_COMPACT_MAX_REQUEST_BYTES"], ["matching", "scorer", "semantic_fit", "llm", "compact_max_request_bytes"]),
     (["MATCHER_BATCH_SIZE"], ["matching", "matcher", "batch_size"]),
     (["REDIS_URL"], ["notifications", "redis_url"]),
     (["BASE_URL"], ["notifications", "base_url"]),

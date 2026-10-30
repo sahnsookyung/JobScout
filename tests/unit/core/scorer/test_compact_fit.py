@@ -101,6 +101,7 @@ def test_empty_input_never_calls_provider():
 def test_fit_runtime_and_environment_forward_explicit_options(monkeypatch):
     for key, value in {
         "FIT_LLM_ENABLED": "true", "FIT_LLM_COMPACT_REQUIREMENTS": "true",
+        "FIT_LLM_COMPACT_MAX_REQUIREMENTS": "4", "FIT_LLM_COMPACT_MAX_REQUEST_BYTES": "20000",
         "FIT_LLM_ENABLE_THINKING": "false", "FIT_LLM_TIMEOUT_SECONDS": "60",
         "FIT_LLM_MAX_OUTPUT_TOKENS": "2048", "FIT_LLM_STRUCTURED_OUTPUT_MODE": "json_object",
         "FIT_LLM_BASE_URL": "https://example.test/v1", "FIT_LLM_API_KEY": "fixture",
@@ -113,6 +114,8 @@ def test_fit_runtime_and_environment_forward_explicit_options(monkeypatch):
     config = load_config()
     fit = config.matching.scorer.semantic_fit.llm
     assert fit.enabled and fit.compact_requirements
+    assert fit.compact_max_requirements == 4
+    assert fit.compact_max_request_bytes == 20000
     assert config.matching.scorer.semantic_fit.deploy_allowed_modes == ["llm"]
     assert not config.matching.scorer.semantic_fit.threshold_fallback_enabled
     assert config.matching.matcher.batch_size == 20
