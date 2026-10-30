@@ -10,6 +10,7 @@ from core.llm.interfaces import LLMProvider
 from core.llm.provider_factory import build_llm_provider, runtime_llm_config_from_fit
 from core.matcher import JobMatchPreliminary
 from core.scorer.coverage import calculate_requirement_coverage
+from core.scorer.fit_score import calculate_fit_score
 from core.scorer.models import ScoredJobMatch
 from core.scorer import penalties as penalty_calculations
 from core.scorer.semantic_fit import (
@@ -176,6 +177,24 @@ class ScoringService:
             owner_id=owner_id,
         )
         fit_components = dict(semantic_fit.fit_components)
+        # Semantic judgments can replace both coverage and the selected evidence.
+        # Penalties must describe those final judgments, not the retrieval cutoff.
+        final_penalties, penalty_details = penalty_calculations.calculate_fit_penalties(
+            matched_requirements=semantic_fit.matched_requirements,
+            missing_requirements=semantic_fit.missing_requirements,
+            config=self.config,
+            experience_sections=None,
+        )
+        final_score = semantic_fit.fit_score
+        if final_penalties != fit_penalties:
+            final_score, final_components = calculate_fit_score(
+                job_similarity=preliminary.job_similarity,
+                matched_requirements=semantic_fit.matched_requirements,
+                missing_requirements=semantic_fit.missing_requirements,
+                fit_penalties=final_penalties,
+                config=self.config,
+            )
+            fit_components.update(final_components)
         preferred_requirement_coverage = calculate_requirement_coverage(
             semantic_fit.matched_requirements,
             semantic_fit.missing_requirements,
@@ -186,7 +205,7 @@ class ScoringService:
 
         return ScoredJobMatch(
             job=job,
-            fit_score=semantic_fit.fit_score,
+            fit_score=final_score,
             fit_components=fit_components,
             preference_components={},
             fit_confidence=semantic_fit.fit_confidence,
@@ -196,7 +215,7 @@ class ScoringService:
                 "version": semantic_fit.scorer_version,
             },
             base_score=fit_components.get("core", 0.0) * 100.0,
-            penalties=fit_penalties,
+            penalties=final_penalties,
             jd_required_coverage=fit_components["required_coverage"],
             jd_preferred_requirement_coverage=preferred_requirement_coverage,
             job_similarity=preliminary.job_similarity,
