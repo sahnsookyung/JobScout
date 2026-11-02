@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import bindparam, create_engine, text
 from sqlalchemy.engine import Connection, Engine
 
 SNAPSHOT_PATH = Path(__file__).with_name("schema_snapshot.json")
@@ -151,7 +151,9 @@ def _indexes(conn: Connection) -> list[dict[str, Any]]:
               AND pc.oid IS NULL
             ORDER BY t.relname, c.relname
             """
-        ).bindparams(system_tables=tuple(_SYSTEM_TABLE_NAMES) or ("",))
+        ).bindparams(
+            bindparam("system_tables", tuple(_SYSTEM_TABLE_NAMES) or ("",), expanding=True)
+        )
     ).fetchall()
     return [
         {
@@ -183,7 +185,9 @@ def _constraints(conn: Connection) -> list[dict[str, Any]]:
               AND tc.table_name NOT IN :system_tables
             ORDER BY tc.table_name, tc.constraint_name
             """
-        ).bindparams(system_tables=tuple(_SYSTEM_TABLE_NAMES) or ("",))
+        ).bindparams(
+            bindparam("system_tables", tuple(_SYSTEM_TABLE_NAMES) or ("",), expanding=True)
+        )
     ).fetchall()
     return [
         {
