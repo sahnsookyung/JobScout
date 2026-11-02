@@ -19,7 +19,7 @@ dependencies = [
     "lxml>=6.1.2",
     "python-docx>=1.2.0",
     "pypdf>=6.21.2",
-    "xxhash>=3.5.0",
+    "xxhash>=4.0.2",
     "prometheus-client>=0.26.0",
 ]
 
