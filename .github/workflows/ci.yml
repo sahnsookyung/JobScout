@@ -38,9 +38,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Python 3.14.3 is published for Ubuntu 24.04, not the new ubuntu-latest 26.04.
   python-unit:
     name: Python Unit Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -89,7 +90,7 @@ jobs:
 
   python-security-concurrency:
     name: Python Security and Concurrency Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -127,7 +128,7 @@ jobs:
 
   python-db-redis:
     name: Python DB and Redis Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     permissions:
       contents: read
@@ -165,7 +166,7 @@ jobs:
 
   python-performance:
     name: Python Bounded Performance Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -259,7 +260,7 @@ jobs:
 
   integration:
     name: Integration Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     permissions:
       contents: read
@@ -349,7 +350,7 @@ jobs:
 
   e2e-resume-flow:
     name: E2E Resume Flow
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     # Skip on fork PRs — Docker compose builds are expensive and secrets are
     # unavailable on untrusted fork runs. The "require approval for outside
