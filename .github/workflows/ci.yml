@@ -298,7 +298,7 @@ jobs:
             tests/integration/test_resume_pipeline_lifecycle.py \
             tests/integration/test_user_wants_pipeline.py \
             tests/integration/services/test_services_lifespan.py \
-            -q
+            -vv --durations=10 -o faulthandler_timeout=120
 
       - name: Run schema snapshot parity
         run: |
