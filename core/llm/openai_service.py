@@ -12,7 +12,6 @@ import copy
 import math
 import re
 import requests
-import httpx
 
 import openai
 from openai import OpenAI
@@ -322,10 +321,9 @@ class OpenAIService(LLMProvider):
         if base_url:
             client_kwargs["base_url"] = base_url
 
-        # If custom headers provided, create httpx client with headers
+        # Let the SDK manage its transport while preserving provider headers.
         if extraction_headers:
-            http_client = httpx.Client(headers=extraction_headers)
-            client_kwargs["http_client"] = http_client
+            client_kwargs["default_headers"] = extraction_headers
 
         self.client = OpenAI(**client_kwargs)
 
@@ -341,10 +339,8 @@ class OpenAIService(LLMProvider):
             if embedding_base_url:
                 embedding_client_kwargs["base_url"] = embedding_base_url
 
-            # If custom headers provided for embedding, create httpx client with headers
             if embedding_headers:
-                http_client = httpx.Client(headers=embedding_headers)
-                embedding_client_kwargs["http_client"] = http_client
+                embedding_client_kwargs["default_headers"] = embedding_headers
 
             self.embedding_client = OpenAI(**embedding_client_kwargs)
         else:

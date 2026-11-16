@@ -13,7 +13,7 @@
 #   Compensating controls: action pinned to immutable commit SHA; uv binary
 #   version also explicitly pinned via the `version:` input.
 #   Exception must be reviewed quarterly (policy §31.3).
-#   Action SHA: c18668ad3cf93ea998bef934396af7bb5c839dc7 — verified 2026-10-11
+#   Action SHA: 68559e99cc807c1eb7e9238fd43a15bba460eec2 — verified 2026-11-23
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: CI
@@ -57,19 +57,19 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v10.2.0 — verified 2026-10-11
+        # astral-sh/setup-uv v10.3.3 — verified 2026-11-23
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
         with:
-          version: "0.11.2"
+          version: "0.13.6"
 
       - name: Set up Python
-        # actions/setup-python v6.2.0 — verified 2026-03-30
+        # actions/setup-python v7.1.0 — verified 2026-11-23
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: "3.14.3"
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync --locked --all-groups
 
       - name: Lint database migration surface
         run: |
@@ -106,19 +106,19 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v10.2.0 — verified 2026-10-11
+        # astral-sh/setup-uv v10.3.3 — verified 2026-11-23
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
         with:
-          version: "0.11.2"
+          version: "0.13.6"
 
       - name: Set up Python
-        # actions/setup-python v6.2.0 — verified 2026-03-30
+        # actions/setup-python v7.1.0 — verified 2026-11-23
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: "3.14.3"
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync --locked --all-groups
 
       - name: Run security and concurrency tests
         run: |
@@ -144,19 +144,19 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v10.2.0 — verified 2026-10-11
+        # astral-sh/setup-uv v10.3.3 — verified 2026-11-23
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
         with:
-          version: "0.11.2"
+          version: "0.13.6"
 
       - name: Set up Python
-        # actions/setup-python v6.2.0 — verified 2026-03-30
+        # actions/setup-python v7.1.0 — verified 2026-11-23
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: "3.14.3"
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync --locked --all-groups
 
       - name: Run DB and Redis tests
         run: |
@@ -182,19 +182,19 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v10.2.0 — verified 2026-10-11
+        # astral-sh/setup-uv v10.3.3 — verified 2026-11-23
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
         with:
-          version: "0.11.2"
+          version: "0.13.6"
 
       - name: Set up Python
-        # actions/setup-python v6.2.0 — verified 2026-03-30
+        # actions/setup-python v7.1.0 — verified 2026-11-23
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: "3.14.3"
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync --locked --all-groups
 
       - name: Run bounded performance tests
         run: |
@@ -219,7 +219,7 @@ jobs:
         # actions/setup-node v4.4.0 — verified 2026-03-30
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: "20"
+          node-version: "24.22.3"
           # Disable built-in npm cache on fork PRs to prevent cache poisoning
           # (policy §15.8/15.9). Trusted runs (same-repo PRs, push, schedule) get caching.
           # The outer gate is the "require approval for outside collaborators" UI setting
@@ -276,19 +276,19 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v10.2.0 — verified 2026-10-11
+        # astral-sh/setup-uv v10.3.3 — verified 2026-11-23
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
         with:
-          version: "0.11.2"
+          version: "0.13.6"
 
       - name: Set up Python
-        # actions/setup-python v6.2.0 — verified 2026-03-30
+        # actions/setup-python v7.1.0 — verified 2026-11-23
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: "3.14.3"
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync --locked --all-groups
 
       - name: Run CI-safe integration suite
         run: |
@@ -376,19 +376,19 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v10.2.0 — verified 2026-10-11
+        # astral-sh/setup-uv v10.3.3 — verified 2026-11-23
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
         with:
-          version: "0.11.2"
+          version: "0.13.6"
 
       - name: Set up Python
-        # actions/setup-python v6.2.0 — verified 2026-03-30
+        # actions/setup-python v7.1.0 — verified 2026-11-23
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: "3.14.3"
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync --locked --all-groups
 
       - name: Ensure compose env file
         run: uv run python -m tests.integration.helpers.compose_env

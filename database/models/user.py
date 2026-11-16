@@ -98,7 +98,7 @@ class UserAuthIdentity(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     provider = Column(
-        Enum('google', 'password', name='auth_provider', create_type=False),
+        Enum('google', 'password', name='auth_provider'),
         nullable=False,
     )
     provider_subject = Column(Text, nullable=False)
@@ -138,13 +138,13 @@ class UserFile(Base):
     storage_key = Column(Text, nullable=False, unique=True)
 
     upload_status = Column(
-        Enum('pending', 'scanned', 'rejected', 'ready', name='upload_status', create_type=False),
+        Enum('pending', 'scanned', 'rejected', 'ready', name='upload_status'),
         nullable=False,
         default='pending',
         server_default=sql_text("'pending'::upload_status"),
     )
     file_type = Column(
-        Enum('resume', name='file_type', create_type=False),
+        Enum('resume', name='file_type'),
         nullable=False,
     )
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=UTC_NOW)

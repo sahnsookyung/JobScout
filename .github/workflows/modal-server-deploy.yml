@@ -49,7 +49,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python
-        # actions/setup-python v6.2.0 — verified 2026-03-30
+        # actions/setup-python v7.1.0 — verified 2026-11-23
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: "3.14"

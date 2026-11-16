@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import json
 
 import httpx
+import httpx2
 import openai
 
 from core.llm.openai_service import (
@@ -703,10 +704,9 @@ class TestOpenAIServiceConstructor:
         assert svc.extraction_model == "qwen3:14b"
 
     def test_extraction_headers_create_httpx_client(self):
-        """Constructor should create httpx client when extraction_headers provided."""
+        """Provider headers work with the transport selected by the installed SDK."""
         svc = OpenAIService(api_key="test", extraction_headers={"X-Custom": "value"})
-        # client._client is the httpx client
-        assert svc.client is not None
+        assert svc.client.default_headers["X-Custom"] == "value"
 
     def test_separate_embedding_client_created_for_different_url(self):
         """Separate embedding client should be created when embedding_base_url differs."""
@@ -717,15 +717,30 @@ class TestOpenAIServiceConstructor:
         )
         assert svc.embedding_client is not None
 
-    def test_embedding_headers_create_httpx_client(self):
-        """Embedding httpx client should be created when embedding_headers provided."""
+    def test_embedding_headers_create_httpx_client(self, monkeypatch):
+        """Embedding credentials override SDK defaults without leaking to extraction."""
+        requests = []
+
+        def handle_request(_transport, request):
+            requests.append(request)
+            return httpx2.Response(200, json={"object": "list", "data": []}, request=request)
+
+        monkeypatch.setattr(httpx2.HTTPTransport, "handle_request", handle_request)
         svc = OpenAIService(
             api_key="test",
+            extraction_headers={"X-Custom": "extraction"},
             embedding_base_url="http://embed/v1",
             embedding_api_key="embed-key",
             embedding_headers={"Authorization": "Bearer embed-token"},
         )
         assert svc.embedding_client is not None
+        svc.client.models.list()
+        svc.embedding_client.models.list()
+
+        assert requests[0].headers["Authorization"] == "Bearer test"
+        assert requests[0].headers["X-Custom"] == "extraction"
+        assert requests[1].headers["Authorization"] == "Bearer embed-token"
+        assert "X-Custom" not in requests[1].headers
 
     def test_model_config_overrides_defaults(self):
         svc = OpenAIService(

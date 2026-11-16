@@ -15,6 +15,7 @@ import uuid
 
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 
 from tests.fixtures import schema_snapshot
 
@@ -36,12 +37,12 @@ def _start_pg():
     return postgres
 
 
-def _capture_migrations_path() -> dict:
+def _capture_migrations_path(drivername: str = "postgresql+psycopg2") -> dict:
     postgres = _start_pg()
     try:
         from database.bootstrap import bootstrap_database
 
-        url = postgres.get_connection_url()
+        url = make_url(postgres.get_connection_url()).set(drivername=drivername)
         engine = create_engine(url)
         try:
             bootstrap_database(engine=engine)
@@ -143,7 +144,8 @@ def test_migration_path_matches_create_all_path():
     )
 
 
-def test_migration_path_matches_checked_in_snapshot():
+@pytest.mark.parametrize("drivername", ["postgresql", "postgresql+psycopg2"])
+def test_migration_path_matches_checked_in_snapshot(drivername: str):
     """Regressions in the bootstrap schema must be explicit — the snapshot is checked in."""
     pytest.importorskip("testcontainers")
     if not schema_snapshot.SNAPSHOT_PATH.exists():
@@ -152,7 +154,7 @@ def test_migration_path_matches_checked_in_snapshot():
             "`uv run python -m database.schema_snapshot --write --url=$TEST_DATABASE_URL`"
         )
 
-    current = _capture_migrations_path()
+    current = _capture_migrations_path(drivername)
     checked_in = schema_snapshot.load()
     assert current == checked_in, (
         "Bootstrapped schema has drifted from the checked-in snapshot. "
