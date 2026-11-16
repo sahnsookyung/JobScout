@@ -1,5 +1,6 @@
 """Unit tests for semantic fit scoring contracts."""
 
+import json
 import sys
 import types
 from unittest.mock import MagicMock
@@ -999,7 +1000,7 @@ def test_local_cross_encoder_provider_normalize_runtime_errors():
     with pytest.raises(TypeError):
         LocalCrossEncoderProvider._normalize_runtime_scores({"unexpected": 1})
 
-def test_local_cross_encoder_provider_loads_flag_embedding_runtime_via_factory(monkeypatch):
+def test_local_cross_encoder_provider_loads_flag_embedding_runtime_via_factory(monkeypatch, tmp_path):
     provider = LocalCrossEncoderProvider(
         model_name="BAAI/bge-reranker-v2-m3",
         runtime="flag_embedding",
@@ -1007,23 +1008,121 @@ def test_local_cross_encoder_provider_loads_flag_embedding_runtime_via_factory(m
         trust_remote_code=True,
     )
 
+    snapshot = tmp_path / "snapshots" / ("a" * 40)
+    snapshot.mkdir(parents=True)
+    (snapshot / "config.json").write_text("{}")
+    cached_file = MagicMock(return_value=str(snapshot / "config.json"))
+    monkeypatch.setitem(sys.modules, "huggingface_hub", types.SimpleNamespace(hf_hub_download=cached_file))
+
     class FakeReranker:
         @staticmethod
-        def from_finetuned(model_name, cache_dir=None, trust_remote_code=None):
+        def from_finetuned(model_name, cache_dir=None, trust_remote_code=None, model_class=None):
             return {
                 "model_name": model_name,
                 "cache_dir": cache_dir,
                 "trust_remote_code": trust_remote_code,
+                "model_class": model_class,
             }
 
     fake_module = types.SimpleNamespace(FlagAutoReranker=FakeReranker)
+    monkeypatch.setitem(
+        sys.modules,
+        "FlagEmbedding.inference.reranker.model_mapping",
+        types.SimpleNamespace(
+            AUTO_RERANKER_MAPPING={"bge-reranker-v2-m3": types.SimpleNamespace(model_class=FakeReranker)},
+            RERANKER_CLASS_MAPPING={"encoder-only-base": FakeReranker},
+        ),
+    )
     monkeypatch.setattr("core.scorer.semantic_fit.importlib.import_module", lambda name: fake_module)
 
     model = provider._load_flag_embedding_runtime()
 
-    assert model["model_name"] == "BAAI/bge-reranker-v2-m3"
+    cached_file.assert_called_once_with(
+        repo_id="BAAI/bge-reranker-v2-m3", filename="config.json", cache_dir="/models", local_files_only=True
+    )
+    assert model["model_name"] == str(snapshot.resolve())
     assert model["cache_dir"] == "/models"
+    assert model["model_class"] == "encoder-only-base"
+    assert model["trust_remote_code"] is True
     assert provider.provider_id == "flag_embedding:BAAI/bge-reranker-v2-m3"
+
+
+def test_flag_embedding_cache_miss_does_not_initialize_runtime(monkeypatch):
+    cached_file = MagicMock(side_effect=FileNotFoundError("model is not cached"))
+    monkeypatch.setitem(sys.modules, "huggingface_hub", types.SimpleNamespace(hf_hub_download=cached_file))
+    load_module = MagicMock()
+    monkeypatch.setattr("core.scorer.semantic_fit.importlib.import_module", load_module)
+    provider = LocalCrossEncoderProvider("BAAI/bge-reranker-v2-m3")
+
+    with pytest.raises(FileNotFoundError, match="not cached"):
+        provider._load_flag_embedding_runtime()
+
+    assert cached_file.call_args.kwargs["local_files_only"] is True
+    load_module.assert_not_called()
+
+
+@pytest.mark.parametrize(("filename", "auto_map"), [
+    ("config.json", {"AutoTokenizer": ["other/repo--tokenization.CustomTokenizer", None]}),
+    ("tokenizer_config.json", {"AutoTokenizer": ["other/repo--tokenization.CustomTokenizer", None]}),
+    ("tokenizer_config.json", ["other/repo--tokenization.CustomTokenizer", None]),
+])
+def test_flag_embedding_cached_remote_code_cannot_resolve_another_repo(tmp_path, filename, auto_map):
+    (tmp_path / filename).write_text(json.dumps({"auto_map": auto_map}))
+    provider = LocalCrossEncoderProvider(str(tmp_path), trust_remote_code=True)
+
+    with pytest.raises(RuntimeError, match="another Hub repository"):
+        provider._load_flag_embedding_runtime()
+
+
+def test_flag_embedding_accepts_cached_legacy_tokenizer_code(tmp_path):
+    (tmp_path / "tokenizer_config.json").write_text(
+        json.dumps({"auto_map": ["tokenization.CustomTokenizer", None]})
+    )
+    provider = LocalCrossEncoderProvider(str(tmp_path), trust_remote_code=True)
+
+    assert provider._cached_model_directory() == str(tmp_path.resolve())
+
+
+@pytest.mark.parametrize("model_source", ["hub-cache", "directory"])
+def test_flag_embedding_real_loader_uses_cached_files_without_downloads(tmp_path, monkeypatch, model_source):
+    pytest.importorskip("FlagEmbedding")
+    from huggingface_hub import file_download
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from transformers import BertConfig, BertForSequenceClassification, PreTrainedTokenizerFast
+
+    cache = tmp_path / "hub"
+    model_cache = cache / "models--BAAI--bge-reranker-v2-m3"
+    revision = "a" * 40
+    snapshot = model_cache / "snapshots" / revision
+    snapshot.mkdir(parents=True)
+    (model_cache / "refs").mkdir()
+    (model_cache / "refs" / "main").write_text(revision)
+    vocab = {token: index for index, token in enumerate(["[UNK]", "[PAD]", "hello", "world"])}
+    tokenizer = Tokenizer(models.WordLevel(vocab=vocab, unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+    PreTrainedTokenizerFast(
+        tokenizer_object=tokenizer, unk_token="[UNK]", pad_token="[PAD]"
+    ).save_pretrained(snapshot)
+    BertForSequenceClassification(BertConfig(
+        vocab_size=len(vocab), hidden_size=8, intermediate_size=16,
+        num_hidden_layers=1, num_attention_heads=2, num_labels=1,
+    )).save_pretrained(snapshot)
+
+    network = MagicMock(side_effect=AssertionError("cached model attempted network access"))
+    monkeypatch.setattr("socket.socket.connect", network)
+    monkeypatch.setattr(file_download, "http_get", network)
+    monkeypatch.setattr(file_download, "xet_get", network)
+    provider = LocalCrossEncoderProvider(
+        "BAAI/bge-reranker-v2-m3" if model_source == "hub-cache" else str(snapshot),
+        cache_path=str(cache),
+    )
+
+    runtime = provider._load_flag_embedding_runtime()
+
+    assert runtime.model_name_or_path == str(snapshot.resolve())
+    assert runtime.model.config.hidden_size == 8
+    network.assert_not_called()
+
 
 def test_local_cross_encoder_provider_loads_sentence_transformers_runtime(monkeypatch):
     provider = LocalCrossEncoderProvider(

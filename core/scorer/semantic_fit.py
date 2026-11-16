@@ -19,6 +19,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Protocol
 
 import requests
@@ -821,7 +822,41 @@ class LocalCrossEncoderProvider:
             normalized.append(LocalCrossEncoderProvider._normalize_runtime_item(item))
         return normalized
 
+    def _cached_model_directory(self) -> str:
+        model_directory = Path(self.model_name).expanduser()
+        if not model_directory.is_dir():
+            from huggingface_hub import hf_hub_download
+
+            config_path = hf_hub_download(
+                repo_id=self.model_name,
+                filename="config.json",
+                cache_dir=self.cache_path,
+                local_files_only=True,
+            )
+            model_directory = Path(config_path).parent
+        model_directory = model_directory.resolve()
+
+        if not self.trust_remote_code:
+            return str(model_directory)
+        for filename in ("config.json", "tokenizer_config.json"):
+            config_path = model_directory / filename
+            if not config_path.is_file():
+                continue
+            auto_map = json.loads(config_path.read_text(encoding="utf-8")).get("auto_map", {})
+            mappings = auto_map.values() if isinstance(auto_map, dict) else [auto_map]
+            references = (
+                reference
+                for value in mappings
+                for reference in (value if isinstance(value, (list, tuple)) else [value])
+            )
+            if any(isinstance(reference, str) and "--" in reference for reference in references):
+                raise RuntimeError(
+                    "The cache-only FlagEmbedding runtime cannot load code from another Hub repository"
+                )
+        return str(model_directory)
+
     def _load_flag_embedding_runtime(self) -> Any:
+        model_directory = self._cached_model_directory()
         module = importlib.import_module("FlagEmbedding")
         class_names = (
             "FlagAutoReranker",
@@ -835,7 +870,7 @@ class LocalCrossEncoderProvider:
             if cls is None:
                 continue
             try:
-                return self._instantiate_flag_embedding_runtime(cls)
+                return self._instantiate_flag_embedding_runtime(cls, model_directory)
             except Exception as exc:  # noqa: BLE001 - keep trying supported runtime adapters
                 last_error = exc
                 logger.debug(
@@ -848,13 +883,12 @@ class LocalCrossEncoderProvider:
             f"No compatible FlagEmbedding runtime could be initialized for {self.model_name}"
         ) from last_error
 
-    def _instantiate_flag_embedding_runtime(self, cls: Any) -> Any:
+    def _instantiate_flag_embedding_runtime(self, cls: Any, model_directory: str) -> Any:
         common_kwargs: Dict[str, Any] = {
             "use_fp16": False,
             "trust_remote_code": self.trust_remote_code,
-            # Runtime should consume the pre-populated cache volume only.
-            # This avoids slow HF Hub calls during service boot and makes a
-            # missing cache fail fast instead of silently degrading.
+            # Keep this for runtimes that support it. FlagEmbedding 1.4.2 drops
+            # this flag internally, so it must also receive a local directory.
             "local_files_only": True,
         }
         if self.cache_path:
@@ -862,11 +896,27 @@ class LocalCrossEncoderProvider:
 
         factory = getattr(cls, "from_finetuned", None)
         if callable(factory):
+            from FlagEmbedding.inference.reranker.model_mapping import (
+                AUTO_RERANKER_MAPPING,
+                RERANKER_CLASS_MAPPING,
+            )
+
+            model_name = Path(self.model_name).name
+            if model_name.startswith("checkpoint-"):
+                model_name = Path(self.model_name).parent.name
+            model_config = AUTO_RERANKER_MAPPING.get(model_name)
+            if model_config is not None:
+                # Snapshot directories are named by commit hash, while the
+                # auto factory normally selects its class from the repo name.
+                common_kwargs["model_class"] = next(
+                    name for name, model_class in RERANKER_CLASS_MAPPING.items()
+                    if model_class is model_config.model_class
+                )
             filtered_kwargs = self._filter_supported_kwargs(factory, common_kwargs)
-            model = factory(self.model_name, **filtered_kwargs)
+            model = factory(model_directory, **filtered_kwargs)
         else:
             filtered_kwargs = self._filter_supported_kwargs(cls, common_kwargs)
-            model = cls(self.model_name, **filtered_kwargs)
+            model = cls(model_directory, **filtered_kwargs)
 
         self._provider_id = f"flag_embedding:{self.model_name}"
         self._effective_route_name = self.route_name
