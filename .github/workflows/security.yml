@@ -120,9 +120,9 @@ jobs:
           persist-credentials: false
 
       - name: Initialize CodeQL
-        # github/codeql-action v4.39.3 — verified 2026-11-23
+        # github/codeql-action v4.39.4 — verified 2026-11-24
         # build-mode: none — all languages here are interpreted; no build step needed.
-        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066
+        uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea
         with:
           languages: ${{ matrix.language }}
           build-mode: none
