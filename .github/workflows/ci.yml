@@ -13,7 +13,7 @@
 #   Compensating controls: action pinned to immutable commit SHA; uv binary
 #   version also explicitly pinned via the `version:` input.
 #   Exception must be reviewed quarterly (policy §31.3).
-#   Action SHA: 68559e99cc807c1eb7e9238fd43a15bba460eec2 — verified 2026-11-23
+#   Action SHA: 1db35dd8eee11c5894872e0b383ae6c406cf738d — verified 2026-11-24
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: CI
@@ -58,10 +58,11 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v10.3.3 — verified 2026-11-23
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+        # astral-sh/setup-uv v10.4.0 — verified 2026-11-24
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d
         with:
           version: "0.13.6"
+          require-checksums: true
 
       - name: Set up Python
         # actions/setup-python v7.1.0 — verified 2026-11-23
@@ -107,10 +108,11 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v10.3.3 — verified 2026-11-23
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+        # astral-sh/setup-uv v10.4.0 — verified 2026-11-24
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d
         with:
           version: "0.13.6"
+          require-checksums: true
 
       - name: Set up Python
         # actions/setup-python v7.1.0 — verified 2026-11-23
@@ -145,10 +147,11 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v10.3.3 — verified 2026-11-23
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+        # astral-sh/setup-uv v10.4.0 — verified 2026-11-24
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d
         with:
           version: "0.13.6"
+          require-checksums: true
 
       - name: Set up Python
         # actions/setup-python v7.1.0 — verified 2026-11-23
@@ -183,10 +186,11 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v10.3.3 — verified 2026-11-23
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+        # astral-sh/setup-uv v10.4.0 — verified 2026-11-24
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d
         with:
           version: "0.13.6"
+          require-checksums: true
 
       - name: Set up Python
         # actions/setup-python v7.1.0 — verified 2026-11-23
@@ -277,10 +281,11 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v10.3.3 — verified 2026-11-23
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+        # astral-sh/setup-uv v10.4.0 — verified 2026-11-24
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d
         with:
           version: "0.13.6"
+          require-checksums: true
 
       - name: Set up Python
         # actions/setup-python v7.1.0 — verified 2026-11-23
@@ -377,10 +382,11 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        # astral-sh/setup-uv v10.3.3 — verified 2026-11-23
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+        # astral-sh/setup-uv v10.4.0 — verified 2026-11-24
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d
         with:
           version: "0.13.6"
+          require-checksums: true
 
       - name: Set up Python
         # actions/setup-python v7.1.0 — verified 2026-11-23
