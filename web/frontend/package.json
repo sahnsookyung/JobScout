@@ -45,7 +45,7 @@
         "fake-indexeddb": "^6.2.8",
         "jsdom": "^31.0.1",
         "postcss": "^8.5.33",
-        "tailwindcss": "^4.3.3",
+        "tailwindcss": "^4.3.5",
         "typescript": "npm:@typescript/typescript6@^6.0.2",
         "typescript7": "npm:typescript@^7.0.2",
         "vite": "^8.3.4",
