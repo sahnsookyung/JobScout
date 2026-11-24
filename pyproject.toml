@@ -44,7 +44,7 @@ web = [
     "pydantic>=2.14.2",
     "python-multipart>=0.0.32",
     "slowapi>=0.1.10",
-    "python-dotenv>=1.2.2",
+    "python-dotenv>=1.2.4",
 ]
 fit-models = [
     # Cross-encoder triplet pinned to a known-good combination. FlagEmbedding
