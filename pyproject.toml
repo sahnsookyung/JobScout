@@ -39,7 +39,7 @@ dev = [
     "httpx2>=2.16.2",
 ]
 web = [
-    "fastapi>=0.163.2",
+    "fastapi>=0.165.0",
     "uvicorn>=0.54.0",
     "pydantic>=2.14.4",
     "python-multipart>=0.0.32",
