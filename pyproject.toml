@@ -36,7 +36,7 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "ruff>=0.17.3",
-    "httpx2>=2.13.1",
+    "httpx2>=2.16.2",
 ]
 web = [
     "fastapi>=0.163.2",
