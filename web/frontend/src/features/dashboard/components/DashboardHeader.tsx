@@ -119,12 +119,13 @@ export function DashboardHeader() {
         <>
             <header className="sticky top-0 z-40 border-b border-rule bg-canvas/85 backdrop-blur-md">
                 <div className="mx-auto flex max-w-[var(--container-content)] items-center justify-between gap-2 px-5 py-3 sm:gap-6 sm:px-8 sm:py-4 lg:px-10">
-                    <a href="/" className="group flex shrink-0 items-center gap-2 sm:gap-3" aria-label="JobScout home">
+                    <a href="/" className="group flex shrink-0 items-center gap-2 sm:gap-3" aria-label="JobScout Workshop home">
                         <span className="jobscout-mark hidden min-[360px]:inline-block" aria-hidden="true" />
                         <span className="flex items-baseline gap-2">
                             <span className="text-[17px] font-medium tracking-tight text-ink">
                                 JobScout
                             </span>
+                            {' '}
                             <span className="caption hidden sm:inline">Workshop</span>
                         </span>
                     </a>
@@ -145,7 +146,7 @@ export function DashboardHeader() {
                                 type="button"
                                 onClick={openNotifications}
                                 className="inline-flex h-9 items-center gap-2 rounded-md border border-rule bg-surface px-3 text-[13px] text-ink-soft transition-colors hover:border-rule-strong hover:text-ink"
-                                aria-label="Open notification settings"
+                                aria-label="Notifications: open notification settings"
                             >
                                 <Bell className="h-4 w-4" aria-hidden="true" />
                                 <span className="hidden sm:inline">Notifications</span>
@@ -159,7 +160,7 @@ export function DashboardHeader() {
                                 className="inline-flex h-9 items-center gap-2 rounded-md border border-rule bg-surface px-1.5 text-left transition-colors hover:border-rule-strong sm:pr-3"
                                 aria-expanded={isProfileOpen}
                                 aria-controls="profile-panel"
-                                aria-label="Open profile menu"
+                                aria-label={`${avatarInitials} ${identity.name}: Open profile menu`}
                             >
                                 {identity.picture ? (
                                     <img
@@ -172,6 +173,7 @@ export function DashboardHeader() {
                                         {avatarInitials}
                                     </span>
                                 )}
+                                {' '}
                                 <span className="hidden min-w-0 max-w-32 sm:block">
                                     <span className="block truncate text-[13px] font-medium text-ink">
                                         {identity.name}

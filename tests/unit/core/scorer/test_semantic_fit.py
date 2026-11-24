@@ -1,5 +1,6 @@
 """Unit tests for semantic fit scoring contracts."""
 
+import importlib.metadata
 import json
 import sys
 import types
@@ -1085,7 +1086,11 @@ def test_flag_embedding_accepts_cached_legacy_tokenizer_code(tmp_path):
 
 @pytest.mark.parametrize("model_source", ["hub-cache", "directory"])
 def test_flag_embedding_real_loader_uses_cached_files_without_downloads(tmp_path, monkeypatch, model_source):
-    pytest.importorskip("FlagEmbedding")
+    try:
+        importlib.metadata.distribution("FlagEmbedding")
+    except importlib.metadata.PackageNotFoundError:
+        pytest.skip("Optional FlagEmbedding dependency is not installed")
+    importlib.import_module("FlagEmbedding")
     from huggingface_hub import file_download
     from tokenizers import Tokenizer, models, pre_tokenizers
     from transformers import BertConfig, BertForSequenceClassification, PreTrainedTokenizerFast

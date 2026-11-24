@@ -53,7 +53,7 @@ fit-models = [
     # breaks FlagAutoReranker or CrossEncoder import paths.
     "FlagEmbedding==1.4.2",
     "sentence-transformers==6.3.0",
-    "transformers==5.23.0",
+    "transformers==5.24.0",
     "huggingface-hub>=1.11.0",
 ]
 
@@ -71,9 +71,18 @@ packages = [
 default-groups = ["dev", "web"]
 constraint-dependencies = [
     "aiohttp>=3.14.3",
-    # Transformers 5.23 requires PEFT 0.20+ for its adapter integration.
-    "peft>=0.20.0",
+    # Transformers 5.24 requires PEFT 0.22+ for its adapter integration.
+    "peft>=0.22.0",
 ]
+
+[tool.uv.sources]
+# Upstream 5.24 compatibility fixes keep FlagEmbedding imports working.
+# Replace this temporary source pin when the fixes are published on PyPI.
+transformers = { git = "https://github.com/huggingface/transformers", rev = "14f676276b16a40b23624a5b956cdfccb76d2084" }
+
+[tool.uv.extra-build-dependencies]
+# Use the already locked setuptools version for this temporary source build.
+transformers = ["setuptools==84.1.0"]
 
 [tool.ruff]
 target-version = "py313"

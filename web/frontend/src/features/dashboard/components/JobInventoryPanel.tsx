@@ -566,6 +566,7 @@ function LlmQueueHealth({
     const paused = Boolean(status?.paused);
     const oldestPendingAge = status?.oldest_pending_age_seconds ?? status?.oldest_retryable_failed_age_seconds ?? null;
     const providers = providerStatus?.providers ?? [];
+    const canaryLabel = canaryPending ? 'Checking' : 'Run canary';
     const canaryByProvider = new Map(
         (canaryResult?.results ?? []).map((result) => [`${result.name}:${result.model}`, result]),
     );
@@ -625,7 +626,7 @@ function LlmQueueHealth({
                     type="button"
                     onClick={onRetry}
                     disabled={actionPending || retryableFailed <= 0}
-                    aria-label="Retry pending LLM evaluations"
+                    aria-label="Retry backlog: retry pending LLM evaluations"
                     className="inline-flex h-8 items-center justify-center gap-2 border border-rule px-3 text-[12px] text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
                 >
                     Retry backlog
@@ -634,10 +635,10 @@ function LlmQueueHealth({
                     type="button"
                     onClick={onCanary}
                     disabled={canaryPending}
-                    aria-label="Run LLM provider canary"
+                    aria-label={`${canaryLabel}: run LLM provider canary`}
                     className="inline-flex h-8 items-center justify-center gap-2 border border-rule px-3 text-[12px] text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                    {canaryPending ? 'Checking' : 'Run canary'}
+                    {canaryLabel}
                 </button>
             </div>
             {status?.drain_estimate_seconds != null ? (
@@ -964,6 +965,8 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
         processJobs.isPending
         || Boolean(processTaskId && !TERMINAL_PROCESS_STATUSES.has(processStatusData?.status ?? 'pending'))
     );
+    const processingLabel = processingActive ? 'Processing queued' : 'Process queued';
+    const descriptionRecoveryLabel = sweepDescriptionRecovery.isPending ? 'Checking ATS' : 'Recover descriptions';
 
     const resetOffset = () => setOffset(0);
 
@@ -1052,21 +1055,21 @@ export const JobInventoryPanel: React.FC<JobInventoryPanelProps> = ({ stats }) =
                         type="button"
                         onClick={() => processJobs.mutate()}
                         disabled={queuedWork <= 0 || processingActive}
-                        aria-label="Process queued imported jobs"
+                        aria-label={`${processingLabel} imported jobs`}
                         className="inline-flex h-10 items-center justify-center gap-2 border border-rule px-4 text-[14px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
                     >
                         <RefreshCw className={`h-4 w-4 ${processingActive ? 'animate-pulse text-accent' : ''}`} aria-hidden="true" />
-                        {processingActive ? 'Processing queued' : 'Process queued'}
+                        {processingLabel}
                     </button>
                     <button
                         type="button"
                         onClick={() => sweepDescriptionRecovery.mutate()}
                         disabled={missingDescriptions <= 0 || sweepDescriptionRecovery.isPending}
-                        aria-label="Recover missing job descriptions"
+                        aria-label={`${descriptionRecoveryLabel}: recover missing job descriptions`}
                         className="inline-flex h-10 items-center justify-center gap-2 border border-rule px-4 text-[14px] font-medium text-ink-soft transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
                     >
                         <RefreshCw className={`h-4 w-4 ${sweepDescriptionRecovery.isPending ? 'animate-spin text-accent' : ''}`} aria-hidden="true" />
-                        {sweepDescriptionRecovery.isPending ? 'Checking ATS' : 'Recover descriptions'}
+                        {descriptionRecoveryLabel}
                     </button>
                     <button
                         type="button"
