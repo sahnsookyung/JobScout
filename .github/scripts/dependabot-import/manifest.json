@@ -1,0 +1,738 @@
+[
+  {
+    "expected_sha": "80f1680dedc8283b1f0d97f41b76919937a555d4",
+    "tree": "f001db737d65ac961192258057f47e6037448d9d",
+    "parents": [
+      "1f77a299e6e770aaa26c052eed7d882a0d9b8029",
+      "0b0230dda66a7fa7eab45eba05ab257cc6e97a0d"
+    ],
+    "message": "Merge Dependabot PR #194: chore(deps-dev): bump typescript from 6.0.3 to 7.0.2 in /web/frontend\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/194\nDependabot-Submitted-At: 2026-07-13T21:15:54Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-07-13T21:15:54Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-07-13T21:15:54Z"
+    }
+  },
+  {
+    "expected_sha": "13d1d4eb3a98993def0b628b78d21eef95aa3814",
+    "tree": "f001db737d65ac961192258057f47e6037448d9d",
+    "parents": [
+      "80f1680dedc8283b1f0d97f41b76919937a555d4",
+      "321b391ffb98cc64b48deba2b557d67a164b4b3b"
+    ],
+    "message": "Merge Dependabot PR #259: chore(deps-dev): bump undici from 7.28.0 to 7.29.0 in /web/frontend in the npm_and_yarn group across 1 directory\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/259\nDependabot-Submitted-At: 2026-08-04T13:07:44Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-08-04T13:07:44Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-08-04T13:07:44Z"
+    }
+  },
+  {
+    "expected_sha": "3a7020fbcca4880410a274d31185b612a11e9369",
+    "tree": "c2a4f47ed9f14faa9ac2e63849a0e813aee85dd5",
+    "parents": [
+      "13d1d4eb3a98993def0b628b78d21eef95aa3814",
+      "c023ea9f96860ec38746803a3e5a9c28d4562513"
+    ],
+    "message": "Merge Dependabot PR #295: chore(deps): bump docker/build-push-action from 7.3.0 to 7.4.0\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/295\nDependabot-Submitted-At: 2026-09-21T21:15:09Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-09-21T21:15:09Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-09-21T21:15:09Z"
+    }
+  },
+  {
+    "expected_sha": "81b0293f258ca935611cf5e94b12288dc3716110",
+    "tree": "95ece2bcbe7ede58f39409fc11e8b53a325fe48a",
+    "parents": [
+      "3a7020fbcca4880410a274d31185b612a11e9369",
+      "8b7be6e051a6c885f37de33e46f149b5e33d0981"
+    ],
+    "message": "Merge Dependabot PR #299: chore(deps): bump docker/setup-buildx-action from 4.2.0 to 4.4.1\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/299\nDependabot-Submitted-At: 2026-09-21T21:18:13Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-09-21T21:18:13Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-09-21T21:18:13Z"
+    }
+  },
+  {
+    "expected_sha": "b37394d83bfbf995425889efc099936f866e6a96",
+    "tree": "ffc335238abfbf7fda7bee917358eb18eb5bf799",
+    "parents": [
+      "81b0293f258ca935611cf5e94b12288dc3716110",
+      "1fa57c066862365e51e040bf45a49863f0d10157"
+    ],
+    "message": "Merge Dependabot PR #339: chore(deps-dev): bump @testing-library/jest-dom from 6.9.1 to 7.0.1 in /web/frontend\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/339\nDependabot-Submitted-At: 2026-10-14T05:06:04Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-10-14T05:06:04Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-10-14T05:06:04Z"
+    }
+  },
+  {
+    "expected_sha": "feac1a2e71bcc0de16d2f3fd4f157e4c7008d8a1",
+    "tree": "c3497cbfeec217fa126fa821e4b91c511531d07a",
+    "parents": [
+      "b37394d83bfbf995425889efc099936f866e6a96",
+      "7d9d3f2fca34859b542b71d45631f07514ade7a0"
+    ],
+    "message": "Merge Dependabot PR #349: chore(deps): bump react-dom and @types/react-dom in /web/frontend\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/349\nDependabot-Submitted-At: 2026-10-14T05:06:45Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-10-14T05:06:45Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-10-14T05:06:45Z"
+    }
+  },
+  {
+    "expected_sha": "05ff8b5140583c623b1437e0a04c4433dd36a7a9",
+    "tree": "394a4a7dc0acfc21badadcf9153a381200460b96",
+    "parents": [
+      "feac1a2e71bcc0de16d2f3fd4f157e4c7008d8a1",
+      "f6b9ffd4b939a6737ddfdd53f121b4f2277d25b8"
+    ],
+    "message": "Merge Dependabot PR #381: chore(deps): bump actions/setup-python from 7.0.0 to 7.1.0\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/381\nDependabot-Submitted-At: 2026-11-02T21:14:59Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:14:59Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:14:59Z"
+    }
+  },
+  {
+    "expected_sha": "12efcec40c87d25f0cf7a5bde3af3ab1e7ecad32",
+    "tree": "08ee2606531dc87acc647435951dfbadced51954",
+    "parents": [
+      "05ff8b5140583c623b1437e0a04c4433dd36a7a9",
+      "04c95eb899986f0efe1f709d1dfaf563105ef6f7"
+    ],
+    "message": "Merge Dependabot PR #382: chore(deps): update xxhash requirement from >=3.5.0 to >=4.0.2\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/382\nDependabot-Submitted-At: 2026-11-02T21:15:01Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:01Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:01Z"
+    }
+  },
+  {
+    "expected_sha": "3d5ac724f2239bf9aabc355e78978989fc87812f",
+    "tree": "48d5c45176f45ff9835052af6aaf799071adae56",
+    "parents": [
+      "12efcec40c87d25f0cf7a5bde3af3ab1e7ecad32",
+      "73ff17fe75769443832ba1415e73fb7930b5319c"
+    ],
+    "message": "Merge Dependabot PR #383: chore(deps): update pgvector requirement from >=0.4.2 to >=0.5.1\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/383\nDependabot-Submitted-At: 2026-11-02T21:15:06Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:06Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:06Z"
+    }
+  },
+  {
+    "expected_sha": "349882ce1599a18cdba0dd0311f49d8acc02a534",
+    "tree": "7436d3ecff12c1a693c56440b6da52a7143e4525",
+    "parents": [
+      "3d5ac724f2239bf9aabc355e78978989fc87812f",
+      "ac8a7e0e34f08f5e2f611337f2d7e31742324715"
+    ],
+    "message": "Merge Dependabot PR #385: chore(deps): update rq requirement from >=2.12.0 to >=3.0.0\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/385\nDependabot-Submitted-At: 2026-11-02T21:15:12Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:12Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:12Z"
+    }
+  },
+  {
+    "expected_sha": "c724873b25286f0f465f7d8541d58ac126d22c78",
+    "tree": "18687101161c0f46c0c71c319ee87fab4f85c419",
+    "parents": [
+      "349882ce1599a18cdba0dd0311f49d8acc02a534",
+      "69e82af2fd91254317f936c6715c2862d1fd19b2"
+    ],
+    "message": "Merge Dependabot PR #386: chore(deps): bump lucide-react from 1.28.0 to 1.65.0 in /web/frontend\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/386\nDependabot-Submitted-At: 2026-11-02T21:15:14Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:14Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:14Z"
+    }
+  },
+  {
+    "expected_sha": "e259d554c1ecc3cdb99a89ded6d1a27dbb94a2c5",
+    "tree": "f23b1bfa5425800798fc009ba8fba73d24f737c5",
+    "parents": [
+      "c724873b25286f0f465f7d8541d58ac126d22c78",
+      "a6596d736037b1cf891ad1656daba3a0ea5a622f"
+    ],
+    "message": "Merge Dependabot PR #387: chore(deps-dev): update fastapi requirement from >=0.143.0 to >=0.162.0\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/387\nDependabot-Submitted-At: 2026-11-02T21:15:18Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:18Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:18Z"
+    }
+  },
+  {
+    "expected_sha": "3c655bdf58c91358f8f4aee656f6cf6d09abe2fc",
+    "tree": "6a3d54c67213da8d6896bf024126100e0272d445",
+    "parents": [
+      "e259d554c1ecc3cdb99a89ded6d1a27dbb94a2c5",
+      "489268c9d371a21e023a6d54f1df4fe4d8be67a3"
+    ],
+    "message": "Merge Dependabot PR #388: chore(deps-dev): bump autoprefixer from 10.5.4 to 10.6.2 in /web/frontend\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/388\nDependabot-Submitted-At: 2026-11-02T21:15:21Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:21Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:21Z"
+    }
+  },
+  {
+    "expected_sha": "892d53bb79f8378b82c81a16993d54c1b796fbd0",
+    "tree": "6a3d54c67213da8d6896bf024126100e0272d445",
+    "parents": [
+      "3c655bdf58c91358f8f4aee656f6cf6d09abe2fc",
+      "6669148901f4c2885d7af4cb487249b9ec64ad4a"
+    ],
+    "message": "Merge Dependabot PR #389: chore(deps): update openai requirement from >=2.16.0 to >=3.41.0\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/389\nDependabot-Submitted-At: 2026-11-02T21:15:25Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:25Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:25Z"
+    }
+  },
+  {
+    "expected_sha": "1b65e6aa17f81a7c32390567f2dc05cfbce73f7f",
+    "tree": "0c79aee797287fedf0d8bd999aa7ab82a088da63",
+    "parents": [
+      "892d53bb79f8378b82c81a16993d54c1b796fbd0",
+      "83bbb5dbc78cb5c38c383ae475dee871bb9145b7"
+    ],
+    "message": "Merge Dependabot PR #390: chore(deps-dev): bump @types/node from 26.6.2 to 26.6.6 in /web/frontend\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/390\nDependabot-Submitted-At: 2026-11-02T21:15:28Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:28Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:28Z"
+    }
+  },
+  {
+    "expected_sha": "a0cf53c86903eb75ce04ab90b472104acec9473b",
+    "tree": "3919fdf9bda97c0384dfab698bc378636654a7f9",
+    "parents": [
+      "1b65e6aa17f81a7c32390567f2dc05cfbce73f7f",
+      "d6034e88ffc06107c941961a8875cdfdecce99cf"
+    ],
+    "message": "Merge Dependabot PR #391: chore(deps): update pydantic requirement from >=2.13.5 to >=2.14.2\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/391\nDependabot-Submitted-At: 2026-11-02T21:15:32Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:32Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:32Z"
+    }
+  },
+  {
+    "expected_sha": "5381e84f6553ce63633b97c6a1e6af0552224fd1",
+    "tree": "059010bb24fdf285d1bb1bb008d085b1852f58f6",
+    "parents": [
+      "a0cf53c86903eb75ce04ab90b472104acec9473b",
+      "e911875617e3cd716e681ae7e4f42a2106c7892f"
+    ],
+    "message": "Merge Dependabot PR #392: chore(deps): bump @tanstack/react-query from 5.104.1 to 5.105.0 in /web/frontend\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/392\nDependabot-Submitted-At: 2026-11-02T21:15:39Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:39Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:39Z"
+    }
+  },
+  {
+    "expected_sha": "151cc0a061f860c2c1198858d4212eebfd839b12",
+    "tree": "059010bb24fdf285d1bb1bb008d085b1852f58f6",
+    "parents": [
+      "5381e84f6553ce63633b97c6a1e6af0552224fd1",
+      "60958ccb66a31b9241fe1d630664ff80a4224cd7"
+    ],
+    "message": "Merge Dependabot PR #393: chore(deps): update sqlalchemy requirement from >=2.0.46 to >=2.1.6\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/393\nDependabot-Submitted-At: 2026-11-02T21:15:41Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:41Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:41Z"
+    }
+  },
+  {
+    "expected_sha": "d0c7daa6e58f7ad113c8e646a71b474cb9dbfde9",
+    "tree": "d7a08eb2940ea836996074047207df79d03c2a75",
+    "parents": [
+      "151cc0a061f860c2c1198858d4212eebfd839b12",
+      "7b3853567d9cdb060f0ffd82e4d7f0f5ca6eb06b"
+    ],
+    "message": "Merge Dependabot PR #394: chore(deps): update cryptography requirement from >=50.0.0 to >=50.0.2\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/394\nDependabot-Submitted-At: 2026-11-02T21:16:12Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:16:12Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:16:12Z"
+    }
+  },
+  {
+    "expected_sha": "c8f05417e5706098491c84e2b36e30c20360a734",
+    "tree": "2eae0fcb615ce0718a6f39724930e595dc720478",
+    "parents": [
+      "d0c7daa6e58f7ad113c8e646a71b474cb9dbfde9",
+      "dc342e4d9cad5cb6c4f38b5497150d28920e34f5"
+    ],
+    "message": "Merge Dependabot PR #395: chore(deps-dev): update pytest requirement from >=7.0.0 to >=9.2.0\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/395\nDependabot-Submitted-At: 2026-11-02T21:16:13Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:16:13Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:16:13Z"
+    }
+  },
+  {
+    "expected_sha": "dcf4ca465e90d2e28cb9f257bd0c6e08cdb4e486",
+    "tree": "eb91081435c2f14b03164330dc8dcee2e9bf1ee0",
+    "parents": [
+      "c8f05417e5706098491c84e2b36e30c20360a734",
+      "0ead63a92ac6fded6d75c161139a893fb5c3bfca"
+    ],
+    "message": "Merge Dependabot PR #396: chore(deps): bump astral-sh/setup-uv from 10.2.0 to 10.3.3\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/396\nDependabot-Submitted-At: 2026-11-02T21:16:16Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:16:16Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:16:16Z"
+    }
+  },
+  {
+    "expected_sha": "79f2fd66abc586cb786b30e771a95f9816ab8478",
+    "tree": "6a47d7216577cefdb19083d77d01cf0c567d9e65",
+    "parents": [
+      "dcf4ca465e90d2e28cb9f257bd0c6e08cdb4e486",
+      "1171065fb6381156eaa616c0c86f31205ec1619a"
+    ],
+    "message": "Merge Dependabot PR #397: chore(deps-dev): update ruff requirement from >=0.15.21 to >=0.17.3\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/397\nDependabot-Submitted-At: 2026-11-02T21:16:36Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:16:36Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:16:36Z"
+    }
+  },
+  {
+    "expected_sha": "511015a4395eed4a480b918aa9b3c3576a974cf7",
+    "tree": "42fe89118c1b2ef14a5210dae18258311ce61b6e",
+    "parents": [
+      "79f2fd66abc586cb786b30e771a95f9816ab8478",
+      "f80334153cb1da75607a0f536e06a1195640d243"
+    ],
+    "message": "Merge Dependabot PR #398: chore(deps-dev): bump jsdom from 29.1.1 to 30.1.3 in /web/frontend\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/398\nDependabot-Submitted-At: 2026-11-02T21:16:37Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:16:37Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:16:37Z"
+    }
+  },
+  {
+    "expected_sha": "e46c1da64515779fee291dd61d80af86bfc2423d",
+    "tree": "c76857cad279d87af1635bd6844e6664f3e0697c",
+    "parents": [
+      "511015a4395eed4a480b918aa9b3c3576a974cf7",
+      "1bef1c98b9fd540b70456d29651fa7f0bcaaa7eb"
+    ],
+    "message": "Merge Dependabot PR #399: chore(deps-dev): bump @testing-library/user-event from 14.6.1 to 14.6.8 in /web/frontend\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/399\nDependabot-Submitted-At: 2026-11-02T21:17:57Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:17:57Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:17:57Z"
+    }
+  },
+  {
+    "expected_sha": "7ba644723780037d0bb35fc718e1756b91930e6c",
+    "tree": "5e6c6e56ac82a325dba9a97ee04c4c63dca96feb",
+    "parents": [
+      "e46c1da64515779fee291dd61d80af86bfc2423d",
+      "975ead13de7ad201fa4192cf2c4ae0da680a699c"
+    ],
+    "message": "Merge Dependabot PR #401: chore(deps): bump github/codeql-action/init from 4.36.2 to 4.39.3\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/401\nDependabot-Submitted-At: 2026-11-09T21:14:47Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-09T21:14:47Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-09T21:14:47Z"
+    }
+  },
+  {
+    "expected_sha": "45394ac7eb28dda0518a77102c1053fe51680cf1",
+    "tree": "3628c3f1b54a7e0e82b79b1d13ef51b93b740132",
+    "parents": [
+      "7ba644723780037d0bb35fc718e1756b91930e6c",
+      "cafe16bd0261591284c9305e8741764741eba551"
+    ],
+    "message": "Merge Dependabot PR #402: chore(deps): bump github/codeql-action/analyze from 4.36.2 to 4.39.3\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/402\nDependabot-Submitted-At: 2026-11-09T21:14:51Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-09T21:14:51Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-09T21:14:51Z"
+    }
+  },
+  {
+    "expected_sha": "94275085356204dd982ccd344c35f48fed85f456",
+    "tree": "fd307bde215b4c7830e6b9adf7217487d8cded5c",
+    "parents": [
+      "45394ac7eb28dda0518a77102c1053fe51680cf1",
+      "5c3e7dbd42f1a02e751e5bcebabd5b3ec7a4da37"
+    ],
+    "message": "Merge Dependabot PR #403: chore(deps): bump docker/login-action from 4.6.0 to 4.8.0\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/403\nDependabot-Submitted-At: 2026-11-09T21:14:56Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-09T21:14:56Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-09T21:14:56Z"
+    }
+  },
+  {
+    "expected_sha": "31a5eef20354a691227d1e27deacefa709e86c6f",
+    "tree": "11ffbe9731c6f84ab60489daf64b24b683cc212d",
+    "parents": [
+      "94275085356204dd982ccd344c35f48fed85f456",
+      "92a6e1be8a92712ce8d47e8ac1cd7b4bf5304868"
+    ],
+    "message": "Merge Dependabot PR #404: chore(deps): bump github/codeql-action/upload-sarif from 4.38.2 to 4.39.3\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/404\nDependabot-Submitted-At: 2026-11-09T21:15:00Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-09T21:15:00Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-09T21:15:00Z"
+    }
+  },
+  {
+    "expected_sha": "9da847bc7e3145bee00a8f80fecc48f374c0d1cf",
+    "tree": "aae759db471ffc2fcc33fdf9f1e0551158fb2f53",
+    "parents": [
+      "31a5eef20354a691227d1e27deacefa709e86c6f",
+      "d22b3140b9d152a7add0db194df03da5a2bc2892"
+    ],
+    "message": "Merge Dependabot PR #405: chore(deps): bump soupsieve from 2.9 to 4.0 in the uv group across 1 directory\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/405\nDependabot-Submitted-At: 2026-11-13T14:31:52Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-13T14:31:52Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-13T14:31:52Z"
+    }
+  },
+  {
+    "expected_sha": "3859abd2cacd00c6367aa16462deb18a9d7ba491",
+    "tree": "c9dab16bb43af54d1bafa4427eca0a487d971ca7",
+    "parents": [
+      "9da847bc7e3145bee00a8f80fecc48f374c0d1cf",
+      "28b9d68be8ceda65aeac44db3f8d8056a055a01c"
+    ],
+    "message": "Merge Dependabot PR #406: chore(deps): bump SonarSource/sonarqube-scan-action from 8.3.0 to 8.5.0\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/406\nDependabot-Submitted-At: 2026-11-16T21:14:52Z\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-16T21:14:52Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-16T21:14:52Z"
+    }
+  },
+  {
+    "expected_sha": "52809f17a0e3154ea3b6637c54106af066a1b4d6",
+    "tree": "e466221492759f9b4db8dd4ed7fbf340025d797e",
+    "parents": [
+      "3859abd2cacd00c6367aa16462deb18a9d7ba491"
+    ],
+    "message": "fix(deps): secure and validate the combined dependency upgrades\n\nRestore the exact corrective tree reviewed and validated in PR #407. The final combined application passed all 21 hosted checks.\n\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-16T21:14:52Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-16T21:14:52Z"
+    }
+  },
+  {
+    "expected_sha": "522edb1ff7162df8f18939089f35f1df9b428774",
+    "tree": "8b7414185b5ed94310b8d42ba2695456a19e54bd",
+    "parents": [
+      "52809f17a0e3154ea3b6637c54106af066a1b4d6"
+    ],
+    "message": "fix(ci): pin Python 3.14.3 jobs to supported Ubuntu 24.04\n\nRestore the exact corrective tree reviewed and validated in PR #407. The final combined application passed all 21 hosted checks.\n\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:14:59Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:14:59Z"
+    }
+  },
+  {
+    "expected_sha": "622562204bfc2c0fead152768e9c7d036bdf31c1",
+    "tree": "fb7d89e8b166b56c0381a751b3440be1abad366a",
+    "parents": [
+      "522edb1ff7162df8f18939089f35f1df9b428774"
+    ],
+    "message": "fix(db): expand schema snapshot filters for both PostgreSQL drivers\n\nRestore the exact corrective tree reviewed and validated in PR #407. The final combined application passed all 21 hosted checks.\n\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:41Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:15:41Z"
+    }
+  },
+  {
+    "expected_sha": "4b84ec4ca227a617317ce0c551bbbfc5c91dc7e8",
+    "tree": "7e1cf13fc843dee6eef3b6a128f753159b3298c4",
+    "parents": [
+      "622562204bfc2c0fead152768e9c7d036bdf31c1"
+    ],
+    "message": "test(ci): expose integration waits with pytest diagnostics\n\nRestore the exact corrective tree reviewed and validated in PR #407. The final combined application passed all 21 hosted checks.\n\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:14:59Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-02T21:14:59Z"
+    }
+  },
+  {
+    "expected_sha": "35197df752c6f9b41528252fb7458a2cd98b8912",
+    "tree": "be0ed2d586bd24e2fcdd46f6214e8523015a80fe",
+    "parents": [
+      "4b84ec4ca227a617317ce0c551bbbfc5c91dc7e8"
+    ],
+    "message": "fix(scoring): honor cache-only reranker loading\n\nRestore the exact corrective tree reviewed and validated in PR #407. The final combined application passed all 21 hosted checks.\n\nReview-Date: 2026-11-23\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-16T21:14:52Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-16T21:14:52Z"
+    }
+  },
+  {
+    "expected_sha": "7a867647aba6d641f72b4f49f2bfcffb551c80eb",
+    "tree": "92fbd5b4473cd6e27383e5ea833aaee22b587b84",
+    "parents": [
+      "35197df752c6f9b41528252fb7458a2cd98b8912",
+      "0a5e3ed49610415aa78f7f1332bce51d60569062"
+    ],
+    "message": "Merge Dependabot PR #408: chore(deps): bump github/codeql-action/upload-sarif from 4.38.2 to 4.39.4\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/408\nDependabot-Submitted-At: 2026-11-23T21:14:55Z\nReview-Date: 2026-11-24\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-23T21:14:55Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-23T21:14:55Z"
+    }
+  },
+  {
+    "expected_sha": "11d6cf2670043748cba5d39575fbcd415856085d",
+    "tree": "73e4f189df3643213af1c7f0d87eff9f67212e90",
+    "parents": [
+      "7a867647aba6d641f72b4f49f2bfcffb551c80eb",
+      "1511c9287417d6c4ba68c91c6f476c6043aa8e52"
+    ],
+    "message": "Merge Dependabot PR #409: chore(deps): bump astral-sh/setup-uv from 10.2.0 to 10.4.0\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/409\nDependabot-Submitted-At: 2026-11-23T21:15:04Z\nReview-Date: 2026-11-24\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-23T21:15:04Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-23T21:15:04Z"
+    }
+  },
+  {
+    "expected_sha": "599d9bf5bdd37b826774e5ce47daf7b448abd752",
+    "tree": "d163ad01e45cf152269a08f80e0095cb466b9509",
+    "parents": [
+      "11d6cf2670043748cba5d39575fbcd415856085d",
+      "09732e4305f2f9672a5781cbb6aae75ff7da306b"
+    ],
+    "message": "Merge Dependabot PR #410: chore(deps): bump github/codeql-action/init from 4.36.2 to 4.39.4\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/410\nDependabot-Submitted-At: 2026-11-23T21:15:09Z\nReview-Date: 2026-11-24\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-23T21:15:09Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-23T21:15:09Z"
+    }
+  },
+  {
+    "expected_sha": "3b4f59aa5d01315e4a8d3415d81887eadda33a49",
+    "tree": "50ef22eec37ee27716be4a5629635c18ca15af7a",
+    "parents": [
+      "599d9bf5bdd37b826774e5ce47daf7b448abd752",
+      "05b4b2a655c5fa0789dfab79943624e8fbcb7487"
+    ],
+    "message": "Merge Dependabot PR #411: chore(deps): bump github/codeql-action/analyze from 4.36.2 to 4.39.4\n\nOriginal-PR: https://github.com/sahnsookyung/JobScout/pull/411\nDependabot-Submitted-At: 2026-11-23T21:15:13Z\nReview-Date: 2026-11-24\n",
+    "author": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-23T21:15:13Z"
+    },
+    "committer": {
+      "name": "Codex",
+      "email": "codex@openai.com",
+      "date": "2026-11-23T21:15:13Z"
+    }
+  }
+]
