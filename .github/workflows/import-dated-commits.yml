@@ -38,7 +38,7 @@ jobs:
           python3 -I .github/scripts/dependabot-import/import_commits.py
           --manifest .github/scripts/dependabot-import/manifest.json
           --policy .github/scripts/dependabot-import/policy.json
-          --policy-sha256 fb45be0e6e698f143b37b0c1516ef3a01f93352ca1fd0c4ed88dc4853a259a14
+          --policy-sha256 a0d450bb78538a7220a370d9de68aa7e6cfaf64726af96f12ac7c319354b0fd1
           --validate-only
       - name: Create and verify only the sealed commit objects
         env:
@@ -47,5 +47,5 @@ jobs:
           python3 -I .github/scripts/dependabot-import/import_commits.py
           --manifest .github/scripts/dependabot-import/manifest.json
           --policy .github/scripts/dependabot-import/policy.json
-          --policy-sha256 fb45be0e6e698f143b37b0c1516ef3a01f93352ca1fd0c4ed88dc4853a259a14
+          --policy-sha256 a0d450bb78538a7220a370d9de68aa7e6cfaf64726af96f12ac7c319354b0fd1
           --create-objects

@@ -3,8 +3,8 @@
   "repository": "sahnsookyung/JobScout",
   "ref": "refs/heads/automation/dependabot-import-2026-11-23",
   "base_sha": "4c4ff4d3a31c243f0e4b933fd8877d4e245d5726",
-  "final_sha": "5ed3c15123586e656bc568574b1c84a48feac983",
-  "manifest_sha256": "536f36d046feaf3160a5440f445767279a5dd1374e25fb410994335ff09be240",
+  "final_sha": "f3da356dda0c736f76648e612246275feeb4c0dc",
+  "manifest_sha256": "556ccf6c1a3eebfe81367216fea758053a15ae788524df85451dba8cd6aebbe6",
   "ordered_shas": [
     "f49ef2cf96c8bbc6c58d91c02de65d47e07b7339",
     "348bc0c4b4e3d1bd97ae229af677d836fcefd113",
@@ -21,7 +21,7 @@
     "d421bac77873477c84f5e8d52520147c39bf9054",
     "0bb1c17ad0d8379ab7a636fd2bf23884526ef47c",
     "3db2efed9ba313d651533a843f713ffa71c0740c",
-    "5ed3c15123586e656bc568574b1c84a48feac983"
+    "f3da356dda0c736f76648e612246275feeb4c0dc"
   ],
   "allowed_timestamps": {
     "f49ef2cf96c8bbc6c58d91c02de65d47e07b7339": "2026-11-24T14:02:56Z",
@@ -39,7 +39,7 @@
     "d421bac77873477c84f5e8d52520147c39bf9054": "2026-11-24T14:04:09Z",
     "0bb1c17ad0d8379ab7a636fd2bf23884526ef47c": "2026-11-24T14:04:20Z",
     "3db2efed9ba313d651533a843f713ffa71c0740c": "2026-11-24T14:04:33Z",
-    "5ed3c15123586e656bc568574b1c84a48feac983": "2026-11-24T14:04:33Z"
+    "f3da356dda0c736f76648e612246275feeb4c0dc": "2026-11-24T14:04:33Z"
   },
   "external_parents": [
     "1360c5bb1807ac8473cd0fca69961c1a1c9b2975",
