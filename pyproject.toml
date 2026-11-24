@@ -11,7 +11,7 @@ dependencies = [
     "pgvector>=0.5.1",
     "psycopg[binary]>=3.3.9",
     "psycopg2-binary>=2.9.13",
-    "sqlalchemy>=2.1.6",
+    "sqlalchemy>=2.1.9",
     "pydantic>=2.14.4",
     "pyyaml>=6.0.3",
     "requests>=2.34.2",
@@ -71,6 +71,8 @@ packages = [
 default-groups = ["dev", "web"]
 constraint-dependencies = [
     "aiohttp>=3.14.3",
+    # Transformers 5.23 requires PEFT 0.20+ for its adapter integration.
+    "peft>=0.20.0",
 ]
 
 [tool.ruff]

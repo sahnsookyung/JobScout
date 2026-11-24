@@ -24,8 +24,8 @@ updates:
       - "dependencies"
       - "github-actions"
 
-  # Python (pip / uv) — covers scanner version pins in CI
-  - package-ecosystem: "pip"
+  # Python (uv) — keeps pyproject.toml and uv.lock synchronized
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
