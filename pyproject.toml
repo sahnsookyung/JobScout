@@ -52,7 +52,7 @@ fit-models = [
     # so the reranker route does not silently degrade when a transitive bump
     # breaks FlagAutoReranker or CrossEncoder import paths.
     "FlagEmbedding==1.4.2",
-    "sentence-transformers==6.1.0",
+    "sentence-transformers==6.3.0",
     "transformers==5.23.0",
     "huggingface-hub>=1.11.0",
 ]
