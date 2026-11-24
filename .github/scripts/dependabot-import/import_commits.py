@@ -254,7 +254,11 @@ def post_commit(commit: dict, token: str) -> None:
     actual_parents = result.get("parents")
     require(type(actual_parents) is list and all(type(parent) is dict for parent in actual_parents)
             and [parent.get("sha") for parent in actual_parents] == commit["parents"], "API returned unexpected parents")
-    require(result.get("message") == commit["message"], "API returned an unexpected commit message")
+    # GitHub's JSON presentation may omit one final LF; the raw object SHA must still match above.
+    expected_message = commit["message"]
+    require(result.get("message") == expected_message
+            or (expected_message.endswith("\n") and result.get("message") == expected_message[:-1]),
+            "API returned an unexpected commit message")
     for role in ("author", "committer"):
         require(type(result.get(role)) is dict
                 and all(result[role].get(key) == commit[role][key] for key in IDENTITY_FIELDS), "API returned an unexpected identity or date")

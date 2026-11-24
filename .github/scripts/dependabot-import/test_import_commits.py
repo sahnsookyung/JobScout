@@ -257,6 +257,42 @@ class ImportTests(unittest.TestCase):
             with self.subTest(change=change), mock.patch.object(subject.urllib.request, "build_opener", return_value=opener), self.assertRaises(subject.ImportRejected):
                 subject.post_commit(self.commits[0], TOKEN)
 
+    def test_github_json_may_omit_one_final_lf_with_the_same_object_sha(self):
+        commit = self.commits[0]
+        response = Response(copy.deepcopy(commit))
+        response.data["message"] = commit["message"][:-1]
+        self.assertEqual(response.data["sha"], commit["expected_sha"])
+        opener = mock.Mock()
+        opener.open.return_value = response
+        with mock.patch.object(subject.urllib.request, "build_opener", return_value=opener):
+            subject.post_commit(commit, TOKEN)
+        request = opener.open.call_args.args[0]
+        self.assertEqual(json.loads(request.data)["message"], commit["message"])
+        self.assertTrue(json.loads(request.data)["message"].endswith("\n"))
+
+    def test_response_message_rejects_extra_lf_or_mutated_text(self):
+        commit = self.commits[0]
+        messages = [commit["message"] + "\n", commit["message"][:-2],
+                    commit["message"].replace("dependency update", "mutated text")[:-1]]
+        for message in messages:
+            response = Response(copy.deepcopy(commit))
+            response.data["message"] = message
+            opener = mock.Mock()
+            opener.open.return_value = response
+            with self.subTest(message=message), mock.patch.object(subject.urllib.request, "build_opener", return_value=opener), self.assertRaises(subject.ImportRejected):
+                subject.post_commit(commit, TOKEN)
+
+    def test_response_message_cannot_strip_multiple_final_lfs(self):
+        commit = copy.deepcopy(self.commits[0])
+        commit["message"] += "\n"
+        commit["expected_sha"] = subject.commit_sha(commit)
+        response = Response(copy.deepcopy(commit))
+        response.data["message"] = commit["message"][:-2]
+        opener = mock.Mock()
+        opener.open.return_value = response
+        with mock.patch.object(subject.urllib.request, "build_opener", return_value=opener), self.assertRaises(subject.ImportRejected):
+            subject.post_commit(commit, TOKEN)
+
     def test_redirects_are_rejected_without_followup_request(self):
         request = urllib.request.Request(subject.API_URL, data=b"{}", method="POST")
         handler = subject.RejectRedirects()
